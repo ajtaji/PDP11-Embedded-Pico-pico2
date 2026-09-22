@@ -44,9 +44,10 @@ flash translation layer to even out erase/write cycles on the onboard or
 external flash storage used. 
 
 3. SPIFFS (SPI Flash File System) provides acceptable functionality and 
-performance in an emulator environment and is the second choice behind PSRAM. 
+performance in an emulator environment and is the second choice behind PSRAM.
+Provides erase/write wear-levelling functionality.
 
-4. PSRAM (Pseudo-Static RAM) is used in some third-party boards and offers far
+5. PSRAM (Pseudo-Static RAM) is used in some third-party boards and offers far
 better performance than any flash memory storage. QSPI drivers are required and the
 device needs to be initialised before use. Read and Write functionality thereafter is 
 very simple. PSRAM is volatile and needs to be loaded from a non-volatile source or
