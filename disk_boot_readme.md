@@ -1,7 +1,10 @@
 Copying DEC RK05 Disk Image to Pico flash using Picotool from Linux
 =======================================================================
+```
 
 ./picotool load --ignore-partitions mini-unix.rk05 -t bin -o 0x10100000
+
+```
 
 RK05 Disk Storage - general notes
 =======================================================================
@@ -57,15 +60,15 @@ The CPU Switch Register should have (octal) value = 0173030 before booting to en
 A single @ character should appear on the console when emulation is started. 
 Enter the name of the kernel to start here - usually rkmx (all lower case) for mini-unix
 
-A 'RESTRICTED RIGHTS' message should appear in all capitals. 
+A `RESTRICTED RIGHTS` message should appear in all capitals. 
 
-The @ prompt will be repeated if the entered kernel name is not present on disk
+The `@` prompt will be repeated if the entered kernel name is not present on disk
 
 Note that the system may hang if a boot attempt is made with an unsupported kernel 
 
 There is no login username or password required for single-user mode. 
 
-Boot is complete when the # character is displayed. 
+Boot is complete when the `#` character is displayed. 
 Normal unix commands can be entered from here onwards. 
 
 
@@ -74,10 +77,10 @@ Upper / Lower case
 
 Unix starts in all upper-case - this is normal.
 
-Issue STTY -LCASE to change
+Issue `STTY -LCASE` to change
 
 
 Setting Date and Time - note - non-Y2K compliant
 ================================================
 
-DATE 0922100098  
+`DATE 0922100098`  
