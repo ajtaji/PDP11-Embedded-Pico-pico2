@@ -1,0 +1,147 @@
+; ======================================================================
+;  pdp11.pico - the J-11 emulator's main file for the Raspberry Pi Pico.
+;
+;  Builds the opcode table, then over USB serial, every three seconds:
+;    * the self-test: a six-word program at 000400 that adds 1..10 into R0
+;      and halts (expect R0 = 55, octal 67);
+;    * a timed run: a 60,003-instruction loop (ADD and SOB, 30,000 times),
+;      reporting emulated instructions per second on this board.
+;  Open the Pico's serial port at any speed to read it.
+; ======================================================================
+EnableExplicit
+XIncludeFile "RP2040/Lib/clocks.pico"
+XIncludeFile "RP2040/Lib/timer.pico"
+XIncludeFile "RP2040/Lib/uart.pico"
+XIncludeFile "RP2040/Lib/usb_serial.pico"
+XIncludeFile "RP2040/Lib/safety.pico"
+XIncludeFile "cpu.pico"
+XIncludeFile "instructions.pico"
+
+#CLOCK_KHZ = 200000
+
+Global SelfTestPassed.i
+Global SelfTestSteps.i
+Global SelfTestR0.i
+Global BenchInstructions.i
+Global BenchMicros.i
+
+; ---- USB serial reporting --------------------------------------------
+Procedure Ch(c.i)
+  UsbSerialWrite(c)
+EndProcedure
+
+Procedure Say(*s.i)
+  Define p.i
+  Define c.i
+  p = *s
+  c = PeekA(p) & 255
+  While c <> 0
+    Ch(c)
+    p = p + 1
+    c = PeekA(p) & 255
+  Wend
+EndProcedure
+
+Procedure Num(v.i)
+  Define n.i
+  Define p.i
+  n = v
+  If n < 0
+    Ch(45)
+    n = 0 - n
+  EndIf
+  p = 1
+  While n / p >= 10
+    p = p * 10
+  Wend
+  While p > 0
+    Ch(48 + (n / p) % 10)
+    p = p / 10
+  Wend
+EndProcedure
+
+Procedure Eol()
+  Ch(13)
+  Ch(10)
+  UsbSerialFlush()
+  UsbSerialTask()
+EndProcedure
+
+Procedure Wait(us.i)
+  Define t0.i
+  t0 = Micros()
+  While (Micros() - t0) < us
+    UsbSerialTask()
+  Wend
+EndProcedure
+
+; ---- the two runs ------------------------------------------------------
+Procedure SelfTest()
+  ; 000400  012701 000012   MOV #10.,R1
+  ; 000404  005000          CLR R0
+  ; 000406  060100          ADD R1,R0
+  ; 000410  077102          SOB R1,000406
+  ; 000412  000000          HALT
+  Mem($100 >> 1) = $15C1
+  Mem($102 >> 1) = $000A
+  Mem($104 >> 1) = $0A00
+  Mem($106 >> 1) = $6040
+  Mem($108 >> 1) = $7E42
+  Mem($10A >> 1) = $0000
+  CpuReset()
+  Reg(6) = $100                          ; stack grows down from 000400
+  Reg(7) = $100
+  SelfTestSteps = CpuRun(1000)
+  SelfTestR0 = Reg(0)
+  SelfTestPassed = 0
+  If Halted = 1 And Reg(0) = 55
+    SelfTestPassed = 1
+  EndIf
+EndProcedure
+
+Procedure Bench()
+  Define t0.i
+  ; 001000  012701 072460   MOV #30000.,R1
+  ; 001004  005000          CLR R0
+  ; 001006  060100          ADD R1,R0
+  ; 001010  077102          SOB R1,001006
+  ; 001012  000000          HALT
+  Mem($200 >> 1) = $15C1
+  Mem($202 >> 1) = 30000
+  Mem($204 >> 1) = $0A00
+  Mem($206 >> 1) = $6040
+  Mem($208 >> 1) = $7E42
+  Mem($20A >> 1) = $0000
+  CpuReset()
+  Reg(6) = $100
+  Reg(7) = $200
+  t0 = Micros()
+  BenchInstructions = CpuRun(1000000)
+  BenchMicros = Micros() - t0
+EndProcedure
+
+Procedure Main()
+  SafetyBoot()
+  ClockInitKhz(#CLOCK_KHZ)
+  UsbSerialInit()
+  SafetyOk()
+  BuildOpcodeTable()
+  Repeat
+    SelfTest()
+    Bench()
+    Say("PDP-11 J-11 on Pico, clk_sys kHz ") : Num(ClockSysKhz()) : Eol()
+    Say("self-test: R0=") : Num(SelfTestR0) : Say(" steps=") : Num(SelfTestSteps)
+    If SelfTestPassed
+      Say(" PASS")
+    Else
+      Say(" FAIL")
+    EndIf
+    Eol()
+    Say("bench: ") : Num(BenchInstructions) : Say(" instructions in ") : Num(BenchMicros) : Say(" us = ")
+    If BenchMicros > 0
+      Num((BenchInstructions * 1000) / (BenchMicros / 1000 + 1))
+    EndIf
+    Say(" instructions/s") : Eol()
+    Wait(3000000)
+  ForEver
+EndProcedure

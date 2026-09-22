@@ -1,0 +1,365 @@
+; ======================================================================
+;  cpu.pico - the J-11 (KDJ11-BF, 18 MHz) machine state, memory, operand
+;  addressing, traps and the opcode jump table, for the Raspberry Pi Pico.
+;
+;  Include order (flat, the main file lists them):
+;      XIncludeFile "cpu.pico"
+;      XIncludeFile "instructions.pico"
+;  then call CpuReset() and CpuRun(n).
+;
+;  NUMBERS. The language has hex ($) and binary (%) literals but no octal,
+;  and the PDP-11 is documented in octal. Every opcode, address and vector
+;  below is written in hex with its octal in the comment beside it.
+;
+;  ------------------------------------------------------------------
+;  HOW THIS IS BUILT FOR SPEED - measured, not assumed (2026-09-21,
+;  the compiler's own cycle listing, RP2040 Cortex-M0+ at zero wait):
+;
+;    * a Global read or write costs 4 cycles: the address comes out of
+;      the literal pool (ldr 2) and then the load or store (2). A field
+;      of a Global Structure costs exactly the same - the compiler
+;      resolves it to an absolute address too - so a structure buys no
+;      speed today and the state is plain Globals.
+;    * a Protected local costs MORE, about 5 cycles, because locals live
+;      in the stack frame and each access rebuilds the frame offset. And a
+;      procedure with locals zeroes its frame on entry. So the handlers
+;      use Globals as their scratch registers (Src, Dst, Res, Ea) and
+;      declare no locals.
+;    * every procedure call costs about 13 cycles before it does anything
+;      (bl/blx, push, frame set-up, pop). So:
+;        - register mode (mode 0), the commonest operand, is handled INLINE
+;          in every handler and never calls a helper;
+;        - condition codes are never packed while the machine runs. V and C
+;          are two Globals set by plain stores. N and Z are LAZY: nearly
+;          every instruction sets both from its result, so it stores the
+;          result once in FlagNZ and nothing is decided until a branch or
+;          the PSW asks (N = bit 15 or bit 16, Z = low 16 bits are zero;
+;          a byte result is stored shifted up 8 so its sign lands on bit
+;          15). One 4-cycle store replaces a compare, a branch and two
+;          stores. The PSW word is only assembled when something reads it
+;          (MFPS, a trap, an RTI, the PSW's bus address).
+;    * the dispatch table has 8192 entries indexed by the instruction's top
+;      thirteen bits (Op >> 3): 32 KB of RAM, one lookup, one indirect
+;      call, and no second table. Every instruction family has entries of
+;      its own; only HALT, WAIT, RTI, BPT, IOT, RESET, RTT and MFPT
+;      (000000-000007) share one, told apart by a short If chain. A table
+;      with one entry per opcode would be 256 KB: too big for the Pico's
+;      RAM, and in flash it would miss the 16 KB XIP cache on almost every
+;      instruction - slower than the lookup it saves.
+;
+;  Where the rest of the speed is: the compiler does not yet keep variables
+;  in registers or give a leaf procedure a cheap frame. Both would help
+;  every PureMetal program, and this emulator most of all - a handler is
+;  about a third frame overhead. That is a compiler change, not a change
+;  here; these files are written so they get the benefit untouched.
+;
+;  ------------------------------------------------------------------
+;  WHAT IS MODELLED (first cut, stated so nothing is assumed):
+;    * the J-11 base instruction set with EIS (MUL, DIV, ASH, ASHC, XOR,
+;      SOB, SXT, MARK, MFPS, MTPS, MFPT, SPL). No floating point yet (the
+;      FPJ11 is an option; 17xxxx traps as reserved). CSM, TSTSET and
+;      WRTLCK trap as reserved for now.
+;    * 16-bit physical addressing with the memory management unit OFF:
+;      56 KB of RAM at 000000-157777, the I/O page at 160000-177777. Only
+;      the PSW (177776) answers in the I/O page; everything else there is
+;      a bus error (trap to 4) until the devices are written.
+;    * one processor mode. MFPI/MTPI/MFPD/MTPD therefore act on the one
+;      address space, and the kernel/supervisor/user stack pointers are not
+;      banked yet.
+;    * a bus error or odd address found inside an instruction is taken
+;      AFTER that instruction finishes (the real J-11 aborts it). Recorded
+;      here so it is not mistaken for correct behaviour.
+;
+;  CLOCK. The real module runs an 18 MHz clock. ClockCycles counts the
+;  emulated machine's time; the per-instruction amounts are the #J11_T_*
+;  constants below, which are PLACEHOLDERS (1 each - so ClockCycles counts
+;  instructions) until the instruction timing tables of the KDJ11-B user's
+;  guide are transcribed. They are in one place so that is one edit.
+; ======================================================================
+
+; ---- sizes -----------------------------------------------------------
+#RAM_BYTES   = $E000        ; 000000-157777, 56 KB
+#RAM_WORDS   = $7000
+#IOPAGE      = $E000        ; 160000
+#PSW_ADDR    = $FFFE        ; 177776
+
+; ---- trap vectors ----------------------------------------------------
+#VEC_BUS     = $04          ; 000004 odd address, bus error, illegal
+#VEC_RESV    = $08          ; 000010 reserved instruction
+#VEC_BPT     = $0C          ; 000014 BPT and the T bit
+#VEC_IOT     = $10          ; 000020
+#VEC_EMT     = $18          ; 000030
+#VEC_TRAP    = $1C          ; 000034
+
+; ---- timing placeholders (see CLOCK above) ---------------------------
+#J11_T_DOUBLE = 1
+#J11_T_SINGLE = 1
+#J11_T_BRANCH = 1
+#J11_T_JUMP   = 1
+#J11_T_EIS    = 1
+#J11_T_MISC   = 1
+#J11_T_TRAP   = 1
+
+; ---- machine state ---------------------------------------------------
+Global Dim Reg.i(8)         ; R0-R7, R6 = SP, R7 = PC. 16-bit values.
+Global Dim Mem.u(#RAM_WORDS)
+Global Dim OpTable.i(8192)
+
+Global Op.i                 ; the instruction being executed
+Global Src.i, Dst.i, Res.i, Ea.i, Tmp.i   ; handler scratch - see SPEED
+Global FlagNZ.i             ; lazy N and Z - see SPEED
+Global FlagV.i, FlagC.i
+Global EaReg.i, EaStep.i    ; EaWord/EaByte scratch (Globals: cheaper than locals)
+Global PswHigh.i            ; PSW bits 15-5 (mode, register set, priority, T)
+Global ClockCycles.i
+Global TrapVector.i         ; non-zero = a trap to take after this instruction
+Global Halted.i, Waiting.i
+
+; ======================================================================
+;  PSW - assembled only when read
+; ======================================================================
+Procedure.i FlagN()
+  If FlagNZ & $18000
+    ProcedureReturn 1
+  EndIf
+  ProcedureReturn 0
+EndProcedure
+
+Procedure.i FlagZ()
+  If (FlagNZ & $FFFF) = 0
+    ProcedureReturn 1
+  EndIf
+  ProcedureReturn 0
+EndProcedure
+
+; Encode an explicit N and Z (from the PSW, MTPS, a condition-code op) in
+; the lazy form. N=1 with Z=1 cannot come from a result, so it is $10000:
+; low 16 bits zero (Z) and bit 16 set (N).
+Procedure SetNZ(n.i, z.i)
+  If z
+    FlagNZ = n << 16
+  ElseIf n
+    FlagNZ = $8000
+  Else
+    FlagNZ = 1
+  EndIf
+EndProcedure
+
+Procedure.i PswGet()
+  ProcedureReturn (PswHigh & $FFF0) | (FlagN() << 3) | (FlagZ() << 2) | (FlagV << 1) | FlagC
+EndProcedure
+
+Procedure PswSet(v.i)
+  PswHigh = v & $FFF0
+  SetNZ((v >> 3) & 1, (v >> 2) & 1)
+  FlagV = (v >> 1) & 1
+  FlagC = v & 1
+EndProcedure
+
+; ======================================================================
+;  MEMORY - the fast path is RAM; the I/O page and missing memory are slow
+; ======================================================================
+Procedure.i ReadWord(a.i)
+  If a & 1
+    TrapVector = #VEC_BUS
+    ProcedureReturn 0
+  EndIf
+  If a < #RAM_BYTES
+    ProcedureReturn Mem(a >> 1)
+  EndIf
+  If a = #PSW_ADDR
+    ProcedureReturn PswGet()
+  EndIf
+  TrapVector = #VEC_BUS
+  ProcedureReturn 0
+EndProcedure
+
+Procedure WriteWord(a.i, v.i)
+  If a & 1
+    TrapVector = #VEC_BUS
+    ProcedureReturn
+  EndIf
+  If a < #RAM_BYTES
+    Mem(a >> 1) = v & $FFFF
+    ProcedureReturn
+  EndIf
+  If a = #PSW_ADDR
+    PswSet(v)
+    ProcedureReturn
+  EndIf
+  TrapVector = #VEC_BUS
+EndProcedure
+
+Procedure.i ReadByte(a.i)
+  If a < #RAM_BYTES
+    If a & 1
+      ProcedureReturn (Mem(a >> 1) >> 8) & $FF
+    EndIf
+    ProcedureReturn Mem(a >> 1) & $FF
+  EndIf
+  If (a & $FFFE) = #PSW_ADDR
+    If a & 1
+      ProcedureReturn (PswGet() >> 8) & $FF
+    EndIf
+    ProcedureReturn PswGet() & $FF
+  EndIf
+  TrapVector = #VEC_BUS
+  ProcedureReturn 0
+EndProcedure
+
+Procedure WriteByte(a.i, v.i)
+  If a < #RAM_BYTES
+    If a & 1
+      Mem(a >> 1) = (Mem(a >> 1) & $00FF) | ((v & $FF) << 8)
+    Else
+      Mem(a >> 1) = (Mem(a >> 1) & $FF00) | (v & $FF)
+    EndIf
+    ProcedureReturn
+  EndIf
+  If (a & $FFFE) = #PSW_ADDR
+    If a & 1
+      PswSet((PswGet() & $00FF) | ((v & $FF) << 8))
+    Else
+      PswSet((PswGet() & $FF00) | (v & $FF))
+    EndIf
+    ProcedureReturn
+  EndIf
+  TrapVector = #VEC_BUS
+EndProcedure
+
+; ---- the stack -------------------------------------------------------
+Procedure Push(v.i)
+  Reg(6) = (Reg(6) - 2) & $FFFF
+  WriteWord(Reg(6), v)
+EndProcedure
+
+Procedure.i Pop()
+  Tmp = ReadWord(Reg(6))
+  Reg(6) = (Reg(6) + 2) & $FFFF
+  ProcedureReturn Tmp
+EndProcedure
+
+; ---- instruction stream ----------------------------------------------
+Procedure.i FetchWord()
+  Tmp = ReadWord(Reg(7))
+  Reg(7) = (Reg(7) + 2) & $FFFF
+  ProcedureReturn Tmp
+EndProcedure
+
+; ======================================================================
+;  OPERAND ADDRESSING - modes 1 to 7. Mode 0 never comes here: every
+;  handler does register mode inline, because a call costs ~13 cycles.
+;  spec = the six-bit mode/register field. Returns the operand's address.
+; ======================================================================
+Procedure.i EaWord(spec.i)
+  EaReg = spec & 7
+  Tmp = (spec >> 3) & 7
+  If Tmp = 1                                 ; (R)
+    ProcedureReturn Reg(EaReg)
+  ElseIf Tmp = 2                             ; (R)+   #n when R = PC
+    Tmp = Reg(EaReg)
+    Reg(EaReg) = (Tmp + 2) & $FFFF
+    ProcedureReturn Tmp
+  ElseIf Tmp = 3                             ; @(R)+  @#a when R = PC
+    Tmp = Reg(EaReg)
+    Reg(EaReg) = (Tmp + 2) & $FFFF
+    ProcedureReturn ReadWord(Tmp)
+  ElseIf Tmp = 4                             ; -(R)
+    Reg(EaReg) = (Reg(EaReg) - 2) & $FFFF
+    ProcedureReturn Reg(EaReg)
+  ElseIf Tmp = 5                             ; @-(R)
+    Reg(EaReg) = (Reg(EaReg) - 2) & $FFFF
+    ProcedureReturn ReadWord(Reg(EaReg))
+  ElseIf Tmp = 6                             ; X(R)   a when R = PC
+    Tmp = FetchWord()
+    ProcedureReturn (Tmp + Reg(EaReg)) & $FFFF
+  ElseIf Tmp = 7                             ; @X(R)  @a when R = PC
+    Tmp = FetchWord()
+    ProcedureReturn ReadWord((Tmp + Reg(EaReg)) & $FFFF)
+  EndIf
+  ProcedureReturn Reg(EaReg)
+EndProcedure
+
+; Byte operands step (R)+ and -(R) by one, except through SP and PC, which
+; always step by two so they stay even.
+Procedure.i EaByte(spec.i)
+  EaReg = spec & 7
+  EaStep = 1
+  If EaReg >= 6
+    EaStep = 2
+  EndIf
+  Tmp = (spec >> 3) & 7
+  If Tmp = 2
+    Tmp = Reg(EaReg)
+    Reg(EaReg) = (Tmp + EaStep) & $FFFF
+    ProcedureReturn Tmp
+  ElseIf Tmp = 4
+    Reg(EaReg) = (Reg(EaReg) - EaStep) & $FFFF
+    ProcedureReturn Reg(EaReg)
+  EndIf
+  ProcedureReturn EaWord(spec)
+EndProcedure
+
+; Source operands for the double-operand handlers, register mode inline.
+Procedure.i SrcWord()
+  If (Op & $0E00) = 0
+    ProcedureReturn Reg((Op >> 6) & 7)
+  EndIf
+  ProcedureReturn ReadWord(EaWord((Op >> 6) & $3F))
+EndProcedure
+
+Procedure.i SrcByte()
+  If (Op & $0E00) = 0
+    ProcedureReturn Reg((Op >> 6) & 7) & $FF
+  EndIf
+  ProcedureReturn ReadByte(EaByte((Op >> 6) & $3F))
+EndProcedure
+
+; ======================================================================
+;  TRAPS
+; ======================================================================
+Procedure TakeTrap(vector.i)
+  Tmp = PswGet()
+  Push(Tmp)
+  Push(Reg(7))
+  Reg(7) = ReadWord(vector)
+  PswSet(ReadWord(vector + 2))
+  ClockCycles = ClockCycles + #J11_T_TRAP
+EndProcedure
+
+; ======================================================================
+;  RUN
+; ======================================================================
+Procedure CpuReset()
+  Protected i.i
+  For i = 0 To 7
+    Reg(i) = 0
+  Next
+  PswSet($00E0)            ; kernel, priority 7
+  TrapVector = 0
+  Halted = 0
+  Waiting = 0
+  ClockCycles = 0
+EndProcedure
+
+; Execute up to n instructions. Returns how many ran.
+Procedure.i CpuRun(n.i)
+  Protected done.i
+  done = 0
+  While done < n And Halted = 0
+    If Reg(7) < #RAM_BYTES And (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)                 ; fast fetch, straight from RAM
+      Reg(7) = Reg(7) + 2
+    Else
+      Op = FetchWord()
+    EndIf
+    CallFunctionFast(OpTable(Op >> 3))
+    If TrapVector
+      Tmp = TrapVector
+      TrapVector = 0
+      TakeTrap(Tmp)
+    EndIf
+    done = done + 1
+  Wend
+  ProcedureReturn done
+EndProcedure
