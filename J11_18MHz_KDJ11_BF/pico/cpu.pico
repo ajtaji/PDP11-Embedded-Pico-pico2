@@ -52,12 +52,12 @@
 ;      procedure, CpuRun, so running an instruction costs no call, no frame
 ;      and no return (instructions.pico has the measurements).
 ;
-;  Where the rest of the speed is: keeping the hottest Globals in CPU
-;  registers. ReserveRegister, under the machine state below, holds Op,
-;  Src, Res and ClockCycles in r8-r11, which nothing else in a compiled
-;  program touches. It is switched off (#RESERVE_REGISTERS = 0) until the
-;  compiler's Pico backend honours it: until then the compiler refuses the
-;  line (PM1100) rather than ignore it.
+;    * the four hottest Globals live in CPU registers for the whole
+;      program: ReserveRegister, under the machine state below, holds Op,
+;      Src, Res and ClockCycles in r8-r11, which nothing else in a compiled
+;      program touches. Each access is one mov instead of a literal-pool
+;      load and a load or store. Needs a compiler from 2026-09-22 (main
+;      1770a28d) or later; an older one refuses the line with PM1100.
 ;
 ;  ------------------------------------------------------------------
 ;  WHAT IS MODELLED (first cut, stated so nothing is assumed):
@@ -121,10 +121,11 @@ Global TrapVector.i         ; non-zero = a trap to take after this instruction
 Global Halted.i, Waiting.i
 
 ; ---- Globals held in registers for the whole program (see SPEED) -----
-; 1 once the compiler's Pico backend honours ReserveRegister. Before that
-; it refuses the line with PM1100 - a reservation it could only ignore is
-; worse than none - so it stays 0 and these four live in RAM as before.
-#RESERVE_REGISTERS = 0
+; The A/B switch: 0 puts these four back in RAM and changes nothing else.
+; Chosen by measurement on both boards: Op, Src, Res and ClockCycles beat
+; Op, Res, RunLeft and ClockCycles (1,172,918 / 1,119,354 instructions/s
+; against the numbers in instructions.pico).
+#RESERVE_REGISTERS = 1
 CompilerIf #RESERVE_REGISTERS = 1
   ReserveRegister Op = r8, Src = r9, Res = r10, ClockCycles = r11
 CompilerEndIf

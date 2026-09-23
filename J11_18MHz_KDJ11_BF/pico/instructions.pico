@@ -45,12 +45,13 @@
 ;    table of procedures + CallFunctionFast   801,600      810,807
 ;    threaded, one shared tail               904,981      879,757
 ;    threaded, the tail in every handler     927,991      911,830
-;    ... and the tail tightened (below)    1,020,407    1,030,837   <- this file
+;    ... and the tail tightened (below)    1,020,407    1,030,837
+;    ... and ReserveRegister (cpu.pico)   1,176,391    1,127,812   <- this file
 ;  The tightening: the PC test is written as two nested Ifs, not one
 ;  "a And b" (which builds two truth values and then ands them), and the
 ;  handlers that cannot trap drop the TrapVector test. Repeating the tail
 ;  in every handler costs flash (about 12 KB on the Pico, 15 KB on the
-;  Pico 2) and is still the fastest of the four.
+;  Pico 2) and is still the fastest of the threaded forms.
 ;
 ;  THE SHAPE OF A HANDLER, and why (see SPEED in cpu.pico):
 ;    * no Protected locals - Src, Dst, Res and Ea are Globals, cheaper here;
