@@ -60,6 +60,29 @@ Procedure Num(v.i)
   Wend
 EndProcedure
 
+; count * 1,000,000 / us, exact to the unit (rounded down), in 32-bit
+; arithmetic. count * 1,000,000 itself overflows a 32-bit .i for any count
+; above 2147, so this is long division by hand: the whole part first, then
+; one decimal digit of the remainder at a time, six times. Every step stays
+; below 10 * us, so it is exact for any us up to 214,748,364 (214 seconds)
+; and any answer that fits in a .i.
+; (The report used to print (count * 1000) / (us / 1000 + 1): the time cut
+; to whole milliseconds and then one added, so every run between 74.000 and
+; 74.999 ms printed 800040 - 60003000 / 75 - whatever it really took.)
+Procedure.i PerSecond(count.i, us.i)
+  Define q.i
+  Define r.i
+  Define k.i
+  q = count / us
+  r = count % us
+  For k = 1 To 6
+    r = r * 10
+    q = q * 10 + r / us
+    r = r % us
+  Next
+  ProcedureReturn q
+EndProcedure
+
 Procedure Eol()
   Ch(13)
   Ch(10)
@@ -139,7 +162,7 @@ Procedure Main()
     Eol()
     Say("bench: ") : Num(BenchInstructions) : Say(" instructions in ") : Num(BenchMicros) : Say(" us = ")
     If BenchMicros > 0
-      Num((BenchInstructions * 1000) / (BenchMicros / 1000 + 1))
+      Num(PerSecond(BenchInstructions, BenchMicros))
     EndIf
     Say(" instructions/s") : Eol()
     Wait(3000000)

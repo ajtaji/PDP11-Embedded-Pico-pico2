@@ -1,16 +1,58 @@
 ; ======================================================================
-;  instructions.pico2 - every J-11 instruction as one procedure, and the
-;  jump table that dispatches them. Raspberry Pi Pico 2 (RP2350).
+;  instructions.pico2 - the J-11 run loop: every instruction, and the jump
+;  table that dispatches them. Raspberry Pi Pico 2 (RP2350).
 ;
-;  Requires cpu.pico2 - include it BEFORE this file.
+;  Requires cpu.pico2 - include it BEFORE this file. Call BuildOpcodeTable()
+;  once (CpuRun does it itself if you do not), then CpuRun(n).
 ;
-;  ONE PROCEDURE PER INSTRUCTION, named Instruction<MNEMONIC>_<octal>.
-;  BuildOpcodeTable() at the foot fills OpTable() so that
-;      CallFunctionFast(OpTable(Op))
-;  runs the right one. On the Pico 2 the table has one entry per opcode
-;  (65,536), so the commonest register forms get their own handlers - see
-;  REGISTER FAST PATHS near the foot. Entry comments below are in the
+;  THE TABLE has one entry per opcode (65,536), indexed by the whole
+;  instruction, so the commonest register forms get their own handlers -
+;  see REGISTER FAST PATHS near the foot. Entry comments below are in the
 ;  Pico's 8192-entry numbering (Op >> 3); multiply by 8 for this table.
+;
+;  ONE PROCEDURE, EVERY INSTRUCTION A LABEL IN IT. CpuRun() below is the
+;  whole emulator: each instruction's handler is a label inside it, named
+;  Instruction<MNEMONIC>_<octal> in the 8080 core's layout, and
+;  OpTable() is a '.Label' table filled with ?Name. An instruction is
+;  fetched and then entered with one computed jump,
+;      Goto OpTable(Op)
+;  and every handler ENDS with the same few lines, which fetch the next
+;  instruction and make that jump themselves - so no handler returns, and
+;  there is no call, no frame and no return anywhere between two emulated
+;  instructions (threaded dispatch). The comment on each label gives the
+;  octal opcode and the table entries it owns.
+;
+;  THE TAIL - the lines every handler ends with, and the rules it keeps:
+;    1. If the instruction left a trap to take (TrapVector), go to SlowTail,
+;       which takes it. A handler that cannot possibly trap - it touches no
+;       memory, no stack and no operand helper (the branches, SOB, SPL, the
+;       condition-code ops,
+;       and every *_RR / *_R register fast path) - leaves this test out; its tail
+;       comment says so. A handler that is changed to touch memory MUST get
+;       the test back, or its traps are lost.
+;    2. Count the instruction (RunLeft); at zero, CpuRun returns.
+;    3. Fetch the next word straight from RAM when the PC is even and in
+;       RAM, and jump through the table. Anything else (the I/O page, an
+;       odd PC) goes to SlowFetch.
+;  HALT ends with Goto SlowTail instead: SlowTail is the only place that
+;  looks at Halted, and nothing but HALT sets it. Anything added that sets
+;  Halted must end the same way.
+;  The loop this replaced ran the same steps in the same order - execute,
+;  take a trap, count, stop at n or at HALT, fetch - so every instruction
+;  behaves exactly as it did.
+;
+;  WHY, MEASURED (2026-09-22, the report's own instructions/s, self-test
+;  PASS on both boards; Pico W at 200 MHz, Pico 2 W at 150 MHz):
+;                                        Pico W       Pico 2 W
+;    table of procedures + CallFunctionFast   801,600      810,807
+;    threaded, one shared tail               904,981      879,757
+;    threaded, the tail in every handler     927,991      911,830
+;    ... and the tail tightened (below)    1,020,407    1,030,837   <- this file
+;  The tightening: the PC test is written as two nested Ifs, not one
+;  "a And b" (which builds two truth values and then ands them), and the
+;  handlers that cannot trap drop the TrapVector test. Repeating the tail
+;  in every handler costs flash (about 12 KB on the Pico, 15 KB on the
+;  Pico 2) and is still the fastest of the four.
 ;
 ;  THE SHAPE OF A HANDLER, and why (see SPEED in cpu.pico2):
 ;    * no Protected locals - Src, Dst, Res and Ea are Globals, cheaper here;
@@ -26,8 +68,58 @@
 ;  without touching the arithmetic.
 ; ======================================================================
 
+
+; The branch offset: the low byte, signed, in words.
+Procedure BranchTaken()
+  Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
+EndProcedure
+
+; ======================================================================
+;  THE RUN LOOP - one procedure, every handler a label inside it
+; ======================================================================
+Global Dim OpTable.Label(65536)
+Global OpTableReady.i                    ; 0 until the first CpuRun fills OpTable
+Global RunLeft.i                         ; instructions still to run in this CpuRun
+Global FillFrom.i, FillCount.i           ; Ops() - Globals, cheaper than locals
+Global FillS.i, FillD.i                  ; the fast-path loops below
+
+; OpTable(from) .. OpTable(from + count - 1) = target. A '.Label' can only
+; be taken with ?Name inside the procedure that owns the label, so CpuRun
+; itself passes its labels in; this only stores them.
+Procedure Ops(from.i, count.i, target.Label)
+  FillFrom = from
+  FillCount = count
+  While FillCount > 0
+    OpTable(FillFrom) = target
+    FillFrom = FillFrom + 1
+    FillCount = FillCount - 1
+  Wend
+EndProcedure
+
+; Execute up to n instructions. Returns how many ran.
+Procedure.i CpuRun(n.i)
+  If OpTableReady = 0
+    Goto BuildTable
+  EndIf
+RunStart:
+  If n <= 0 Or Halted <> 0
+    ProcedureReturn 0
+  EndIf
+  RunLeft = n
+Fetch:
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)              ; fast fetch, straight from RAM
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+SlowFetch:                               ; the I/O page, an odd PC, past the end of RAM
+  Op = FetchWord()
+  Goto OpTable(Op)
+
 ;-MOV-------------------------------------------------------------------
-Procedure InstructionMOV_01()            ; 01SSDD   entries $0200-$03FF
+InstructionMOV_01:            ; 01SSDD   entries $0200-$03FF
   ;name = "MOV"
   Src = SrcWord()
   If (Op & $38) = 0
@@ -39,9 +131,24 @@ Procedure InstructionMOV_01()            ; 01SSDD   entries $0200-$03FF
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("MOV " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionMOVB_11()           ; 11SSDD   entries $1200-$13FF
+InstructionMOVB_11:           ; 11SSDD   entries $1200-$13FF
   ;name = "MOVB"
   Src = SrcByte()
   If (Op & $38) = 0
@@ -53,10 +160,25 @@ Procedure InstructionMOVB_11()           ; 11SSDD   entries $1200-$13FF
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("MOVB " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-CMP-------------------------------------------------------------------
-Procedure InstructionCMP_02()            ; 02SSDD   entries $0400-$05FF
+InstructionCMP_02:            ; 02SSDD   entries $0400-$05FF
   ;name = "CMP"
   Src = SrcWord()
   If (Op & $38) = 0
@@ -70,9 +192,24 @@ Procedure InstructionCMP_02()            ; 02SSDD   entries $0400-$05FF
   FlagNZ = Res & $FFFF
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("CMP " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionCMPB_12()           ; 12SSDD   entries $1400-$15FF
+InstructionCMPB_12:           ; 12SSDD   entries $1400-$15FF
   ;name = "CMPB"
   Src = SrcByte()
   If (Op & $38) = 0
@@ -86,10 +223,25 @@ Procedure InstructionCMPB_12()           ; 12SSDD   entries $1400-$15FF
   FlagNZ = (Res & $FF) << 8
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("CMPB " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-BIT-------------------------------------------------------------------
-Procedure InstructionBIT_03()            ; 03SSDD   entries $0600-$07FF
+InstructionBIT_03:            ; 03SSDD   entries $0600-$07FF
   ;name = "BIT"
   Src = SrcWord()
   If (Op & $38) = 0
@@ -101,9 +253,24 @@ Procedure InstructionBIT_03()            ; 03SSDD   entries $0600-$07FF
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIT " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBITB_13()           ; 13SSDD   entries $1600-$17FF
+InstructionBITB_13:           ; 13SSDD   entries $1600-$17FF
   ;name = "BITB"
   Src = SrcByte()
   If (Op & $38) = 0
@@ -115,10 +282,25 @@ Procedure InstructionBITB_13()           ; 13SSDD   entries $1600-$17FF
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BITB " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-BIC-------------------------------------------------------------------
-Procedure InstructionBIC_04()            ; 04SSDD   entries $0800-$09FF
+InstructionBIC_04:            ; 04SSDD   entries $0800-$09FF
   ;name = "BIC"
   Src = SrcWord()
   If (Op & $38) = 0
@@ -133,9 +315,24 @@ Procedure InstructionBIC_04()            ; 04SSDD   entries $0800-$09FF
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIC " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBICB_14()           ; 14SSDD   entries $1800-$19FF
+InstructionBICB_14:           ; 14SSDD   entries $1800-$19FF
   ;name = "BICB"
   Src = SrcByte()
   If (Op & $38) = 0
@@ -150,10 +347,25 @@ Procedure InstructionBICB_14()           ; 14SSDD   entries $1800-$19FF
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BICB " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-BIS-------------------------------------------------------------------
-Procedure InstructionBIS_05()            ; 05SSDD   entries $0A00-$0BFF
+InstructionBIS_05:            ; 05SSDD   entries $0A00-$0BFF
   ;name = "BIS"
   Src = SrcWord()
   If (Op & $38) = 0
@@ -168,9 +380,24 @@ Procedure InstructionBIS_05()            ; 05SSDD   entries $0A00-$0BFF
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIS " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBISB_15()           ; 15SSDD   entries $1A00-$1BFF
+InstructionBISB_15:           ; 15SSDD   entries $1A00-$1BFF
   ;name = "BISB"
   Src = SrcByte()
   If (Op & $38) = 0
@@ -185,10 +412,25 @@ Procedure InstructionBISB_15()           ; 15SSDD   entries $1A00-$1BFF
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BISB " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-ADD-------------------------------------------------------------------
-Procedure InstructionADD_06()            ; 06SSDD   entries $0C00-$0DFF
+InstructionADD_06:            ; 06SSDD   entries $0C00-$0DFF
   ;name = "ADD"
   Src = SrcWord()
   If (Op & $38) = 0
@@ -206,10 +448,25 @@ Procedure InstructionADD_06()            ; 06SSDD   entries $0C00-$0DFF
   FlagNZ = Res & $FFFF
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("ADD " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-SUB-------------------------------------------------------------------
-Procedure InstructionSUB_16()            ; 16SSDD   entries $1C00-$1DFF
+InstructionSUB_16:            ; 16SSDD   entries $1C00-$1DFF
   ;name = "SUB"
   Src = SrcWord()
   If (Op & $38) = 0
@@ -227,7 +484,22 @@ Procedure InstructionSUB_16()            ; 16SSDD   entries $1C00-$1DFF
   FlagNZ = Res & $FFFF
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("SUB " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ; ======================================================================
 ;  SINGLE-OPERAND. The destination is fetched at the top and stored at
@@ -235,7 +507,7 @@ EndProcedure
 ; ======================================================================
 
 ;-CLR-------------------------------------------------------------------
-Procedure InstructionCLR_0050()          ; 0050DD   entries $0140-$0147
+InstructionCLR_0050:          ; 0050DD   entries $0140-$0147
   ;name = "CLR"
   If (Op & $38) = 0
     Reg(Op & 7) = 0
@@ -247,9 +519,24 @@ Procedure InstructionCLR_0050()          ; 0050DD   entries $0140-$0147
   FlagC = 0
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLR " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionCLRB_1050()         ; 1050DD   entries $1140-$1147
+InstructionCLRB_1050:         ; 1050DD   entries $1140-$1147
   ;name = "CLRB"
   If (Op & $38) = 0
     Reg(Op & 7) = Reg(Op & 7) & $FF00
@@ -261,10 +548,25 @@ Procedure InstructionCLRB_1050()         ; 1050DD   entries $1140-$1147
   FlagC = 0
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLRB " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-COM-------------------------------------------------------------------
-Procedure InstructionCOM_0051()          ; 0051DD   entries $0148-$014F
+InstructionCOM_0051:          ; 0051DD   entries $0148-$014F
   ;name = "COM"
   If (Op & $38) = 0
     Res = Reg(Op & 7) ! $FFFF
@@ -279,9 +581,24 @@ Procedure InstructionCOM_0051()          ; 0051DD   entries $0148-$014F
   FlagC = 1
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("COM " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionCOMB_1051()         ; 1051DD   entries $1148-$114F
+InstructionCOMB_1051:         ; 1051DD   entries $1148-$114F
   ;name = "COMB"
   If (Op & $38) = 0
     Res = (Reg(Op & 7) ! $FF) & $FF
@@ -296,10 +613,25 @@ Procedure InstructionCOMB_1051()         ; 1051DD   entries $1148-$114F
   FlagC = 1
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("COMB " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-INC-------------------------------------------------------------------
-Procedure InstructionINC_0052()          ; 0052DD   entries $0150-$0157   C unaffected
+InstructionINC_0052:          ; 0052DD   entries $0150-$0157   C unaffected
   ;name = "INC"
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
@@ -318,9 +650,24 @@ Procedure InstructionINC_0052()          ; 0052DD   entries $0150-$0157   C unaf
   FlagNZ = Res
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("INC " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionINCB_1052()         ; 1052DD   entries $1150-$1157
+InstructionINCB_1052:         ; 1052DD   entries $1150-$1157
   ;name = "INCB"
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
@@ -339,10 +686,25 @@ Procedure InstructionINCB_1052()         ; 1052DD   entries $1150-$1157
   FlagNZ = Res << 8
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("INCB " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-DEC-------------------------------------------------------------------
-Procedure InstructionDEC_0053()          ; 0053DD   entries $0158-$015F   C unaffected
+InstructionDEC_0053:          ; 0053DD   entries $0158-$015F   C unaffected
   ;name = "DEC"
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
@@ -361,9 +723,24 @@ Procedure InstructionDEC_0053()          ; 0053DD   entries $0158-$015F   C unaf
   FlagNZ = Res
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("DEC " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionDECB_1053()         ; 1053DD   entries $1158-$115F
+InstructionDECB_1053:         ; 1053DD   entries $1158-$115F
   ;name = "DECB"
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
@@ -382,10 +759,25 @@ Procedure InstructionDECB_1053()         ; 1053DD   entries $1158-$115F
   FlagNZ = Res << 8
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("DECB " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-NEG-------------------------------------------------------------------
-Procedure InstructionNEG_0054()          ; 0054DD   entries $0160-$0167
+InstructionNEG_0054:          ; 0054DD   entries $0160-$0167
   ;name = "NEG"
   If (Op & $38) = 0
     Res = (0 - Reg(Op & 7)) & $FFFF      ; 100000 negates to itself
@@ -406,9 +798,24 @@ Procedure InstructionNEG_0054()          ; 0054DD   entries $0160-$0167
   FlagNZ = Res
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("NEG " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionNEGB_1054()         ; 1054DD   entries $1160-$1167
+InstructionNEGB_1054:         ; 1054DD   entries $1160-$1167
   ;name = "NEGB"
   If (Op & $38) = 0
     Res = (0 - Reg(Op & 7)) & $FF
@@ -429,10 +836,25 @@ Procedure InstructionNEGB_1054()         ; 1054DD   entries $1160-$1167
   FlagNZ = Res << 8
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("NEGB " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-ADC-------------------------------------------------------------------
-Procedure InstructionADC_0055()          ; 0055DD   entries $0168-$016F
+InstructionADC_0055:          ; 0055DD   entries $0168-$016F
   ;name = "ADC"
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
@@ -454,9 +876,24 @@ Procedure InstructionADC_0055()          ; 0055DD   entries $0168-$016F
   FlagNZ = Res
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ADC " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionADCB_1055()         ; 1055DD   entries $1168-$116F
+InstructionADCB_1055:         ; 1055DD   entries $1168-$116F
   ;name = "ADCB"
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
@@ -478,13 +915,28 @@ Procedure InstructionADCB_1055()         ; 1055DD   entries $1168-$116F
   FlagNZ = Res << 8
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ADCB " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-SBC-------------------------------------------------------------------
 ; C: set if the destination was 0 and C was 1, cleared otherwise (the
 ; processor handbook's rule; the C core in this repository leaves C set
 ; when C was clear - worth checking against a real machine or a test).
-Procedure InstructionSBC_0056()          ; 0056DD   entries $0170-$0177
+InstructionSBC_0056:          ; 0056DD   entries $0170-$0177
   ;name = "SBC"
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
@@ -506,9 +958,24 @@ Procedure InstructionSBC_0056()          ; 0056DD   entries $0170-$0177
   FlagNZ = Res
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SBC " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionSBCB_1056()         ; 1056DD   entries $1170-$1177
+InstructionSBCB_1056:         ; 1056DD   entries $1170-$1177
   ;name = "SBCB"
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
@@ -530,10 +997,25 @@ Procedure InstructionSBCB_1056()         ; 1056DD   entries $1170-$1177
   FlagNZ = Res << 8
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SBCB " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-TST-------------------------------------------------------------------
-Procedure InstructionTST_0057()          ; 0057DD   entries $0178-$017F
+InstructionTST_0057:          ; 0057DD   entries $0178-$017F
   ;name = "TST"
   If (Op & $38) = 0
     FlagNZ = Reg(Op & 7)
@@ -544,9 +1026,24 @@ Procedure InstructionTST_0057()          ; 0057DD   entries $0178-$017F
   FlagC = 0
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TST " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionTSTB_1057()         ; 1057DD   entries $1178-$117F
+InstructionTSTB_1057:         ; 1057DD   entries $1178-$117F
   ;name = "TSTB"
   If (Op & $38) = 0
     FlagNZ = (Reg(Op & 7) & $FF) << 8
@@ -557,14 +1054,29 @@ Procedure InstructionTSTB_1057()         ; 1057DD   entries $1178-$117F
   FlagC = 0
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TSTB " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ; ======================================================================
 ;  SHIFTS AND ROTATES. V is N xor C after the operation.
 ; ======================================================================
 
 ;-ROR-------------------------------------------------------------------
-Procedure InstructionROR_0060()          ; 0060DD   entries $0180-$0187
+InstructionROR_0060:          ; 0060DD   entries $0180-$0187
   ;name = "ROR"
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
@@ -581,9 +1093,24 @@ Procedure InstructionROR_0060()          ; 0060DD   entries $0180-$0187
   FlagNZ = Res
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROR " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionRORB_1060()         ; 1060DD   entries $1180-$1187
+InstructionRORB_1060:         ; 1060DD   entries $1180-$1187
   ;name = "RORB"
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
@@ -600,10 +1127,25 @@ Procedure InstructionRORB_1060()         ; 1060DD   entries $1180-$1187
   FlagNZ = Res << 8
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("RORB " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-ROL-------------------------------------------------------------------
-Procedure InstructionROL_0061()          ; 0061DD   entries $0188-$018F
+InstructionROL_0061:          ; 0061DD   entries $0188-$018F
   ;name = "ROL"
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
@@ -620,9 +1162,24 @@ Procedure InstructionROL_0061()          ; 0061DD   entries $0188-$018F
   FlagNZ = Res
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROL " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionROLB_1061()         ; 1061DD   entries $1188-$118F
+InstructionROLB_1061:         ; 1061DD   entries $1188-$118F
   ;name = "ROLB"
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
@@ -639,10 +1196,25 @@ Procedure InstructionROLB_1061()         ; 1061DD   entries $1188-$118F
   FlagNZ = Res << 8
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROLB " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-ASR-------------------------------------------------------------------
-Procedure InstructionASR_0062()          ; 0062DD   entries $0190-$0197
+InstructionASR_0062:          ; 0062DD   entries $0190-$0197
   ;name = "ASR"
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
@@ -659,9 +1231,24 @@ Procedure InstructionASR_0062()          ; 0062DD   entries $0190-$0197
   FlagNZ = Res
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASR " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionASRB_1062()         ; 1062DD   entries $1190-$1197
+InstructionASRB_1062:         ; 1062DD   entries $1190-$1197
   ;name = "ASRB"
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
@@ -678,10 +1265,25 @@ Procedure InstructionASRB_1062()         ; 1062DD   entries $1190-$1197
   FlagNZ = Res << 8
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASRB " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-ASL-------------------------------------------------------------------
-Procedure InstructionASL_0063()          ; 0063DD   entries $0198-$019F
+InstructionASL_0063:          ; 0063DD   entries $0198-$019F
   ;name = "ASL"
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
@@ -698,9 +1300,24 @@ Procedure InstructionASL_0063()          ; 0063DD   entries $0198-$019F
   FlagNZ = Res
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASL " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionASLB_1063()         ; 1063DD   entries $1198-$119F
+InstructionASLB_1063:         ; 1063DD   entries $1198-$119F
   ;name = "ASLB"
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
@@ -717,10 +1334,25 @@ Procedure InstructionASLB_1063()         ; 1063DD   entries $1198-$119F
   FlagNZ = Res << 8
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASLB " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-SWAB------------------------------------------------------------------
-Procedure InstructionSWAB_0003()         ; 0003DD   entries $0018-$001F
+InstructionSWAB_0003:         ; 0003DD   entries $0018-$001F
   ;name = "SWAB"
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
@@ -737,10 +1369,25 @@ Procedure InstructionSWAB_0003()         ; 0003DD   entries $0018-$001F
   FlagC = 0
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SWAB " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-SXT-------------------------------------------------------------------
-Procedure InstructionSXT_0067()          ; 0067DD   entries $01B8-$01BF   N unaffected
+InstructionSXT_0067:          ; 0067DD   entries $01B8-$01BF   N unaffected
   ;name = "SXT"
   Res = 0
   If FlagN()
@@ -755,10 +1402,25 @@ Procedure InstructionSXT_0067()          ; 0067DD   entries $01B8-$01BF   N unaf
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SXT " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-MFPS / MTPS ----------------------------------------------------------
-Procedure InstructionMFPS_1067()         ; 1067DD   entries $11B8-$11BF
+InstructionMFPS_1067:         ; 1067DD   entries $11B8-$11BF
   ;name = "MFPS"
   Res = PswGet() & $FF
   If (Op & $38) = 0
@@ -770,9 +1432,24 @@ Procedure InstructionMFPS_1067()         ; 1067DD   entries $11B8-$11BF
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MFPS " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionMTPS_1064()         ; 1064SS   entries $11A0-$11A7   the T bit is not written
+InstructionMTPS_1064:         ; 1064SS   entries $11A0-$11A7   the T bit is not written
   ;name = "MTPS"
   If (Op & $38) = 0
     Src = Reg(Op & 7) & $FF
@@ -782,12 +1459,27 @@ Procedure InstructionMTPS_1064()         ; 1064SS   entries $11A0-$11A7   the T 
   PswSet((PswGet() & $FF10) | (Src & $EF))
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MTPS " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-MFPI / MTPI / MFPD / MTPD -------------------------------------------
 ; One address space until the memory management unit is modelled, so the
 ; "previous" space is this one.
-Procedure InstructionMFPI_0065()         ; 0065SS   entries $01A8-$01AF
+InstructionMFPI_0065:         ; 0065SS   entries $01A8-$01AF
   ;name = "MFPI"
   If (Op & $38) = 0
     Src = Reg(Op & 7)
@@ -799,9 +1491,24 @@ Procedure InstructionMFPI_0065()         ; 0065SS   entries $01A8-$01AF
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MFPI " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionMTPI_0066()         ; 0066DD   entries $01B0-$01B7
+InstructionMTPI_0066:         ; 0066DD   entries $01B0-$01B7
   ;name = "MTPI"
   Src = Pop()
   If (Op & $38) = 0
@@ -813,19 +1520,32 @@ Procedure InstructionMTPI_0066()         ; 0066DD   entries $01B0-$01B7
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MTPI " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionMFPD_1065()         ; 1065SS   entries $11A8-$11AF
+InstructionMFPD_1065:         ; 1065SS   entries $11A8-$11AF
   ;name = "MFPD"
-  InstructionMFPI_0065()
+  Goto InstructionMFPI_0065
   ;disassembly("MFPD " + ;name)
-EndProcedure
 
-Procedure InstructionMTPD_1066()         ; 1066DD   entries $11B0-$11B7
+InstructionMTPD_1066:         ; 1066DD   entries $11B0-$11B7
   ;name = "MTPD"
-  InstructionMTPI_0066()
+  Goto InstructionMTPI_0066
   ;disassembly("MTPD " + ;name)
-EndProcedure
 
 ; ======================================================================
 ;  BRANCHES. The offset is the low byte, signed, in words:
@@ -833,150 +1553,327 @@ EndProcedure
 ;  written without a branch as ((Op & $FF) << 1) - ((Op & $80) << 2).
 ;  Each branch owns 32 table entries (its offset spills into bits 7-3).
 ; ======================================================================
-Procedure BranchTaken()
-  Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
-EndProcedure
 
 ;-BR--------------------------------------------------------------------
-Procedure InstructionBR_0004()           ; 000400   entries $0020-$003F
+InstructionBR_0004:           ; 000400   entries $0020-$003F
   ;name = "BR"
   Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
   ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BR " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBNE_0010()          ; 001000   entries $0040-$005F   Z = 0
+InstructionBNE_0010:          ; 001000   entries $0040-$005F   Z = 0
   ;name = "BNE"
   If FlagNZ & $FFFF
     Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
   EndIf
   ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BNE " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBEQ_0014()          ; 001400   entries $0060-$007F   Z = 1
+InstructionBEQ_0014:          ; 001400   entries $0060-$007F   Z = 1
   ;name = "BEQ"
   If (FlagNZ & $FFFF) = 0
     Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
   EndIf
   ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BEQ " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBGE_0020()          ; 002000   entries $0080-$009F   N xor V = 0
+InstructionBGE_0020:          ; 002000   entries $0080-$009F   N xor V = 0
   ;name = "BGE"
   If FlagN() = FlagV
     BranchTaken()
   EndIf
   ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BGE " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBLT_0024()          ; 002400   entries $00A0-$00BF   N xor V = 1
+InstructionBLT_0024:          ; 002400   entries $00A0-$00BF   N xor V = 1
   ;name = "BLT"
   If FlagN() <> FlagV
     BranchTaken()
   EndIf
   ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BLT " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBGT_0030()          ; 003000   entries $00C0-$00DF   Z or (N xor V) = 0
+InstructionBGT_0030:          ; 003000   entries $00C0-$00DF   Z or (N xor V) = 0
   ;name = "BGT"
   If (FlagNZ & $FFFF) <> 0 And FlagN() = FlagV
     BranchTaken()
   EndIf
   ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BGT " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBLE_0034()          ; 003400   entries $00E0-$00FF   Z or (N xor V) = 1
+InstructionBLE_0034:          ; 003400   entries $00E0-$00FF   Z or (N xor V) = 1
   ;name = "BLE"
   If (FlagNZ & $FFFF) = 0 Or FlagN() <> FlagV
     BranchTaken()
   EndIf
   ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BLE " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBPL_1000()          ; 100000   entries $1000-$101F   N = 0
+InstructionBPL_1000:          ; 100000   entries $1000-$101F   N = 0
   ;name = "BPL"
   If (FlagNZ & $18000) = 0
     Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
   EndIf
   ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BPL " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBMI_1004()          ; 100400   entries $1020-$103F   N = 1
+InstructionBMI_1004:          ; 100400   entries $1020-$103F   N = 1
   ;name = "BMI"
   If FlagNZ & $18000
     Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
   EndIf
   ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BMI " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBHI_1010()          ; 101000   entries $1040-$105F   C = 0 and Z = 0
+InstructionBHI_1010:          ; 101000   entries $1040-$105F   C = 0 and Z = 0
   ;name = "BHI"
   If FlagC = 0 And (FlagNZ & $FFFF) <> 0
     BranchTaken()
   EndIf
   ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BHI " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBLOS_1014()         ; 101400   entries $1060-$107F   C = 1 or Z = 1
+InstructionBLOS_1014:         ; 101400   entries $1060-$107F   C = 1 or Z = 1
   ;name = "BLOS"
   If FlagC = 1 Or (FlagNZ & $FFFF) = 0
     BranchTaken()
   EndIf
   ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BLOS " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBVC_1020()          ; 102000   entries $1080-$109F   V = 0
+InstructionBVC_1020:          ; 102000   entries $1080-$109F   V = 0
   ;name = "BVC"
   If FlagV = 0
     Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
   EndIf
   ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BVC " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBVS_1024()          ; 102400   entries $10A0-$10BF   V = 1
+InstructionBVS_1024:          ; 102400   entries $10A0-$10BF   V = 1
   ;name = "BVS"
   If FlagV
     Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
   EndIf
   ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BVS " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBCC_1030()          ; 103000   entries $10C0-$10DF   C = 0 (also BHIS)
+InstructionBCC_1030:          ; 103000   entries $10C0-$10DF   C = 0 (also BHIS)
   ;name = "BCC"
   If FlagC = 0
     Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
   EndIf
   ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BCC " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBCS_1034()          ; 103400   entries $10E0-$10FF   C = 1 (also BLO)
+InstructionBCS_1034:          ; 103400   entries $10E0-$10FF   C = 1 (also BLO)
   ;name = "BCS"
   If FlagC
     Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
   EndIf
   ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BCS " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ; ======================================================================
 ;  JUMPS AND SUBROUTINES
 ; ======================================================================
 
 ;-JMP-------------------------------------------------------------------
-Procedure InstructionJMP_0001()          ; 0001DD   entries $0008-$000F
+InstructionJMP_0001:          ; 0001DD   entries $0008-$000F
   ;name = "JMP"
   If (Op & $38) = 0
     TrapVector = #VEC_BUS                ; JMP to a register is illegal
@@ -985,10 +1882,25 @@ Procedure InstructionJMP_0001()          ; 0001DD   entries $0008-$000F
   EndIf
   ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("JMP " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-JSR-------------------------------------------------------------------
-Procedure InstructionJSR_004()           ; 004RDD   entries $0100-$013F
+InstructionJSR_004:           ; 004RDD   entries $0100-$013F
   ;name = "JSR"
   If (Op & $38) = 0
     TrapVector = #VEC_BUS                ; JSR to a register is illegal
@@ -1000,29 +1912,74 @@ Procedure InstructionJSR_004()           ; 004RDD   entries $0100-$013F
   EndIf
   ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("JSR " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-RTS-------------------------------------------------------------------
-Procedure InstructionRTS_00020()         ; 00020R   entry $0010
+InstructionRTS_00020:         ; 00020R   entry $0010
   ;name = "RTS"
   Reg(7) = Reg(Op & 7)
   Reg(Op & 7) = Pop()
   ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("RTS " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-MARK------------------------------------------------------------------
-Procedure InstructionMARK_0064()         ; 0064NN   entries $01A0-$01A7
+InstructionMARK_0064:         ; 0064NN   entries $01A0-$01A7
   ;name = "MARK"
   Reg(6) = (Reg(7) + ((Op & $3F) << 1)) & $FFFF
   Reg(7) = Reg(5)
   Reg(5) = Pop()
   ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("MARK " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-SOB-------------------------------------------------------------------
-Procedure InstructionSOB_077()           ; 077RNN   entries $0FC0-$0FFF
+InstructionSOB_077:           ; 077RNN   entries $0FC0-$0FFF
   ;name = "SOB"
   Reg((Op >> 6) & 7) = (Reg((Op >> 6) & 7) - 1) & $FFFF
   If Reg((Op >> 6) & 7)
@@ -1030,14 +1987,26 @@ Procedure InstructionSOB_077()           ; 077RNN   entries $0FC0-$0FFF
   EndIf
   ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("SOB " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ; ======================================================================
 ;  EIS - MUL, DIV, ASH, ASHC, XOR. Register in bits 8-6, operand in 5-0.
 ; ======================================================================
 
 ;-MUL-------------------------------------------------------------------
-Procedure InstructionMUL_070()           ; 070RSS   entries $0E00-$0E3F
+InstructionMUL_070:           ; 070RSS   entries $0E00-$0E3F
   ;name = "MUL"
   If (Op & $38) = 0
     Src = Reg(Op & 7)
@@ -1062,10 +2031,25 @@ Procedure InstructionMUL_070()           ; 070RSS   entries $0E00-$0E3F
   EndIf
   ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("MUL " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-DIV-------------------------------------------------------------------
-Procedure InstructionDIV_071()           ; 071RSS   entries $0E40-$0E7F
+InstructionDIV_071:           ; 071RSS   entries $0E40-$0E7F
   ;name = "DIV"
   If (Op & $38) = 0
     Src = Reg(Op & 7)
@@ -1095,12 +2079,27 @@ Procedure InstructionDIV_071()           ; 071RSS   entries $0E40-$0E7F
   EndIf
   ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("DIV " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-ASH-------------------------------------------------------------------
 ; Shift count is the low six bits of the source, signed: positive shifts
 ; left, negative shifts right. A loop - rare instruction, correct first.
-Procedure InstructionASH_072()           ; 072RSS   entries $0E80-$0EBF
+InstructionASH_072:           ; 072RSS   entries $0E80-$0EBF
   ;name = "ASH"
   If (Op & $38) = 0
     Src = Reg(Op & 7) & $3F
@@ -1131,10 +2130,25 @@ Procedure InstructionASH_072()           ; 072RSS   entries $0E80-$0EBF
   FlagNZ = Res
   ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("ASH " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-ASHC------------------------------------------------------------------
-Procedure InstructionASHC_073()          ; 073RSS   entries $0EC0-$0EFF
+InstructionASHC_073:          ; 073RSS   entries $0EC0-$0EFF
   ;name = "ASHC"
   If (Op & $38) = 0
     Src = Reg(Op & 7) & $3F
@@ -1166,10 +2180,25 @@ Procedure InstructionASHC_073()          ; 073RSS   entries $0EC0-$0EFF
   SetNZ(Bool(Res < 0), Bool(Res = 0))
   ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("ASHC " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ;-XOR-------------------------------------------------------------------
-Procedure InstructionXOR_074()           ; 074RDD   entries $0F00-$0F3F
+InstructionXOR_074:           ; 074RDD   entries $0F00-$0F3F
   ;name = "XOR"
   If (Op & $38) = 0
     Res = Reg(Op & 7) ! Reg((Op >> 6) & 7)
@@ -1183,93 +2212,246 @@ Procedure InstructionXOR_074()           ; 074RDD   entries $0F00-$0F3F
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("XOR " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ; ======================================================================
 ;  TRAPS AND MACHINE CONTROL
 ; ======================================================================
-Procedure InstructionEMT_104()           ; 104000-104377   entries $1100-$111F
+InstructionEMT_104:           ; 104000-104377   entries $1100-$111F
   ;name = "EMT"
   TrapVector = #VEC_EMT
   ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("EMT " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionTRAP_1044()         ; 104400-104777   entries $1120-$113F
+InstructionTRAP_1044:         ; 104400-104777   entries $1120-$113F
   ;name = "TRAP"
   TrapVector = #VEC_TRAP
   ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("TRAP " + ;name)
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionHALT_000000()       ; entry $0000, sub-decoded
+InstructionHALT_000000:       ; entry $0000, sub-decoded
   ;name = "HALT"
   Halted = 1
   Reg(7) = (Reg(7) - 2) & $FFFF          ; PC stays on the HALT, as on the console
   ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("HALT")
-EndProcedure
+  Goto SlowTail                         ; Halted is only looked at there
 
-Procedure InstructionWAIT_000001()       ; entry $0000, sub-decoded
+InstructionWAIT_000001:       ; entry $0000, sub-decoded
   ;name = "WAIT"
   Waiting = 1
   ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("WAIT")
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionRTI_000002()        ; entry $0000, sub-decoded
+InstructionRTI_000002:        ; entry $0000, sub-decoded
   ;name = "RTI"
   Reg(7) = Pop()
   PswSet(Pop())
   ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("RTI")
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBPT_000003()        ; entry $0000, sub-decoded
+InstructionBPT_000003:        ; entry $0000, sub-decoded
   ;name = "BPT"
   TrapVector = #VEC_BPT
   ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("BPT")
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionIOT_000004()        ; entry $0000, sub-decoded
+InstructionIOT_000004:        ; entry $0000, sub-decoded
   ;name = "IOT"
   TrapVector = #VEC_IOT
   ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("IOT")
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionRESET_000005()      ; entry $0000, sub-decoded - no devices yet
+InstructionRESET_000005:      ; entry $0000, sub-decoded - no devices yet
   ;name = "RESET"
   ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("RESET")
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionRTT_000006()        ; entry $0000, sub-decoded (T-bit timing not modelled)
+InstructionRTT_000006:        ; entry $0000, sub-decoded (T-bit timing not modelled)
   ;name = "RTT"
   Reg(7) = Pop()
   PswSet(Pop())
   ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("RTT")
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionMFPT_000007()       ; entry $0000, sub-decoded
+InstructionMFPT_000007:       ; entry $0000, sub-decoded
   ;name = "MFPT"
   Reg(0) = 5                             ; processor type 5 = J-11
   ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("MFPT")
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionSPL_00023()         ; 00023N   entry $0013
+InstructionSPL_00023:         ; 00023N   entry $0013
   ;name = "SPL"
   PswHigh = (PswHigh & $FF1F) | ((Op & 7) << 5)
   ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("SPL")
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ; 000240-000277: bit 4 = set (1) or clear (0), bits 3-0 = N Z V C.
 ; 000240 is NOP, 000257 CCC, 000277 SCC.
-Procedure InstructionCC_00024()          ; 00024x-00027x   entries $0014-$0017
+InstructionCC_00024:          ; 00024x-00027x   entries $0014-$0017
   ;name = "CLx/SEx"
   Tmp = PswGet()
   If Op & $10
@@ -1280,14 +2462,41 @@ Procedure InstructionCC_00024()          ; 00024x-00027x   entries $0014-$0017
   PswSet(Tmp)
   ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("CC")
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionReserved()          ; every opcode this model does not execute
+InstructionReserved:          ; every opcode this model does not execute
   ;name = "reserved"
   TrapVector = #VEC_RESV
   ClockCycles = ClockCycles + #J11_T_TRAP
   ;disassembly(".WORD")
-EndProcedure
+  ; ---- next instruction (THE TAIL, top of file) ----
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
 ; ======================================================================
 ;  REGISTER FAST PATHS (Pico 2 only). One table entry per opcode means the
@@ -1298,7 +2507,7 @@ EndProcedure
 ;  (ADC, SBC, the byte rotates...) is correct through its general handler.
 ; ======================================================================
 
-Procedure InstructionMOV_01_RR()               ; 01SD, both operands in registers
+InstructionMOV_01_RR:               ; 01SD, both operands in registers
   ;name = "MOV Rs,Rd"
   Src = Reg((Op >> 6) & 7)
   Reg(Op & 7) = Src
@@ -1306,9 +2515,21 @@ Procedure InstructionMOV_01_RR()               ; 01SD, both operands in register
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("MOV " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionCMP_02_RR()               ; 02SD, both operands in registers
+InstructionCMP_02_RR:               ; 02SD, both operands in registers
   ;name = "CMP Rs,Rd"
   Src = Reg((Op >> 6) & 7)
   Dst = Reg(Op & 7)
@@ -1318,17 +2539,41 @@ Procedure InstructionCMP_02_RR()               ; 02SD, both operands in register
   FlagNZ = Res & $FFFF
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("CMP " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBIT_03_RR()               ; 03SD, both operands in registers
+InstructionBIT_03_RR:               ; 03SD, both operands in registers
   ;name = "BIT Rs,Rd"
   FlagNZ = Reg((Op >> 6) & 7) & Reg(Op & 7)
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIT " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBIC_04_RR()               ; 04SD, both operands in registers
+InstructionBIC_04_RR:               ; 04SD, both operands in registers
   ;name = "BIC Rs,Rd"
   Res = Reg(Op & 7) & ~Reg((Op >> 6) & 7) & $FFFF
   Reg(Op & 7) = Res
@@ -1336,9 +2581,21 @@ Procedure InstructionBIC_04_RR()               ; 04SD, both operands in register
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIC " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBIS_05_RR()               ; 05SD, both operands in registers
+InstructionBIS_05_RR:               ; 05SD, both operands in registers
   ;name = "BIS Rs,Rd"
   Res = Reg(Op & 7) | Reg((Op >> 6) & 7)
   Reg(Op & 7) = Res
@@ -1346,9 +2603,21 @@ Procedure InstructionBIS_05_RR()               ; 05SD, both operands in register
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIS " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionADD_06_RR()               ; 06SD, both operands in registers
+InstructionADD_06_RR:               ; 06SD, both operands in registers
   ;name = "ADD Rs,Rd"
   Src = Reg((Op >> 6) & 7)
   Dst = Reg(Op & 7)
@@ -1359,9 +2628,21 @@ Procedure InstructionADD_06_RR()               ; 06SD, both operands in register
   FlagNZ = Res & $FFFF
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("ADD " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionMOVB_11_RR()              ; 11SD, both operands in registers
+InstructionMOVB_11_RR:              ; 11SD, both operands in registers
   ;name = "MOVB Rs,Rd"
   Src = Reg((Op >> 6) & 7) & $FF
   Reg(Op & 7) = (Src | (0 - (Src & $80))) & $FFFF
@@ -1369,9 +2650,21 @@ Procedure InstructionMOVB_11_RR()              ; 11SD, both operands in register
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("MOVB " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionCMPB_12_RR()              ; 12SD, both operands in registers
+InstructionCMPB_12_RR:              ; 12SD, both operands in registers
   ;name = "CMPB Rs,Rd"
   Src = Reg((Op >> 6) & 7) & $FF
   Dst = Reg(Op & 7) & $FF
@@ -1381,17 +2674,41 @@ Procedure InstructionCMPB_12_RR()              ; 12SD, both operands in register
   FlagNZ = (Res & $FF) << 8
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("CMPB " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBITB_13_RR()              ; 13SD, both operands in registers
+InstructionBITB_13_RR:              ; 13SD, both operands in registers
   ;name = "BITB Rs,Rd"
   FlagNZ = (Reg((Op >> 6) & 7) & Reg(Op & 7) & $FF) << 8
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BITB " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBICB_14_RR()              ; 14SD, both operands in registers
+InstructionBICB_14_RR:              ; 14SD, both operands in registers
   ;name = "BICB Rs,Rd"
   Res = Reg(Op & 7) & ~Reg((Op >> 6) & 7) & $FF
   Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
@@ -1399,9 +2716,21 @@ Procedure InstructionBICB_14_RR()              ; 14SD, both operands in register
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BICB " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionBISB_15_RR()              ; 15SD, both operands in registers
+InstructionBISB_15_RR:              ; 15SD, both operands in registers
   ;name = "BISB Rs,Rd"
   Res = (Reg(Op & 7) | Reg((Op >> 6) & 7)) & $FF
   Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
@@ -1409,9 +2738,21 @@ Procedure InstructionBISB_15_RR()              ; 15SD, both operands in register
   FlagV = 0
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BISB " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionSUB_16_RR()               ; 16SD, both operands in registers
+InstructionSUB_16_RR:               ; 16SD, both operands in registers
   ;name = "SUB Rs,Rd"
   Src = Reg((Op >> 6) & 7)
   Dst = Reg(Op & 7)
@@ -1422,9 +2763,21 @@ Procedure InstructionSUB_16_RR()               ; 16SD, both operands in register
   FlagNZ = Res & $FFFF
   ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("SUB " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionCLR_0050_R()              ; 0050R, operand in a register
+InstructionCLR_0050_R:              ; 0050R, operand in a register
   ;name = "CLR Rd"
   Reg(Op & 7) = 0
   FlagNZ = 0
@@ -1432,9 +2785,21 @@ Procedure InstructionCLR_0050_R()              ; 0050R, operand in a register
   FlagC = 0
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLR " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionCOM_0051_R()              ; 0051R, operand in a register
+InstructionCOM_0051_R:              ; 0051R, operand in a register
   ;name = "COM Rd"
   Res = Reg(Op & 7) ! $FFFF
   Reg(Op & 7) = Res
@@ -1443,9 +2808,21 @@ Procedure InstructionCOM_0051_R()              ; 0051R, operand in a register
   FlagC = 1
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("COM " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionINC_0052_R()              ; 0052R, operand in a register
+InstructionINC_0052_R:              ; 0052R, operand in a register
   ;name = "INC Rd"
   Dst = Reg(Op & 7)
   Res = (Dst + 1) & $FFFF
@@ -1457,9 +2834,21 @@ Procedure InstructionINC_0052_R()              ; 0052R, operand in a register
   FlagNZ = Res
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("INC " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionDEC_0053_R()              ; 0053R, operand in a register
+InstructionDEC_0053_R:              ; 0053R, operand in a register
   ;name = "DEC Rd"
   Dst = Reg(Op & 7)
   Res = (Dst - 1) & $FFFF
@@ -1471,9 +2860,21 @@ Procedure InstructionDEC_0053_R()              ; 0053R, operand in a register
   FlagNZ = Res
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("DEC " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionNEG_0054_R()              ; 0054R, operand in a register
+InstructionNEG_0054_R:              ; 0054R, operand in a register
   ;name = "NEG Rd"
   Res = (0 - Reg(Op & 7)) & $FFFF
   Reg(Op & 7) = Res
@@ -1488,18 +2889,42 @@ Procedure InstructionNEG_0054_R()              ; 0054R, operand in a register
   FlagNZ = Res
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("NEG " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionTST_0057_R()              ; 0057R, operand in a register
+InstructionTST_0057_R:              ; 0057R, operand in a register
   ;name = "TST Rd"
   FlagNZ = Reg(Op & 7)
   FlagV = 0
   FlagC = 0
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TST " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionROR_0060_R()              ; 0060R, operand in a register
+InstructionROR_0060_R:              ; 0060R, operand in a register
   ;name = "ROR Rd"
   Dst = Reg(Op & 7)
   Res = (Dst >> 1) | (FlagC << 15)
@@ -1509,9 +2934,21 @@ Procedure InstructionROR_0060_R()              ; 0060R, operand in a register
   FlagNZ = Res
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROR " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionROL_0061_R()              ; 0061R, operand in a register
+InstructionROL_0061_R:              ; 0061R, operand in a register
   ;name = "ROL Rd"
   Dst = Reg(Op & 7)
   Res = ((Dst << 1) | FlagC) & $FFFF
@@ -1521,9 +2958,21 @@ Procedure InstructionROL_0061_R()              ; 0061R, operand in a register
   FlagNZ = Res
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROL " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionASR_0062_R()              ; 0062R, operand in a register
+InstructionASR_0062_R:              ; 0062R, operand in a register
   ;name = "ASR Rd"
   Dst = Reg(Op & 7)
   Res = (Dst >> 1) | (Dst & $8000)
@@ -1533,9 +2982,21 @@ Procedure InstructionASR_0062_R()              ; 0062R, operand in a register
   FlagNZ = Res
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASR " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionASL_0063_R()              ; 0063R, operand in a register
+InstructionASL_0063_R:              ; 0063R, operand in a register
   ;name = "ASL Rd"
   Dst = Reg(Op & 7)
   Res = (Dst << 1) & $FFFF
@@ -1545,9 +3006,21 @@ Procedure InstructionASL_0063_R()              ; 0063R, operand in a register
   FlagNZ = Res
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASL " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionSWAB_0003_R()             ; 0003R, operand in a register
+InstructionSWAB_0003_R:             ; 0003R, operand in a register
   ;name = "SWAB Rd"
   Dst = Reg(Op & 7)
   Res = ((Dst >> 8) | (Dst << 8)) & $FFFF
@@ -1557,9 +3030,21 @@ Procedure InstructionSWAB_0003_R()             ; 0003R, operand in a register
   FlagC = 0
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SWAB " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionCLRB_1050_R()             ; 1050R, operand in a register
+InstructionCLRB_1050_R:             ; 1050R, operand in a register
   ;name = "CLRB Rd"
   Reg(Op & 7) = Reg(Op & 7) & $FF00
   FlagNZ = 0
@@ -1567,9 +3052,21 @@ Procedure InstructionCLRB_1050_R()             ; 1050R, operand in a register
   FlagC = 0
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLRB " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionINCB_1052_R()             ; 1052R, operand in a register
+InstructionINCB_1052_R:             ; 1052R, operand in a register
   ;name = "INCB Rd"
   Dst = Reg(Op & 7) & $FF
   Res = (Dst + 1) & $FF
@@ -1581,9 +3078,21 @@ Procedure InstructionINCB_1052_R()             ; 1052R, operand in a register
   FlagNZ = Res << 8
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("INCB " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionDECB_1053_R()             ; 1053R, operand in a register
+InstructionDECB_1053_R:             ; 1053R, operand in a register
   ;name = "DECB Rd"
   Dst = Reg(Op & 7) & $FF
   Res = (Dst - 1) & $FF
@@ -1595,170 +3104,204 @@ Procedure InstructionDECB_1053_R()             ; 1053R, operand in a register
   FlagNZ = Res << 8
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("DECB " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
 
-Procedure InstructionTSTB_1057_R()             ; 1057R, operand in a register
+InstructionTSTB_1057_R:             ; 1057R, operand in a register
   ;name = "TSTB Rd"
   FlagNZ = (Reg(Op & 7) & $FF) << 8
   FlagV = 0
   FlagC = 0
   ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TSTB " + ;name)
-EndProcedure
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If Reg(7) < #RAM_BYTES
+    If (Reg(7) & 1) = 0
+      Op = Mem(Reg(7) >> 1)
+      Reg(7) = Reg(7) + 2
+      Goto OpTable(Op)
+    EndIf
+  EndIf
+  Goto SlowFetch
+
 
 ; ======================================================================
-;  BuildOpcodeTable - call once, before CpuRun.
+;  THE SLOW WAY OUT OF AN INSTRUCTION - a trap to take, or a HALT. The
+;  handlers' own tails send any instruction that left TrapVector set here,
+;  and HALT comes here always, because this is the only place that looks
+;  at Halted (nothing else sets it).
 ; ======================================================================
-Global FillFrom.i, FillCount.i, FillProc.i
+SlowTail:
+  If TrapVector
+    Tmp = TrapVector
+    TrapVector = 0
+    TakeTrap(Tmp)
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft > 0 And Halted = 0
+    Goto Fetch
+  EndIf
+RunEnd:
+  ProcedureReturn n - RunLeft
 
-Procedure FillOps()
-  While FillCount > 0
-    OpTable(FillFrom) = FillProc
-    FillFrom = FillFrom + 1
-    FillCount = FillCount - 1
-  Wend
-EndProcedure
-
-Procedure Ops(from.i, count.i, proc.i)
-  FillFrom = from
-  FillCount = count
-  FillProc = proc
-  FillOps()
-EndProcedure
-
-Procedure BuildOpcodeTable()
-  Protected i.i, s.i, d.i
-  For i = 0 To 65535
-    OpTable(i) = @InstructionReserved
-  Next
+; ======================================================================
+;  THE TABLE - filled the first time CpuRun runs. A '.Label' is taken
+;  with ?Name only inside the procedure that owns the label, so this is
+;  part of CpuRun; BuildOpcodeTable() at the foot just calls CpuRun(0).
+; ======================================================================
+BuildTable:
+  Ops(0, 65536, ?InstructionReserved)
 
   ; ---- 0000xx - 0003xx ----
-  OpTable($0000) = @InstructionHALT_000000         ; 000000
-  OpTable($0001) = @InstructionWAIT_000001         ; 000001
-  OpTable($0002) = @InstructionRTI_000002          ; 000002
-  OpTable($0003) = @InstructionBPT_000003          ; 000003
-  OpTable($0004) = @InstructionIOT_000004          ; 000004
-  OpTable($0005) = @InstructionRESET_000005        ; 000005
-  OpTable($0006) = @InstructionRTT_000006          ; 000006
-  OpTable($0007) = @InstructionMFPT_000007         ; 000007
-  Ops($0040, 64, @InstructionJMP_0001)             ; 000100-000177
-  Ops($0080, 8, @InstructionRTS_00020)            ; 000200-000207
-  Ops($0098, 8, @InstructionSPL_00023)            ; 000230-000237
-  Ops($00A0, 32, @InstructionCC_00024)             ; 000240-000277
-  Ops($00C0, 64, @InstructionSWAB_0003)            ; 000300-000377
+  OpTable($0000) = ?InstructionHALT_000000         ; 000000
+  OpTable($0001) = ?InstructionWAIT_000001         ; 000001
+  OpTable($0002) = ?InstructionRTI_000002          ; 000002
+  OpTable($0003) = ?InstructionBPT_000003          ; 000003
+  OpTable($0004) = ?InstructionIOT_000004          ; 000004
+  OpTable($0005) = ?InstructionRESET_000005        ; 000005
+  OpTable($0006) = ?InstructionRTT_000006          ; 000006
+  OpTable($0007) = ?InstructionMFPT_000007         ; 000007
+  Ops($0040, 64, ?InstructionJMP_0001)             ; 000100-000177
+  Ops($0080, 8, ?InstructionRTS_00020)            ; 000200-000207
+  Ops($0098, 8, ?InstructionSPL_00023)            ; 000230-000237
+  Ops($00A0, 32, ?InstructionCC_00024)             ; 000240-000277
+  Ops($00C0, 64, ?InstructionSWAB_0003)            ; 000300-000377
 
   ; ---- branches, JSR, single operand ----
-  Ops($0100, 256, @InstructionBR_0004)
-  Ops($0200, 256, @InstructionBNE_0010)
-  Ops($0300, 256, @InstructionBEQ_0014)
-  Ops($0400, 256, @InstructionBGE_0020)
-  Ops($0500, 256, @InstructionBLT_0024)
-  Ops($0600, 256, @InstructionBGT_0030)
-  Ops($0700, 256, @InstructionBLE_0034)
-  Ops($0800, 512, @InstructionJSR_004)
-  Ops($0A00, 64, @InstructionCLR_0050)
-  Ops($0A40, 64, @InstructionCOM_0051)
-  Ops($0A80, 64, @InstructionINC_0052)
-  Ops($0AC0, 64, @InstructionDEC_0053)
-  Ops($0B00, 64, @InstructionNEG_0054)
-  Ops($0B40, 64, @InstructionADC_0055)
-  Ops($0B80, 64, @InstructionSBC_0056)
-  Ops($0BC0, 64, @InstructionTST_0057)
-  Ops($0C00, 64, @InstructionROR_0060)
-  Ops($0C40, 64, @InstructionROL_0061)
-  Ops($0C80, 64, @InstructionASR_0062)
-  Ops($0CC0, 64, @InstructionASL_0063)
-  Ops($0D00, 64, @InstructionMARK_0064)
-  Ops($0D40, 64, @InstructionMFPI_0065)
-  Ops($0D80, 64, @InstructionMTPI_0066)
-  Ops($0DC0, 64, @InstructionSXT_0067)
+  Ops($0100, 256, ?InstructionBR_0004)
+  Ops($0200, 256, ?InstructionBNE_0010)
+  Ops($0300, 256, ?InstructionBEQ_0014)
+  Ops($0400, 256, ?InstructionBGE_0020)
+  Ops($0500, 256, ?InstructionBLT_0024)
+  Ops($0600, 256, ?InstructionBGT_0030)
+  Ops($0700, 256, ?InstructionBLE_0034)
+  Ops($0800, 512, ?InstructionJSR_004)
+  Ops($0A00, 64, ?InstructionCLR_0050)
+  Ops($0A40, 64, ?InstructionCOM_0051)
+  Ops($0A80, 64, ?InstructionINC_0052)
+  Ops($0AC0, 64, ?InstructionDEC_0053)
+  Ops($0B00, 64, ?InstructionNEG_0054)
+  Ops($0B40, 64, ?InstructionADC_0055)
+  Ops($0B80, 64, ?InstructionSBC_0056)
+  Ops($0BC0, 64, ?InstructionTST_0057)
+  Ops($0C00, 64, ?InstructionROR_0060)
+  Ops($0C40, 64, ?InstructionROL_0061)
+  Ops($0C80, 64, ?InstructionASR_0062)
+  Ops($0CC0, 64, ?InstructionASL_0063)
+  Ops($0D00, 64, ?InstructionMARK_0064)
+  Ops($0D40, 64, ?InstructionMFPI_0065)
+  Ops($0D80, 64, ?InstructionMTPI_0066)
+  Ops($0DC0, 64, ?InstructionSXT_0067)
 
   ; ---- double operand, word ----
-  Ops($1000, 4096, @InstructionMOV_01)
-  Ops($2000, 4096, @InstructionCMP_02)
-  Ops($3000, 4096, @InstructionBIT_03)
-  Ops($4000, 4096, @InstructionBIC_04)
-  Ops($5000, 4096, @InstructionBIS_05)
-  Ops($6000, 4096, @InstructionADD_06)
+  Ops($1000, 4096, ?InstructionMOV_01)
+  Ops($2000, 4096, ?InstructionCMP_02)
+  Ops($3000, 4096, ?InstructionBIT_03)
+  Ops($4000, 4096, ?InstructionBIC_04)
+  Ops($5000, 4096, ?InstructionBIS_05)
+  Ops($6000, 4096, ?InstructionADD_06)
 
   ; ---- EIS ----
-  Ops($7000, 512, @InstructionMUL_070)
-  Ops($7200, 512, @InstructionDIV_071)
-  Ops($7400, 512, @InstructionASH_072)
-  Ops($7600, 512, @InstructionASHC_073)
-  Ops($7800, 512, @InstructionXOR_074)
-  Ops($7E00, 512, @InstructionSOB_077)
+  Ops($7000, 512, ?InstructionMUL_070)
+  Ops($7200, 512, ?InstructionDIV_071)
+  Ops($7400, 512, ?InstructionASH_072)
+  Ops($7600, 512, ?InstructionASHC_073)
+  Ops($7800, 512, ?InstructionXOR_074)
+  Ops($7E00, 512, ?InstructionSOB_077)
 
   ; ---- 10xxxx ----
-  Ops($8000, 256, @InstructionBPL_1000)
-  Ops($8100, 256, @InstructionBMI_1004)
-  Ops($8200, 256, @InstructionBHI_1010)
-  Ops($8300, 256, @InstructionBLOS_1014)
-  Ops($8400, 256, @InstructionBVC_1020)
-  Ops($8500, 256, @InstructionBVS_1024)
-  Ops($8600, 256, @InstructionBCC_1030)
-  Ops($8700, 256, @InstructionBCS_1034)
-  Ops($8800, 256, @InstructionEMT_104)
-  Ops($8900, 256, @InstructionTRAP_1044)
-  Ops($8A00, 64, @InstructionCLRB_1050)
-  Ops($8A40, 64, @InstructionCOMB_1051)
-  Ops($8A80, 64, @InstructionINCB_1052)
-  Ops($8AC0, 64, @InstructionDECB_1053)
-  Ops($8B00, 64, @InstructionNEGB_1054)
-  Ops($8B40, 64, @InstructionADCB_1055)
-  Ops($8B80, 64, @InstructionSBCB_1056)
-  Ops($8BC0, 64, @InstructionTSTB_1057)
-  Ops($8C00, 64, @InstructionRORB_1060)
-  Ops($8C40, 64, @InstructionROLB_1061)
-  Ops($8C80, 64, @InstructionASRB_1062)
-  Ops($8CC0, 64, @InstructionASLB_1063)
-  Ops($8D00, 64, @InstructionMTPS_1064)
-  Ops($8D40, 64, @InstructionMFPD_1065)
-  Ops($8D80, 64, @InstructionMTPD_1066)
-  Ops($8DC0, 64, @InstructionMFPS_1067)
+  Ops($8000, 256, ?InstructionBPL_1000)
+  Ops($8100, 256, ?InstructionBMI_1004)
+  Ops($8200, 256, ?InstructionBHI_1010)
+  Ops($8300, 256, ?InstructionBLOS_1014)
+  Ops($8400, 256, ?InstructionBVC_1020)
+  Ops($8500, 256, ?InstructionBVS_1024)
+  Ops($8600, 256, ?InstructionBCC_1030)
+  Ops($8700, 256, ?InstructionBCS_1034)
+  Ops($8800, 256, ?InstructionEMT_104)
+  Ops($8900, 256, ?InstructionTRAP_1044)
+  Ops($8A00, 64, ?InstructionCLRB_1050)
+  Ops($8A40, 64, ?InstructionCOMB_1051)
+  Ops($8A80, 64, ?InstructionINCB_1052)
+  Ops($8AC0, 64, ?InstructionDECB_1053)
+  Ops($8B00, 64, ?InstructionNEGB_1054)
+  Ops($8B40, 64, ?InstructionADCB_1055)
+  Ops($8B80, 64, ?InstructionSBCB_1056)
+  Ops($8BC0, 64, ?InstructionTSTB_1057)
+  Ops($8C00, 64, ?InstructionRORB_1060)
+  Ops($8C40, 64, ?InstructionROLB_1061)
+  Ops($8C80, 64, ?InstructionASRB_1062)
+  Ops($8CC0, 64, ?InstructionASLB_1063)
+  Ops($8D00, 64, ?InstructionMTPS_1064)
+  Ops($8D40, 64, ?InstructionMFPD_1065)
+  Ops($8D80, 64, ?InstructionMTPD_1066)
+  Ops($8DC0, 64, ?InstructionMFPS_1067)
 
   ; ---- double operand, byte, and SUB ----
-  Ops($9000, 4096, @InstructionMOVB_11)
-  Ops($A000, 4096, @InstructionCMPB_12)
-  Ops($B000, 4096, @InstructionBITB_13)
-  Ops($C000, 4096, @InstructionBICB_14)
-  Ops($D000, 4096, @InstructionBISB_15)
-  Ops($E000, 4096, @InstructionSUB_16)
+  Ops($9000, 4096, ?InstructionMOVB_11)
+  Ops($A000, 4096, ?InstructionCMPB_12)
+  Ops($B000, 4096, ?InstructionBITB_13)
+  Ops($C000, 4096, ?InstructionBICB_14)
+  Ops($D000, 4096, ?InstructionBISB_15)
+  Ops($E000, 4096, ?InstructionSUB_16)
 
   ; 17xxxx (floating point, $F000-$FFFF) stays reserved until the FPJ11 is modelled.
 
   ; ---- register fast paths: overlay the general entries ----
-  For s = 0 To 7
-    For d = 0 To 7
-      OpTable($1000 | (s << 6) | d) = @InstructionMOV_01_RR
-      OpTable($2000 | (s << 6) | d) = @InstructionCMP_02_RR
-      OpTable($3000 | (s << 6) | d) = @InstructionBIT_03_RR
-      OpTable($4000 | (s << 6) | d) = @InstructionBIC_04_RR
-      OpTable($5000 | (s << 6) | d) = @InstructionBIS_05_RR
-      OpTable($6000 | (s << 6) | d) = @InstructionADD_06_RR
-      OpTable($9000 | (s << 6) | d) = @InstructionMOVB_11_RR
-      OpTable($A000 | (s << 6) | d) = @InstructionCMPB_12_RR
-      OpTable($B000 | (s << 6) | d) = @InstructionBITB_13_RR
-      OpTable($C000 | (s << 6) | d) = @InstructionBICB_14_RR
-      OpTable($D000 | (s << 6) | d) = @InstructionBISB_15_RR
-      OpTable($E000 | (s << 6) | d) = @InstructionSUB_16_RR
+  For FillS = 0 To 7
+    For FillD = 0 To 7
+      OpTable($1000 | (FillS << 6) | FillD) = ?InstructionMOV_01_RR
+      OpTable($2000 | (FillS << 6) | FillD) = ?InstructionCMP_02_RR
+      OpTable($3000 | (FillS << 6) | FillD) = ?InstructionBIT_03_RR
+      OpTable($4000 | (FillS << 6) | FillD) = ?InstructionBIC_04_RR
+      OpTable($5000 | (FillS << 6) | FillD) = ?InstructionBIS_05_RR
+      OpTable($6000 | (FillS << 6) | FillD) = ?InstructionADD_06_RR
+      OpTable($9000 | (FillS << 6) | FillD) = ?InstructionMOVB_11_RR
+      OpTable($A000 | (FillS << 6) | FillD) = ?InstructionCMPB_12_RR
+      OpTable($B000 | (FillS << 6) | FillD) = ?InstructionBITB_13_RR
+      OpTable($C000 | (FillS << 6) | FillD) = ?InstructionBICB_14_RR
+      OpTable($D000 | (FillS << 6) | FillD) = ?InstructionBISB_15_RR
+      OpTable($E000 | (FillS << 6) | FillD) = ?InstructionSUB_16_RR
     Next
   Next
-  For d = 0 To 7
-    OpTable($0A00 | d) = @InstructionCLR_0050_R
-    OpTable($0A40 | d) = @InstructionCOM_0051_R
-    OpTable($0A80 | d) = @InstructionINC_0052_R
-    OpTable($0AC0 | d) = @InstructionDEC_0053_R
-    OpTable($0B00 | d) = @InstructionNEG_0054_R
-    OpTable($0BC0 | d) = @InstructionTST_0057_R
-    OpTable($0C00 | d) = @InstructionROR_0060_R
-    OpTable($0C40 | d) = @InstructionROL_0061_R
-    OpTable($0C80 | d) = @InstructionASR_0062_R
-    OpTable($0CC0 | d) = @InstructionASL_0063_R
-    OpTable($00C0 | d) = @InstructionSWAB_0003_R
-    OpTable($8A00 | d) = @InstructionCLRB_1050_R
-    OpTable($8A80 | d) = @InstructionINCB_1052_R
-    OpTable($8AC0 | d) = @InstructionDECB_1053_R
-    OpTable($8BC0 | d) = @InstructionTSTB_1057_R
+  For FillD = 0 To 7
+    OpTable($0A00 | FillD) = ?InstructionCLR_0050_R
+    OpTable($0A40 | FillD) = ?InstructionCOM_0051_R
+    OpTable($0A80 | FillD) = ?InstructionINC_0052_R
+    OpTable($0AC0 | FillD) = ?InstructionDEC_0053_R
+    OpTable($0B00 | FillD) = ?InstructionNEG_0054_R
+    OpTable($0BC0 | FillD) = ?InstructionTST_0057_R
+    OpTable($0C00 | FillD) = ?InstructionROR_0060_R
+    OpTable($0C40 | FillD) = ?InstructionROL_0061_R
+    OpTable($0C80 | FillD) = ?InstructionASR_0062_R
+    OpTable($0CC0 | FillD) = ?InstructionASL_0063_R
+    OpTable($00C0 | FillD) = ?InstructionSWAB_0003_R
+    OpTable($8A00 | FillD) = ?InstructionCLRB_1050_R
+    OpTable($8A80 | FillD) = ?InstructionINCB_1052_R
+    OpTable($8AC0 | FillD) = ?InstructionDECB_1053_R
+    OpTable($8BC0 | FillD) = ?InstructionTSTB_1057_R
   Next
+  OpTableReady = 1
+  Goto RunStart
+EndProcedure
+
+; Fills the table. CpuRun does this itself the first time it runs; calling
+; this first only moves the cost out of the first timed run.
+Procedure BuildOpcodeTable()
+  CpuRun(0)
 EndProcedure

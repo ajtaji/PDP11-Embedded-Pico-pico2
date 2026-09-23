@@ -1,6 +1,6 @@
 ; ======================================================================
 ;  cpu.pico - the J-11 (KDJ11-BF, 18 MHz) machine state, memory, operand
-;  addressing, traps and the opcode jump table, for the Raspberry Pi Pico.
+;  addressing, traps and the reset, for the Raspberry Pi Pico.
 ;
 ;  Include order (flat, the main file lists them):
 ;      XIncludeFile "cpu.pico"
@@ -39,19 +39,25 @@
 ;          stores. The PSW word is only assembled when something reads it
 ;          (MFPS, a trap, an RTI, the PSW's bus address).
 ;    * the dispatch table has 8192 entries indexed by the instruction's top
-;      thirteen bits (Op >> 3): 32 KB of RAM, one lookup, one indirect
-;      call, and no second table. Every instruction family has entries of
+;      thirteen bits (Op >> 3): 32 KB of RAM, one lookup, one computed
+;      jump (threaded dispatch - see instructions.pico), and no second
+;      table. Every instruction family has entries of
 ;      its own; only HALT, WAIT, RTI, BPT, IOT, RESET, RTT and MFPT
 ;      (000000-000007) share one, told apart by a short If chain. A table
 ;      with one entry per opcode would be 256 KB: too big for the Pico's
 ;      RAM, and in flash it would miss the 16 KB XIP cache on almost every
 ;      instruction - slower than the lookup it saves.
 ;
-;  Where the rest of the speed is: the compiler does not yet keep variables
-;  in registers or give a leaf procedure a cheap frame. Both would help
-;  every PureMetal program, and this emulator most of all - a handler is
-;  about a third frame overhead. That is a compiler change, not a change
-;  here; these files are written so they get the benefit untouched.
+;    * no handler is a procedure any more: they are labels in one
+;      procedure, CpuRun, so running an instruction costs no call, no frame
+;      and no return (instructions.pico has the measurements).
+;
+;  Where the rest of the speed is: keeping the hottest Globals in CPU
+;  registers. ReserveRegister, under the machine state below, holds Op,
+;  Src, Res and ClockCycles in r8-r11, which nothing else in a compiled
+;  program touches. It is switched off (#RESERVE_REGISTERS = 0) until the
+;  compiler's Pico backend honours it: until then the compiler refuses the
+;  line (PM1100) rather than ignore it.
 ;
 ;  ------------------------------------------------------------------
 ;  WHAT IS MODELLED (first cut, stated so nothing is assumed):
@@ -103,7 +109,6 @@
 ; ---- machine state ---------------------------------------------------
 Global Dim Reg.i(8)         ; R0-R7, R6 = SP, R7 = PC. 16-bit values.
 Global Dim Mem.u(#RAM_WORDS)
-Global Dim OpTable.i(8192)
 
 Global Op.i                 ; the instruction being executed
 Global Src.i, Dst.i, Res.i, Ea.i, Tmp.i   ; handler scratch - see SPEED
@@ -114,6 +119,15 @@ Global PswHigh.i            ; PSW bits 15-5 (mode, register set, priority, T)
 Global ClockCycles.i
 Global TrapVector.i         ; non-zero = a trap to take after this instruction
 Global Halted.i, Waiting.i
+
+; ---- Globals held in registers for the whole program (see SPEED) -----
+; 1 once the compiler's Pico backend honours ReserveRegister. Before that
+; it refuses the line with PM1100 - a reservation it could only ignore is
+; worse than none - so it stays 0 and these four live in RAM as before.
+#RESERVE_REGISTERS = 0
+CompilerIf #RESERVE_REGISTERS = 1
+  ReserveRegister Op = r8, Src = r9, Res = r10, ClockCycles = r11
+CompilerEndIf
 
 ; ======================================================================
 ;  PSW - assembled only when read
@@ -328,7 +342,7 @@ Procedure TakeTrap(vector.i)
 EndProcedure
 
 ; ======================================================================
-;  RUN
+;  RESET. The run loop, CpuRun(n), is in instructions.pico.
 ; ======================================================================
 Procedure CpuReset()
   Protected i.i
@@ -342,24 +356,3 @@ Procedure CpuReset()
   ClockCycles = 0
 EndProcedure
 
-; Execute up to n instructions. Returns how many ran.
-Procedure.i CpuRun(n.i)
-  Protected done.i
-  done = 0
-  While done < n And Halted = 0
-    If Reg(7) < #RAM_BYTES And (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)                 ; fast fetch, straight from RAM
-      Reg(7) = Reg(7) + 2
-    Else
-      Op = FetchWord()
-    EndIf
-    CallFunctionFast(OpTable(Op >> 3))
-    If TrapVector
-      Tmp = TrapVector
-      TrapVector = 0
-      TakeTrap(Tmp)
-    EndIf
-    done = done + 1
-  Wend
-  ProcedureReturn done
-EndProcedure
