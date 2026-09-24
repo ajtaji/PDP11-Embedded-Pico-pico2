@@ -143,6 +143,7 @@ Global InstrCount.i         ; instructions finished before this window began
 
 ; The console DL11 and the switch register - see THE I/O PAGE.
 Global Dl11RxDone.i, Dl11RxIe.i, Dl11RxBuf.i
+Global Dl11RxPolled.i      ; the program has looked at RCSR since the last character
 Global Dl11TxRdy.i, Dl11TxIe.i, Dl11TxChar.i, Dl11TxDue.i
 Global SwitchReg.i, DisplayReg.i
 Global IntReq.i             ; interrupts asked for: #INT_DL11_RX | #INT_DL11_TX
@@ -268,7 +269,9 @@ EndProcedure
 ;  is taken. IntReq is the one word the run loop looks at (DevService).
 ;  Characters leave through the ConOut queue and arrive through ConIn;
 ;  the firmware around the emulator moves them to and from the USB serial
-;  port. A character waiting in ConIn reaches RBUF at the next window
+;  port - and takes a character from the port only when the receiver is
+;  empty and the program is waiting for one (Dl11RxWanted). A character
+;  waiting in ConIn reaches RBUF at the next window
 ;  boundary after DONE is clear. If ConOut is full the transmitter just
 ;  stays busy until the firmware has drained it - nothing is lost.
 ;
@@ -280,6 +283,7 @@ Procedure.i IoRead(a.i)                  ; a is even and past the end of RAM
   If a = #PSW_ADDR
     ProcedureReturn PswGet()
   ElseIf a = #DL11_RCSR
+    Dl11RxPolled = 1
     ProcedureReturn (Dl11RxDone << 7) | (Dl11RxIe << 6)
   ElseIf a = #DL11_RBUF
     Dl11RxDone = 0
@@ -534,6 +538,7 @@ Procedure DevService()
       Dl11RxBuf = ConIn(ConInTail & (#CON_SIZE - 1)) & $FF
       ConInTail = ConInTail + 1
       Dl11RxDone = 1
+      Dl11RxPolled = 0
       If Dl11RxIe
         IntReq = IntReq | #INT_DL11_RX
       EndIf
@@ -576,6 +581,18 @@ Procedure StartWindow()
   EndIf
   RunBank = RunBank - RunLeft
   RunWindow = RunLeft
+EndProcedure
+
+; The receiver is empty and the program is waiting for a character: it
+; has the receiver interrupt enabled, or has looked at RCSR since the
+; last character arrived. The firmware reads its serial port only then.
+Procedure.i Dl11RxWanted()
+  If Dl11RxDone = 0 And ConInHead = ConInTail
+    If (Dl11RxIe | Dl11RxPolled) <> 0
+      ProcedureReturn 1
+    EndIf
+  EndIf
+  ProcedureReturn 0
 EndProcedure
 
 ; The bus INIT (the RESET instruction, and power-up): interrupt enables
