@@ -124,27 +124,11 @@ Procedure Oct(v.i)                       ; six octal digits, as DEC prints them
   Next
 EndProcedure
 
-; Hand what was written to the host, and END THE TRANSFER. A transfer that
-; ends on a full 64-byte packet is not finished for the host until a short
-; or zero-length packet follows: until then Windows holds everything back.
-; The status line is exactly 64 bytes while the instruction count has 8
-; digits (10,000,000 to 99,999,999), so the ladder's first board run saw
-; its output stop at 10 million instructions and come back, all at once,
-; only at 100 million. The library sends the zero-length packet when it is
-; flushed again with nothing new after a full packet; that is this second
-; call, and it does nothing at all after a short packet.
-Procedure FlushOut()
-  UsbSerialFlush()
-  If usbser_txlast = #USBSER_MAXPKT
-    UsbSerialFlush()
-  EndIf
-EndProcedure
-
 Procedure Eol()
   Ch(13)
   Ch(10)
   Column = 0
-  FlushOut()
+  UsbSerialFlush()                       ; the library ends a full-packet transfer itself
   Service()
 EndProcedure
 
@@ -210,7 +194,7 @@ Procedure DrainConsole()
     EndIf
   Wend
   If wrote                               ; flush only what was written, as the
-    FlushOut()                           ; report firmware does
+    UsbSerialFlush()                     ; report firmware does
   EndIf
 EndProcedure
 
