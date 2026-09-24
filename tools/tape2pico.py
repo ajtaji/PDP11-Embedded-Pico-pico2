@@ -182,20 +182,11 @@ def render(name, source, start, switches, runs, ext, patches=()):
     return "\n".join(out) + "\n"
 
 
-def main():
-    ap = argparse.ArgumentParser(description="Absolute-format PDP-11 tape to a PureMetal include.")
-    ap.add_argument("tape")
-    ap.add_argument("--start", help="start address, octal (default: the tape's transfer address)")
-    ap.add_argument("--switches", default="0", help="switch register 177570, octal (default 0)")
-    ap.add_argument("--name", help="name the firmware prints (default: the file name)")
-    ap.add_argument("--patch", default="", help="ADDR=WORD[,ADDR=WORD...] octal words to change after loading")
-    ap.add_argument("-o", action="append", dest="outs", help="output file (repeatable)")
-    a = ap.parse_args()
-
-    data, pcjs_exec = read_tape_bytes(a.tape)
-    mem, transfer, blocks = parse_absolute(data, a.tape)
-    if a.start is not None:
-        start = int(a.start, 8)
+def resolve_start(start_opt, transfer, pcjs_exec):
+    """The start address: --start, else the tape's transfer address, else
+    (the tape says do not start) the PCjs file's documented start."""
+    if start_opt is not None:
+        start = int(start_opt, 8)
     elif transfer & 1 and pcjs_exec is not None and not pcjs_exec & 1:
         # Every MAINDEC tape here ends "do not start" (000001); PCjs records
         # the documented start beside the words, so that is used.
@@ -210,19 +201,54 @@ def main():
              "Pass --start with the start address from the diagnostic's listing." % start)
     if start >= RAM_BYTES:
         fail("start address %06o is outside RAM (000000-157777). Check --start." % start)
-    switches = int(a.switches, 8) & 0xFFFF
-    name = a.name or os.path.splitext(os.path.basename(a.tape))[0]
+    return start
+
+
+def parse_patches(patch):
+    """--patch ADDR=WORD[,ADDR=WORD...] (octal) as a list of (address, word)."""
     patches = []
-    for item in [x for x in a.patch.split(",") if x.strip()]:
+    for item in [x for x in patch.split(",") if x.strip()]:
         try:
             pa, pw = [int(v, 8) for v in item.split("=")]
         except ValueError:
             fail("--patch %r is not ADDR=WORD in octal. Write it like 2236=210." % item)
         if pa & 1 or pa >= RAM_BYTES:
             fail("--patch address %06o is odd or outside RAM. Check the listing address." % pa)
-        mem[pa] = pw & 0xFF
-        mem[pa + 1] = (pw >> 8) & 0xFF
         patches.append((pa, pw & 0xFFFF))
+    return patches
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Absolute-format PDP-11 tape to a PureMetal include.")
+    ap.add_argument("tape", nargs="?")
+    ap.add_argument("--empty", action="store_true",
+                    help="no tape: the firmware waits for one on the serial port (tape_ladder.py)")
+    ap.add_argument("--start", help="start address, octal (default: the tape's transfer address)")
+    ap.add_argument("--switches", default="0", help="switch register 177570, octal (default 0)")
+    ap.add_argument("--name", help="name the firmware prints (default: the file name)")
+    ap.add_argument("--patch", default="", help="ADDR=WORD[,ADDR=WORD...] octal words to change after loading")
+    ap.add_argument("-o", action="append", dest="outs", help="output file (repeatable)")
+    a = ap.parse_args()
+
+    if a.empty:
+        if a.tape:
+            fail("--empty takes no tape: it builds the serial tape reader with nothing built in.")
+        mem, start, switches, blocks, patches = {}, 1, 0, 0, []
+        name = a.name or "serial"
+        source = "(none - tapes arrive over the serial port)"
+    else:
+        if not a.tape:
+            fail("give a tape file, or --empty for the serial tape reader.")
+        data, pcjs_exec = read_tape_bytes(a.tape)
+        mem, transfer, blocks = parse_absolute(data, a.tape)
+        start = resolve_start(a.start, transfer, pcjs_exec)
+        switches = int(a.switches, 8) & 0xFFFF
+        name = a.name or os.path.splitext(os.path.basename(a.tape))[0]
+        patches = parse_patches(a.patch)
+        for pa, pw in patches:
+            mem[pa] = pw & 0xFF
+            mem[pa + 1] = (pw >> 8) & 0xFF
+        source = a.tape
     runs = word_runs(mem)
 
     outs = a.outs
@@ -234,7 +260,7 @@ def main():
     for o in outs:
         ext = os.path.splitext(o)[1] or ".pico"
         with open(o, "w", newline="\n") as f:
-            f.write(render(name, a.tape, start, switches, runs, ext, patches))
+            f.write(render(name, source, start, switches, runs, ext, patches))
     print("tape2pico: %s: %d blocks, %d bytes in %d word runs, start %06o, switches %06o -> %s"
           % (name, blocks, len(mem), len(runs), start, switches, ", ".join(outs)))
 

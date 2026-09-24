@@ -1,30 +1,37 @@
 ; ======================================================================
-;  diag.pico - runs one PDP-11 diagnostic tape on the J-11 emulator, with
-;  the console DL11 on the Pico's USB serial port.
+;  diag.pico - runs PDP-11 diagnostic tapes on the J-11 emulator, with the
+;  console DL11 on the Pico's USB serial port.
 ;
-;  BUILD
-;    python ../../tools/tape2pico.py <tape> [--start OCTAL] [--switches OCTAL]
-;        writes tape_image.pico here (and tape_image.pico2 beside
-;        diag.pico2): the tape's words, its start address and the switch
-;        register's value. Then compile this file. One build per tape.
+;  TWO WAYS TO GET A TAPE IN
+;    * over the serial port, with ONE firmware flashed for good (THE SERIAL
+;      TAPE READER below; tools/tape_ladder.py is the host side). Build it
+;      with an empty built-in tape:
+;          python ../../tools/tape2pico.py --empty
+;    * built in, one firmware per tape:
+;          python ../../tools/tape2pico.py <tape> [--start OCTAL] [--switches OCTAL]
+;      writes tape_image.pico here (and tape_image.pico2 beside diag.pico2):
+;      the tape's words, its start address and the switch register's value.
+;    Then compile this file.
 ;
 ;  WHAT IT DOES
-;    Loads the words into memory (what the Absolute Loader would have
-;    done), resets the processor, sets the switch register, and starts at
-;    the tape's start address with the PSW at 0 and SP at the start
-;    address. It waits for the serial port to be opened (up to 30 s), so
-;    the first characters are not lost, then runs, and:
+;    With a built-in tape it loads the words into memory (what the Absolute
+;    Loader would have done), resets the processor, sets the switch register,
+;    and starts at the tape's start address with the PSW at 0 and SP at the
+;    start address; with an empty one it waits for a tape on the port. It
+;    waits for the serial port to be opened (up to 30 s), so the first
+;    characters are not lost, then runs, and:
 ;      * everything the program types on the console appears on the
 ;        serial port (bit 7 stripped; NUL and DEL fill characters left
 ;        out). A BELL is not sent: it is counted, because the T1-T15
 ;        tapes ring one at the end of every pass, and that count is the
 ;        pass count;
 ;      * a character typed at the serial port goes to the console
-;        receiver;
+;        receiver (a $F5 byte starts a loader command instead);
 ;      * every 2 s a status line: instructions run, bells, the PC;
 ;      * a HALT prints "HALT at <address of the HALT>" and the registers,
 ;        stops the processor, and repeats that every 3 s. The board keeps
-;        answering USB (and the uploader's BOOTSEL request) throughout.
+;        answering USB, loader commands and the uploader's BOOTSEL request
+;        throughout.
 ; ======================================================================
 EnableExplicit
 XIncludeFile "RP2040/Lib/clocks.pico"
@@ -35,6 +42,7 @@ XIncludeFile "RP2040/Lib/safety.pico"
 XIncludeFile "cpu.pico"
 XIncludeFile "instructions.pico"
 XIncludeFile "tape_image.pico"
+XIncludeFile "tapeload.pico"
 
 #CLOCK_KHZ = 200000
 ; USB IS SERVICED AT LEAST EVERY MILLISECOND, IN EVERY STATE. The USB
@@ -73,6 +81,8 @@ Procedure Service()
     LastService = now
     If #PROBE_BOOTSEL_US > 0 And ProbeSent = 0 And (now - ProbeStart) > #PROBE_BOOTSEL_US
       ProbeSent = 1                      ; the phrase, as the uploader sends it,
+      UsbSerialWrite(80) : UsbSerialWrite(48 + State) : UsbSerialWrite(10)   ; "P<state>"
+      UsbSerialFlush()
       Restore ProbePhrase                ; through the library's own receive path
       For i = 0 To 21
         Read.u gap
@@ -230,6 +240,326 @@ Procedure HaltReport()
   CompilerEndIf
 EndProcedure
 
+; ======================================================================
+;  THE SERIAL TAPE READER - tapes sent over the USB serial port, so one
+;  firmware stays flashed for the whole ladder (tools/tape_ladder.py is
+;  the host side). A FRAME starts with the byte $F5, which no diagnostic
+;  sends to the console (they type 7-bit ASCII); every other byte from the
+;  port is a character typed at the console.
+;
+;      $F5  cmd  len-lo len-hi  payload (len bytes)  sum
+;
+;  sum makes cmd + len-lo + len-hi + the payload + sum = 0 (mod 256). A
+;  frame longer than #FRAME_MAX, or with a bad sum, is refused ("#ERR").
+;  Commands, each answered with ONE line starting '#' so a host can tell
+;  replies from the program's own output:
+;    R          reset: stop the processor, clear memory, ready for a tape
+;               -> "#READY"
+;    T bytes    the next bytes of an absolute-format tape, parsed as they
+;               come (tapeload.pico) -> "#T <tape bytes so far>", and at
+;               the tape's end "#LOADED <blocks> blocks, <bytes> bytes,
+;               start <octal>", or "#ERR tape ..." if the tape is damaged
+;    W a,w ...  words (address, value pairs) written into memory after
+;               loading - the --patch edits of tape2pico -> "#W <count>"
+;    G s,sw     go: start at s ($FFFF = the tape's own start), with the
+;               switch register reading sw -> "#GO <start>"; the program
+;               then runs exactly as in a built-in-tape firmware
+;    H          stop the processor -> "#STOPPED <pc>"
+;    Q          the report firmware's behaviour: self-test and benchmark
+;               every 3 s -> "#REPORT"; R leaves it
+;    S          -> "#STATUS <mode> <instructions> <bells> <pc>"
+;  Receiving is safe for USB: at most #FEED_MAX bytes are taken per pass
+;  of the main loop, each costing a few microseconds, then Service() runs.
+; ======================================================================
+#FRAME_START = $F5
+#FRAME_MAX   = 256
+#FEED_MAX    = 64
+#MODE_IDLE   = 0             ; no program: waiting for a tape
+#MODE_RUN    = 1
+#MODE_HALT   = 2
+#MODE_REPORT = 3
+
+Global Mode.i
+Global FrameState.i          ; 0 none, 1 cmd, 2 len lo, 3 len hi, 4 payload, 5 sum
+Global FrameCmd.i, FrameLen.i, FrameGot.i, FrameSum.i
+Global Dim FrameBuf.u(#FRAME_MAX)
+Global HaltShown.i           ; Micros() of the last HALT report
+Global SelfTestPassed.i, SelfTestSteps.i, SelfTestR0.i, BenchInstructions.i, BenchMicros.i
+Global FromSerial.i          ; the program came over the serial port (no built-in name)
+
+Procedure SayHost(*s.i)                  ; a reply line: starts '#', on a line of its own
+  If Column <> 0
+    Eol()
+  EndIf
+  Ch(35)
+  Say(*s)
+EndProcedure
+
+; ---- the report firmware's behaviour (pdp11.pico), for Q ------------------
+Procedure.i PerSecond(count.i, us.i)
+  Define q.i
+  Define r.i
+  Define k.i
+  q = count / us
+  r = count % us
+  For k = 1 To 6
+    r = r * 10
+    q = q * 10 + r / us
+    r = r % us
+  Next
+  ProcedureReturn q
+EndProcedure
+
+Procedure ReportOnce()
+  Define t0.i
+  Mem($100 >> 1) = $15C1                 ; the self-test: 1..10 into R0, then HALT
+  Mem($102 >> 1) = $000A
+  Mem($104 >> 1) = $0A00
+  Mem($106 >> 1) = $6040
+  Mem($108 >> 1) = $7E42
+  Mem($10A >> 1) = $0000
+  CpuReset()
+  Reg(6) = $100
+  Reg(7) = $100
+  SelfTestSteps = CpuRun(1000)
+  SelfTestR0 = Reg(0)
+  SelfTestPassed = 0
+  If Halted = 1 And Reg(0) = 55
+    SelfTestPassed = 1
+  EndIf
+  Service()
+  Mem($200 >> 1) = $15C1                 ; the benchmark: 30,000 x (ADD, SOB)
+  Mem($202 >> 1) = 30000
+  Mem($204 >> 1) = $0A00
+  Mem($206 >> 1) = $6040
+  Mem($208 >> 1) = $7E42
+  Mem($20A >> 1) = $0000
+  CpuReset()
+  Reg(6) = $100
+  Reg(7) = $200
+  t0 = Micros()
+  BenchInstructions = 0
+  While Halted = 0                       ; in slices, so USB is still served
+    BenchInstructions = BenchInstructions + CpuRun(#SLICE)
+    Service()
+  Wend
+  BenchMicros = Micros() - t0
+  Say("PDP-11 J-11 on Pico, clk_sys kHz ") : Num(ClockSysKhz()) : Eol()
+  Say("self-test: R0=") : Num(SelfTestR0) : Say(" steps=") : Num(SelfTestSteps)
+  If SelfTestPassed
+    Say(" PASS")
+  Else
+    Say(" FAIL")
+  EndIf
+  Eol()
+  Say("bench: ") : Num(BenchInstructions) : Say(" instructions in ") : Num(BenchMicros) : Say(" us = ")
+  If BenchMicros > 0
+    Num(PerSecond(BenchInstructions, BenchMicros))
+  EndIf
+  Say(" instructions/s") : Eol()
+EndProcedure
+
+; ---- the frames ------------------------------------------------------------
+Procedure ClearMemory()                  ; 512 words at a time, with USB served between
+  Define i.i
+  For i = 0 To #RAM_WORDS - 1
+    Mem(i) = 0
+    If (i & 511) = 511
+      Service()
+    EndIf
+  Next
+EndProcedure
+
+Procedure StartProgram(start.i, switches.i)
+  CpuReset()
+  SwitchReg = switches & $FFFF
+  PswSet(0)
+  Reg(6) = start
+  Reg(7) = start
+  Total = 0
+  Bells = 0
+  ConOutTail = ConOutHead
+  ConInTail = ConInHead
+  Mode = #MODE_RUN
+EndProcedure
+
+Procedure DoFrame()
+  Define i.i
+  Define a.i
+  Define w.i
+  If FrameCmd = 82                       ; R
+    ClearMemory()
+    CpuReset()
+    Halted = 1
+    TapeReset()
+    Mode = #MODE_IDLE
+    FromSerial = 1
+    SayHost("READY") : Eol()
+  ElseIf FrameCmd = 84                   ; T
+    For i = 0 To FrameLen - 1
+      If TapeByte(FrameBuf(i))
+        SayHost("LOADED ") : Num(TapeBlocks) : Say(" blocks, ") : Num(TapeBytes)
+        Say(" bytes, start ") : Oct(TapeStart) : Eol()
+      EndIf
+    Next
+    If TapeError
+      SayHost("ERR tape ") : Num(TapeError) : Say(" at tape byte ") : Num(TapeErrAt)
+      Say(" (1 no 001 000 block start, 2 byte count below 6, 3 outside RAM, 4 bad checksum)") : Eol()
+    Else
+      SayHost("T ") : Num(TapeIn) : Eol()
+    EndIf
+  ElseIf FrameCmd = 87                   ; W
+    i = 0
+    While i + 3 < FrameLen
+      a = FrameBuf(i) | (FrameBuf(i + 1) << 8)
+      w = FrameBuf(i + 2) | (FrameBuf(i + 3) << 8)
+      If (a & 1) = 0 And a < #RAM_BYTES
+        Mem(a >> 1) = w
+      EndIf
+      i = i + 4
+    Wend
+    SayHost("W ") : Num(FrameLen / 4) : Eol()
+  ElseIf FrameCmd = 71                   ; G
+    a = FrameBuf(0) | (FrameBuf(1) << 8)
+    If a = $FFFF
+      a = TapeStart
+    EndIf
+    If (a & 1) <> 0 Or a >= #RAM_BYTES Or FrameLen < 4
+      SayHost("ERR go: no start address (odd, outside RAM, or no tape loaded)") : Eol()
+    Else
+      StartProgram(a, FrameBuf(2) | (FrameBuf(3) << 8))
+      SayHost("GO ") : Oct(a) : Eol()
+    EndIf
+  ElseIf FrameCmd = 72                   ; H
+    If Mode = #MODE_RUN
+      Mode = #MODE_HALT
+    EndIf
+    SayHost("STOPPED ") : Oct(Reg(7)) : Eol()
+  ElseIf FrameCmd = 81                   ; Q
+    Mode = #MODE_REPORT
+    HaltShown = Micros() - 3000000
+    SayHost("REPORT") : Eol()
+  ElseIf FrameCmd = 83                   ; S
+    SayHost("STATUS ") : Num(Mode) : Ch(32) : Num(Total) : Ch(32) : Num(Bells) : Ch(32) : Oct(Reg(7)) : Eol()
+  Else
+    SayHost("ERR unknown command ") : Num(FrameCmd) : Eol()
+  EndIf
+EndProcedure
+
+; One byte from the port: part of a frame, or a character for the console.
+Procedure InByte(c.i)
+  c = c & $FF
+  If FrameState = 0
+    If c = #FRAME_START
+      FrameState = 1
+    ElseIf Mode = #MODE_RUN
+      If (ConInHead - ConInTail) < #CON_SIZE
+        ConIn(ConInHead & (#CON_SIZE - 1)) = c
+        ConInHead = ConInHead + 1
+      EndIf
+    EndIf
+  ElseIf FrameState = 1
+    FrameCmd = c
+    FrameSum = c
+    FrameState = 2
+  ElseIf FrameState = 2
+    FrameLen = c
+    FrameSum = FrameSum + c
+    FrameState = 3
+  ElseIf FrameState = 3
+    FrameLen = FrameLen | (c << 8)
+    FrameSum = FrameSum + c
+    FrameGot = 0
+    If FrameLen > #FRAME_MAX
+      FrameState = 0
+      SayHost("ERR frame longer than 256 bytes") : Eol()
+    ElseIf FrameLen = 0
+      FrameState = 5
+    Else
+      FrameState = 4
+    EndIf
+  ElseIf FrameState = 4
+    FrameBuf(FrameGot) = c
+    FrameGot = FrameGot + 1
+    FrameSum = FrameSum + c
+    If FrameGot = FrameLen
+      FrameState = 5
+    EndIf
+  Else
+    FrameState = 0
+    If ((FrameSum + c) & $FF) = 0
+      DoFrame()
+    Else
+      SayHost("ERR frame checksum") : Eol()
+    EndIf
+  EndIf
+EndProcedure
+
+CompilerIf #DESK_PROBE = 1
+; THE DESK FEED: arm_run's USB host sends nothing to the board, so the probe
+; build takes the bytes tools/tape_ladder.py WOULD send (its --dump writes
+; them as feed_image.pico) and hands them to InByte, the same path the
+; port's bytes take, #FEED_MAX at a time. A 256 in the feed means "wait
+; until the program halts, or rings a bell, or 3 s pass" - the pause the
+; host spends reading a verdict.
+XIncludeFile "feed_image.pico"          ; #FEED_LEN and the ProbeFeed data
+Global FeedPos.i, FeedWaitFrom.i, FeedBells.i, FeedLoaded.i
+Global Dim FeedBuf.u(#FEED_LEN)
+Procedure ProbeFeedLoad()                ; the feed into RAM once, before timing starts
+  Define k.i
+  Define c.i
+  Restore ProbeFeed
+  For k = 0 To #FEED_LEN - 1
+    Read.u c
+    FeedBuf(k) = c
+  Next
+  FeedLoaded = 1
+EndProcedure
+
+Procedure ProbeFeedStep()
+  Define k.i
+  Define c.i
+  If FeedLoaded = 0
+    ProcedureReturn
+  EndIf
+  If FeedPos < 0 Or FeedPos >= #FEED_LEN
+    ProcedureReturn
+  EndIf
+  If FeedWaitFrom
+    If Mode = #MODE_RUN And Bells = FeedBells And (Micros() - FeedWaitFrom) < 3000000
+      ProcedureReturn
+    EndIf
+    FeedWaitFrom = 0
+  EndIf
+  For k = 1 To #FEED_MAX
+    If FeedPos >= #FEED_LEN
+      ProcedureReturn
+    EndIf
+    c = FeedBuf(FeedPos)
+    FeedPos = FeedPos + 1
+    If c = 256
+      FeedWaitFrom = Micros()
+      FeedBells = Bells
+      ProcedureReturn
+    EndIf
+    InByte(c)
+  Next
+EndProcedure
+CompilerEndIf
+
+; Up to #FEED_MAX bytes from the port per pass of the main loop.
+Procedure ReadPort()
+  Define k.i
+  k = 0
+  While k < #FEED_MAX And UsbSerialAvailable() > 0
+    InByte(UsbSerialRead())
+    k = k + 1
+  Wend
+  CompilerIf #DESK_PROBE = 1
+    ProbeFeedStep()
+  CompilerEndIf
+EndProcedure
+
 Procedure Main()
   Define t0.i
   Define tlast.i
@@ -238,13 +568,20 @@ Procedure Main()
   UsbSerialInit()
   SafetyOk()
   BuildOpcodeTable()
+  TapeReset()
   LoadTape()
-  CpuReset()
-  SwitchReg = #TAPE_SWITCHES
-  PswSet(0)
-  Reg(6) = #TAPE_START
-  Reg(7) = #TAPE_START
+  If #TAPE_START & 1                     ; no built-in tape: wait for one on the port
+    Mode = #MODE_IDLE
+    CpuReset()
+    Halted = 1
+    FromSerial = 1
+  Else
+    StartProgram(#TAPE_START, #TAPE_SWITCHES)
+  EndIf
 
+  CompilerIf #DESK_PROBE = 1
+    ProbeFeedLoad()
+  CompilerEndIf
   State = 0
   ProbeStart = Micros()
   t0 = Micros()                          ; the port opened, or 30 s
@@ -252,36 +589,49 @@ Procedure Main()
     Service()
   Wend
   Wait(500000)
-  Say("PDP-11 J-11 on Pico: ") : SayName() : Say(" from ") : Oct(#TAPE_START)
-  Say(", switches ") : Oct(#TAPE_SWITCHES) : Eol()
+  If Mode = #MODE_RUN
+    Say("PDP-11 J-11 on Pico: ") : SayName() : Say(" from ") : Oct(#TAPE_START)
+    Say(", switches ") : Oct(#TAPE_SWITCHES) : Eol()
+  Else
+    Say("PDP-11 J-11 on Pico: serial tape reader ready") : Eol()
+  EndIf
 
   tlast = Micros()
   Repeat
-    State = 1 + 2 * Waiting              ; 1 running, 3 in a WAIT
-    Total = Total + CpuRun(#SLICE)
-    DrainConsole()
-    If Dl11RxWanted()                    ; one character, and only when the
-      If UsbSerialAvailable() > 0        ; program is waiting for it
-        ConIn(ConInHead & (#CON_SIZE - 1)) = UsbSerialRead()
-        ConInHead = ConInHead + 1
-      EndIf
-    EndIf
-    Service()
-    If Halted
-      State = 2
-      HaltReport()
-      Repeat
-        t0 = Micros()
-        While (Micros() - t0) < 3000000
-          Service()
-        Wend
+    If Mode = #MODE_RUN
+      State = 1 + 2 * Waiting            ; 1 running, 3 in a WAIT
+      Total = Total + CpuRun(#SLICE)
+      DrainConsole()
+      If Halted
+        State = 2
+        Mode = #MODE_HALT
         HaltReport()
-      ForEver
+        HaltShown = Micros()
+      ElseIf (Micros() - tlast) >= 2000000
+        tlast = Micros()
+        Status()
+      EndIf
+    ElseIf Mode = #MODE_HALT
+      State = 2
+      If (Micros() - HaltShown) >= 3000000
+        HaltShown = Micros()
+        If Halted
+          HaltReport()
+        Else
+          Status()
+        EndIf
+      EndIf
+    ElseIf Mode = #MODE_REPORT
+      State = 2
+      If (Micros() - HaltShown) >= 3000000
+        HaltShown = Micros()
+        ReportOnce()
+      EndIf
+    Else
+      State = 0
     EndIf
-    If (Micros() - tlast) >= 2000000
-      tlast = Micros()
-      Status()
-    EndIf
+    ReadPort()
+    Service()
   ForEver
 EndProcedure
 

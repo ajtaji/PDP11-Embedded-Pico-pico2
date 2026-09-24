@@ -1,0 +1,133 @@
+; ======================================================================
+;  tapeload.pico - the Absolute Loader, done by the firmware. The bytes of
+;  an absolute-format paper tape, arriving one at a time (over the USB
+;  serial port - see diag.pico), go straight into emulated memory, exactly
+;  as DEC's Absolute Loader would put them there from a paper-tape reader.
+;  Nothing here touches USB: it is handed bytes and writes Mem.
+;
+;  THE FORMAT (DEC-11-UABLB-A-LA, the Absolute Loader listing; the same one
+;  tools/tape2pico.py reads on the host): any number of zero bytes, then
+;  blocks of
+;      001 000   lo hi (byte count N + 6)   lo hi (load address)
+;      N data bytes   1 checksum byte (every byte of the block sums to 0)
+;  A block with N = 0 ends the tape; its address is the transfer address
+;  (odd = "do not start").
+;
+;  Include after cpu.pico (it needs Mem and #RAM_BYTES).
+; ======================================================================
+
+#TAPE_ERR_SIGNATURE = 1      ; a block did not start 001 000
+#TAPE_ERR_LENGTH    = 2      ; a byte count below 6
+#TAPE_ERR_RANGE     = 3      ; a byte outside RAM (000000-157777)
+#TAPE_ERR_CHECKSUM  = 4      ; a block's bytes did not sum to 0
+
+Global TapeState.i           ; where in a block the next byte falls (TapeByte)
+Global TapeSum.i, TapeCount.i, TapeAddr.i, TapeLeft.i
+Global TapeBlocks.i          ; blocks read so far
+Global TapeBytes.i           ; data bytes written into memory so far
+Global TapeStart.i           ; the transfer address, once the end block is read
+Global TapeError.i           ; 0, or one of #TAPE_ERR_*
+Global TapeErrAt.i           ; the tape byte (counting from 0) the error was found at
+Global TapeIn.i              ; tape bytes seen so far
+Global TapeDone.i            ; 1 once the end block is read
+
+Procedure TapeReset()
+  TapeState = 0
+  TapeSum = 0
+  TapeBlocks = 0
+  TapeBytes = 0
+  TapeStart = 1
+  TapeError = 0
+  TapeErrAt = 0
+  TapeIn = 0
+  TapeDone = 0
+EndProcedure
+
+Procedure TapeFail(code.i)
+  TapeError = code
+  TapeErrAt = TapeIn
+EndProcedure
+
+; One byte of tape. Returns 1 when it completed the end block, 0 otherwise;
+; an error stops the loader (TapeError) and the rest of the tape is ignored,
+; as the real loader halts.
+Procedure.i TapeByte(b.i)
+  b = b & $FF
+  TapeIn = TapeIn + 1
+  If (TapeDone | TapeError) <> 0
+    ProcedureReturn 0
+  EndIf
+  If TapeState = 0                       ; between blocks: zeros, then 001
+    If b = 0
+      ProcedureReturn 0
+    EndIf
+    If b <> 1
+      TapeFail(#TAPE_ERR_SIGNATURE)
+      ProcedureReturn 0
+    EndIf
+    TapeSum = 1
+    TapeState = 1
+  ElseIf TapeState = 1                   ; 000
+    If b <> 0
+      TapeFail(#TAPE_ERR_SIGNATURE)
+      ProcedureReturn 0
+    EndIf
+    TapeState = 2
+  ElseIf TapeState = 2                   ; byte count, low
+    TapeCount = b
+    TapeSum = TapeSum + b
+    TapeState = 3
+  ElseIf TapeState = 3                   ; byte count, high
+    TapeCount = TapeCount | (b << 8)
+    TapeSum = TapeSum + b
+    If TapeCount < 6
+      TapeFail(#TAPE_ERR_LENGTH)
+      ProcedureReturn 0
+    EndIf
+    TapeState = 4
+  ElseIf TapeState = 4                   ; load address, low
+    TapeAddr = b
+    TapeSum = TapeSum + b
+    TapeState = 5
+  ElseIf TapeState = 5                   ; load address, high
+    TapeAddr = TapeAddr | (b << 8)
+    TapeSum = TapeSum + b
+    TapeLeft = TapeCount - 6
+    If TapeLeft > 0
+      TapeState = 6
+    Else
+      TapeState = 7
+    EndIf
+  ElseIf TapeState = 6                   ; a data byte
+    If TapeAddr >= #RAM_BYTES
+      TapeFail(#TAPE_ERR_RANGE)
+      ProcedureReturn 0
+    EndIf
+    If TapeAddr & 1
+      Mem(TapeAddr >> 1) = (Mem(TapeAddr >> 1) & $00FF) | (b << 8)
+    Else
+      Mem(TapeAddr >> 1) = (Mem(TapeAddr >> 1) & $FF00) | b
+    EndIf
+    TapeAddr = (TapeAddr + 1) & $FFFF
+    TapeSum = TapeSum + b
+    TapeBytes = TapeBytes + 1
+    TapeLeft = TapeLeft - 1
+    If TapeLeft = 0
+      TapeState = 7
+    EndIf
+  Else                                   ; the checksum
+    TapeSum = TapeSum + b
+    If TapeSum & $FF
+      TapeFail(#TAPE_ERR_CHECKSUM)
+      ProcedureReturn 0
+    EndIf
+    TapeBlocks = TapeBlocks + 1
+    TapeState = 0
+    If TapeCount = 6                     ; the end block: its address is the start
+      TapeStart = TapeAddr
+      TapeDone = 1
+      ProcedureReturn 1
+    EndIf
+  EndIf
+  ProcedureReturn 0
+EndProcedure
