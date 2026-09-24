@@ -37,16 +37,51 @@ XIncludeFile "instructions.pico"
 XIncludeFile "tape_image.pico"
 
 #CLOCK_KHZ = 200000
-; Instructions per CpuRun: under a millisecond. The USB serial library is
-; polled, and its control endpoint must be serviced about every millisecond
-; while the host opens or closes the port: with 20,000 (about 15 ms) both
-; boards stopped answering control transfers after the port was closed,
-; and the port could not be opened again.
-#SLICE = 1000
+; USB IS SERVICED AT LEAST EVERY MILLISECOND, IN EVERY STATE. The USB
+; serial library is polled, and its control endpoint must be answered
+; promptly while the host opens or closes the port. The first version of
+; this file ran 20,000 instructions (about 15 ms) between services: after
+; a reader closed the port, both boards stopped answering control
+; transfers - the port would not reopen and the uploader's BOOTSEL request
+; could not be sent - and both had to be replugged by hand.
+; So every loop below calls Service(), and CpuRun gets #SLICE instructions
+; at a time: a few hundred microseconds even of the slowest instructions.
+; The gaps are MEASURED, not argued: build with #DESK_PROBE = 1 and run
+; it in arm_run - see DESK PROBE at the foot.
+#SLICE = 200
+#DESK_PROBE = 0            ; 1 = the desk measurement build (see DESK PROBE)
+#PROBE_BOOTSEL_US = 0      ; with the probe: send the reboot phrase after this long (0 = never)
 
 Global Bells.i
 Global Total.i
 Global Column.i
+Global State.i             ; 0 waiting for the port, 1 running, 2 halted, 3 in a WAIT
+Global Dim MaxGap.i(4)     ; the probe: longest gap between services, per State
+Global LastService.i
+Global ProbeStart.i, ProbeSent.i
+
+Procedure Service()
+  CompilerIf #DESK_PROBE = 1
+    Define now.i
+    Define gap.i
+    Define i.i
+    now = Micros()
+    gap = now - LastService
+    If LastService <> 0 And gap > MaxGap(State)
+      MaxGap(State) = gap
+    EndIf
+    LastService = now
+    If #PROBE_BOOTSEL_US > 0 And ProbeSent = 0 And (now - ProbeStart) > #PROBE_BOOTSEL_US
+      ProbeSent = 1                      ; the phrase, as the uploader sends it,
+      Restore ProbePhrase                ; through the library's own receive path
+      For i = 0 To 21
+        Read.u gap
+        usbser_RxPush(gap)
+      Next
+    EndIf
+  CompilerEndIf
+  UsbSerialTask()
+EndProcedure
 
 Procedure Ch(c.i)
   UsbSerialWrite(c)
@@ -94,14 +129,14 @@ Procedure Eol()
   Ch(10)
   Column = 0
   UsbSerialFlush()
-  UsbSerialTask()
+  Service()
 EndProcedure
 
 Procedure Wait(us.i)
   Define t0.i
   t0 = Micros()
   While (Micros() - t0) < us
-    UsbSerialTask()
+    Service()
   Wend
 EndProcedure
 
@@ -167,6 +202,10 @@ Procedure Status()
   If Waiting
     Say(" (WAIT)")
   EndIf
+  CompilerIf #DESK_PROBE = 1
+    Say(" | longest gap between USB services, us: port-wait ") : Num(MaxGap(0))
+    Say(" running ") : Num(MaxGap(1)) : Say(" halted ") : Num(MaxGap(2)) : Say(" WAIT ") : Num(MaxGap(3))
+  CompilerEndIf
   Eol()
 EndProcedure
 
@@ -181,6 +220,9 @@ Procedure HaltReport()
     Say(" R") : Num(i) : Say("=") : Oct(Reg(i))
   Next
   Say(" SP=") : Oct(Reg(6)) : Say(" PSW=") : Oct(PswGet()) : Eol()
+  CompilerIf #DESK_PROBE = 1
+    Status()
+  CompilerEndIf
 EndProcedure
 
 Procedure Main()
@@ -198,9 +240,11 @@ Procedure Main()
   Reg(6) = #TAPE_START
   Reg(7) = #TAPE_START
 
+  State = 0
+  ProbeStart = Micros()
   t0 = Micros()                          ; the port opened, or 30 s
   While UsbSerialReady() = 0 And (Micros() - t0) < 30000000
-    UsbSerialTask()
+    Service()
   Wend
   Wait(500000)
   Say("PDP-11 J-11 on Pico: ") : SayName() : Say(" from ") : Oct(#TAPE_START)
@@ -208,19 +252,21 @@ Procedure Main()
 
   tlast = Micros()
   Repeat
+    State = 1 + 2 * Waiting              ; 1 running, 3 in a WAIT
     Total = Total + CpuRun(#SLICE)
     DrainConsole()
     While UsbSerialAvailable() > 0 And (ConInHead - ConInTail) < #CON_SIZE
       ConIn(ConInHead & (#CON_SIZE - 1)) = UsbSerialRead()
       ConInHead = ConInHead + 1
     Wend
-    UsbSerialTask()
+    Service()
     If Halted
+      State = 2
       HaltReport()
       Repeat
         t0 = Micros()
         While (Micros() - t0) < 3000000
-          UsbSerialTask()
+          Service()
         Wend
         HaltReport()
       ForEver
@@ -231,3 +277,22 @@ Procedure Main()
     EndIf
   ForEver
 EndProcedure
+
+; ======================================================================
+;  DESK PROBE (#DESK_PROBE = 1) - the proof that this firmware cannot
+;  starve USB. Service() times every gap between two services and keeps
+;  the longest for each state (waiting for the port, running, halted, in
+;  a WAIT); the status line and the HALT report print them. With
+;  #PROBE_BOOTSEL_US set it also feeds the uploader's reboot phrase into
+;  the USB library's receive path after that long, in whatever state the
+;  processor is in then - arm_run reports "rebooted to BOOTSEL" when it
+;  works. (The emulator's USB host sends nothing to the board, so the
+;  phrase goes in one step past the wire: the library's own receive
+;  routine, which is what the bytes reach from the wire.)
+; ======================================================================
+CompilerIf #DESK_PROBE = 1
+DataSection
+ProbePhrase:
+  Data.u 82, 101, 115, 101, 116, 80, 105, 99, 111, 84, 111, 66, 111, 111, 116, 83, 101, 108, 49, 50, 53, 52
+EndDataSection
+CompilerEndIf
