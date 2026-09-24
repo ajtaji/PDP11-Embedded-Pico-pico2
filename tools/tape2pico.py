@@ -152,7 +152,7 @@ def word_runs(mem):
     return runs
 
 
-def render(name, source, start, switches, runs, ext, patches=()):
+def render(name, source, start, switches, runs, ext, patches=(), feed=()):
     total = sum(len(r[1]) for r in runs)
     out = []
     out.append("; " + "=" * 70)
@@ -166,6 +166,7 @@ def render(name, source, start, switches, runs, ext, patches=()):
     out.append("; " + "=" * 70)
     out.append("#TAPE_START = $%04X          ; %06o" % (start, start))
     out.append("#TAPE_SWITCHES = $%04X       ; %06o" % (switches, switches))
+    out.append("#FEED_LEN = %d                 ; the desk probe's feed (tape_ladder.py --dump)" % len(feed))
     out.append("")
     out.append("DataSection")
     out.append("TapeName:")
@@ -178,6 +179,9 @@ def render(name, source, start, switches, runs, ext, patches=()):
         for i in range(0, len(ws), 8):
             out.append("  Data.u " + ", ".join("$%04X" % w for w in ws[i:i + 8]))
     out.append("  Data.u $FFFF                ; end (an odd run address)")
+    out.append("ProbeFeed:")
+    for i in range(0, len(feed), 20):
+        out.append("  Data.u " + ", ".join(str(b) for b in feed[i:i + 20]))
     out.append("EndDataSection")
     return "\n".join(out) + "\n"
 

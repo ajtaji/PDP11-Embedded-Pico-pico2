@@ -498,11 +498,10 @@ EndProcedure
 CompilerIf #DESK_PROBE = 1
 ; THE DESK FEED: arm_run's USB host sends nothing to the board, so the probe
 ; build takes the bytes tools/tape_ladder.py WOULD send (its --dump writes
-; them as feed_image.pico) and hands them to InByte, the same path the
+; them into an empty tape_image, as ProbeFeed) and hands them to InByte, the same path the
 ; port's bytes take, #FEED_MAX at a time. A 256 in the feed means "wait
 ; until the program halts, or rings a bell, or 3 s pass" - the pause the
 ; host spends reading a verdict.
-XIncludeFile "feed_image.pico"          ; #FEED_LEN and the ProbeFeed data
 Global FeedPos.i, FeedWaitFrom.i, FeedBells.i, FeedLoaded.i
 Global Dim FeedBuf.u(#FEED_LEN)
 Procedure ProbeFeedLoad()                ; the feed into RAM once, before timing starts
