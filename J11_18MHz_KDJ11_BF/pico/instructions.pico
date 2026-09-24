@@ -7,7 +7,10 @@
 ;
 ;  THE TABLE has 8192 entries indexed by the top thirteen bits of the
 ;  instruction (Op >> 3); only HALT..MFPT (000000-000007) share one, told
-;  apart by a short If chain (InstructionGroup0_0000).
+;  apart by a short If chain (InstructionGroup0_0000). An entry knows both
+;  addressing modes and the source register, so the commonest forms get
+;  handlers of their own laid over the general ones - see REGISTER FAST
+;  PATHS and IMMEDIATE FAST PATHS near the foot.
 ;
 ;  ONE PROCEDURE, EVERY INSTRUCTION A LABEL IN IT. CpuRun() below is the
 ;  whole emulator: each instruction's handler is a label inside it, named
@@ -21,17 +24,22 @@
 ;  instructions (threaded dispatch). The comment on each label gives the
 ;  octal opcode and the table entries it owns.
 ;
-;  THE TAIL - the lines every handler ends with, and the rules it keeps:
-;    1. If the instruction left a trap to take (TrapVector), go to SlowTail,
-;       which takes it. A handler that cannot possibly trap - it touches no
-;       memory, no stack and no operand helper (the branches, SOB, SPL, the
-;       condition-code ops) - leaves this test out; its tail
-;       comment says so. A handler that is changed to touch memory MUST get
-;       the test back, or its traps are lost.
+;  THE TAIL - the lines every handler ends with, written once as macros
+;  (NextSynced, NextNative, NextNativeTrap, beside THE EMULATED PC below)
+;  and expanded in place, so each handler still has its own copy:
+;    1. A handler that works on Reg(7) - through a variable register number
+;       or a helper (EaWord, FetchWord, Push, Pop, TakeTrap) - starts with
+;       PcOut() and ends with NextSynced(), which takes the PC back and then
+;       takes any trap it left (TrapVector) through SlowTail. A NATIVE
+;       handler works on the PC register directly and cannot trap (the
+;       branches, SOB R0-R6, SPL, the condition-code ops, and every fast
+;       path): NextNative(). One that reads memory at the PC (an immediate)
+;       ends with NextNativeTrap(). A handler that is changed to touch
+;       memory or Reg(7) MUST change tail, or its traps or its PC are lost.
 ;    2. Count the instruction (RunLeft); at zero, the window ends (RunEnd).
-;    3. Fetch the next word straight from RAM when the PC is even and in
-;       RAM, and jump through the table. Anything else (the I/O page, an
-;       odd PC) goes to SlowFetch.
+;    3. Fetch the next word straight from RAM when the PC is in RAM (and,
+;       after a synced handler, even), and jump through the table.
+;       Anything else (the I/O page, an odd PC) goes to SlowFetch.
 ;  HALT ends with Goto SlowTail instead: SlowTail is the only place that
 ;  looks at Halted, and nothing but HALT sets it. Anything added that sets
 ;  Halted must end the same way.
@@ -46,7 +54,22 @@
 ;    threaded, one shared tail               904,981      879,757
 ;    threaded, the tail in every handler     927,991      911,830
 ;    ... and the tail tightened (below)    1,020,407    1,030,837
-;    ... and ReserveRegister (cpu.pico)   1,176,391    1,127,812   <- this file
+;    ... and ReserveRegister (cpu.pico)   1,176,391    1,127,812
+;  The speed pass of 2026-09-23 was measured on the DESK only (arm_run,
+;  which reads about 37% slow on the Pico and 12% on the Pico 2 - compare
+;  the rows, not the boards; silicon is owed). "mix" is 32.0 million
+;  instructions of 19 diagnostic tapes, every machine state identical to
+;  the version before the pass:              bench (Pico / Pico 2)   mix
+;    before (3cd8915)                          748,475 / 1,023,854   528,614 /   650,709
+;    the emulated PC in a register             932,780 / 1,492,426   601,030 /   760,522
+;    V and C lazy (bit 15 / bit 16)            968,931 / 1,587,171   602,387 /   763,042
+;    register fast paths on the Pico too     1,213,505 / 1,587,171   617,868 /   763,042
+;    memory and operand access as macros     1,225,401 / 1,587,171   677,361 /   835,410
+;    branch conditions inline                1,225,376 / 1,587,171   686,707 /   849,560
+;    no Dst in ADD/SUB/CMP; Op,PC,Res,RunLeft 1,315,682 / 1,694,760  693,207 /   852,525
+;    immediate fast paths (OP #n,Rd)         1,315,682 / 1,694,760   759,294 /   939,886
+;    condition codes set in place; MOVB/CMPB/BITB #n
+;                                            1,315,710 / 1,694,808   961,633 / 1,204,004 <- this file
 ;  The tightening: the PC test is written as two nested Ifs, not one
 ;  "a And b" (which builds two truth values and then ands them), and the
 ;  handlers that cannot trap drop the TrapVector test. Repeating the tail
@@ -58,9 +81,10 @@
 ;    * register mode (mode 0) is tested for and done INLINE, so the common
 ;      case never pays for a call;
 ;    * N and Z are one store to FlagNZ (word result as is, byte result
-;      shifted left 8); V and C are plain stores;
-;    * the emulated time is added last: ClockCycles = ClockCycles + #J11_T_*
-;      (the compiler refuses the "ClockCycles + n" shorthand - write it out).
+;      shifted left 8); V and C are stored raw, V in bit 15 and C in bit
+;      16, with no shift or mask (see SPEED in cpu.pico);
+;    * ClockCycles is commented out (nothing reads it - CLOCK in cpu.pico); the
+;      old lines that added to it are kept, commented, where it belongs.
 ;
 ;  ;name and ;disassembly lines are kept, commented out, as in the 8080
 ;  core this layout comes from - a disassembler can be switched in later
@@ -68,10 +92,6 @@
 ; ======================================================================
 
 
-; The branch offset: the low byte, signed, in words.
-Procedure BranchTaken()
-  Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
-EndProcedure
 
 ; ======================================================================
 ;  THE RUN LOOP - one procedure, every handler a label inside it
@@ -95,6 +115,73 @@ EndProcedure
 
 ; Execute up to n instructions. Returns how many ran.
 Procedure.i CpuRun(n.i)
+; ---- THE EMULATED PC (see PC in cpu) ----------------------------------
+; Between instructions the emulated PC lives in PC, a register; Reg(7)
+; is a stale copy. A handler that reaches Reg(7) through a variable
+; register number, or calls a helper that does (EaWord, FetchWord, Push,
+; Pop, TakeTrap, PswSet is fine), starts with PcOut() and ends with
+; NextSynced(), which takes the PC back. Every other handler - the
+; branches, SOB, and the register forms whose register cannot be R7 -
+; works on PC directly and ends with NextNative().
+Macro PcOut()
+  Reg(7) = PC
+EndMacro
+
+; THE TAIL (see the top of this file), written once as macros and
+; expanded in place at the end of every handler - a macro costs nothing
+; at run time, so every handler still has its own copy of these lines.
+; After a synced handler: take the PC back, take any trap, count, fetch.
+Macro NextSynced()
+  PC = Reg(7)
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If PC < #RAM_BYTES
+    If (PC & 1) = 0
+      Op = Mem(PC >> 1)
+      PC = PC + 2
+      Goto OpTable(Op >> 3)
+    EndIf
+  EndIf
+  Goto SlowFetch
+EndMacro
+
+; After a native handler: it cannot trap and the PC it leaves is even (it
+; was even when fetched, and a branch moves it by an even amount), so the
+; only test left is whether it is still in RAM.
+Macro NextNative()
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEnd
+  EndIf
+  If PC < #RAM_BYTES
+    Op = Mem(PC >> 1)
+    PC = PC + 2
+    Goto OpTable(Op >> 3)
+  EndIf
+  Goto SlowFetch
+EndMacro
+
+; After a native handler that read memory (an immediate operand): that
+; read can leave a trap (the I/O page), so take it; otherwise as above.
+Macro NextNativeTrap()
+  If TrapVector
+    Goto SlowTail
+  EndIf
+  NextNative()
+EndMacro
+
+; A branch taken: the low byte of the instruction, signed, in words.
+; Op << 24 puts the offset's sign in bit 31, and the arithmetic >> 23
+; brings it back down already doubled and sign-extended.
+Macro BranchTo()
+  PC = (PC + ((Op << 24) >> 23)) & $FFFF
+EndMacro
+
   If OpTableReady = 0
     Goto BuildTable
   EndIf
@@ -102,405 +189,262 @@ RunStart:
   If n <= 0 Or Halted <> 0
     ProcedureReturn 0
   EndIf
+  PC = Reg(7)                            ; the caller may have set Reg(7)
   RunFrom = InstrCount
   RunBank = n
   RunLeft = 0
   RunWindow = 0
   Goto RunEnd                            ; which lets the devices act, then opens a window
 Fetch:
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)              ; fast fetch, straight from RAM
-      Reg(7) = Reg(7) + 2
+  If PC < #RAM_BYTES
+    If (PC & 1) = 0
+      Op = Mem(PC >> 1)                  ; fast fetch, straight from RAM
+      PC = PC + 2
       Goto OpTable(Op >> 3)
     EndIf
   EndIf
 SlowFetch:                               ; the I/O page, an odd PC, past the end of RAM
+  Reg(7) = PC
   Op = FetchWord()
+  PC = Reg(7)
   Goto OpTable(Op >> 3)
 
 ;-MOV-------------------------------------------------------------------
 InstructionMOV_01:            ; 01SSDD   entries $0200-$03FF
+  PcOut()
   ;name = "MOV"
-  Src = SrcWord()
+  MSrcWord()
   If (Op & $38) = 0
     Reg(Op & 7) = Src
   Else
-    WriteWord(EaWord(Op & $3F), Src)
+    Ea = EaWord(Op & $3F)
+    MWriteWord(Ea, Src)
   EndIf
   FlagNZ = Src
   FlagV = 0
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("MOV " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionMOVB_11:           ; 11SSDD   entries $1200-$13FF
+  PcOut()
   ;name = "MOVB"
-  Src = SrcByte()
+  MSrcByte()
   If (Op & $38) = 0
     Reg(Op & 7) = (Src | (0 - (Src & $80))) & $FFFF   ; to a register it is sign-extended
   Else
-    WriteByte(EaByte(Op & $3F), Src)
+    Ea = EaByte(Op & $3F)
+    MWriteByte(Ea, Src)
   EndIf
   FlagNZ = Src << 8
   FlagV = 0
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("MOVB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-CMP-------------------------------------------------------------------
 InstructionCMP_02:            ; 02SSDD   entries $0400-$05FF
+  PcOut()
   ;name = "CMP"
-  Src = SrcWord()
+  MSrcWord()
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
   Else
-    Dst = ReadWord(EaWord(Op & $3F))
+    Ea = EaWord(Op & $3F)
+    MReadWord(Dst, Ea)
   EndIf
   Res = Src - Dst                        ; src - dst, the other way round from SUB
-  FlagC = (Res >> 16) & 1
-  FlagV = (((Src ! Dst) & (Src ! Res)) >> 15) & 1
+  FlagC = Res
+  FlagV = (Src ! Dst) & (Src ! Res)
   FlagNZ = Res & $FFFF
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("CMP " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionCMPB_12:           ; 12SSDD   entries $1400-$15FF
+  PcOut()
   ;name = "CMPB"
-  Src = SrcByte()
+  MSrcByte()
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
   Else
-    Dst = ReadByte(EaByte(Op & $3F))
+    Ea = EaByte(Op & $3F)
+    MReadByte(Dst, Ea)
   EndIf
   Res = Src - Dst
-  FlagC = (Res >> 8) & 1
-  FlagV = (((Src ! Dst) & (Src ! Res)) >> 7) & 1
+  FlagC = Res << 8
+  FlagV = ((Src ! Dst) & (Src ! Res)) << 8
   FlagNZ = (Res & $FF) << 8
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("CMPB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-BIT-------------------------------------------------------------------
 InstructionBIT_03:            ; 03SSDD   entries $0600-$07FF
+  PcOut()
   ;name = "BIT"
-  Src = SrcWord()
+  MSrcWord()
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
   Else
-    Dst = ReadWord(EaWord(Op & $3F))
+    Ea = EaWord(Op & $3F)
+    MReadWord(Dst, Ea)
   EndIf
   FlagNZ = Src & Dst
   FlagV = 0
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIT " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionBITB_13:           ; 13SSDD   entries $1600-$17FF
+  PcOut()
   ;name = "BITB"
-  Src = SrcByte()
+  MSrcByte()
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
   Else
-    Dst = ReadByte(EaByte(Op & $3F))
+    Ea = EaByte(Op & $3F)
+    MReadByte(Dst, Ea)
   EndIf
   FlagNZ = (Src & Dst) << 8
   FlagV = 0
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BITB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-BIC-------------------------------------------------------------------
 InstructionBIC_04:            ; 04SSDD   entries $0800-$09FF
+  PcOut()
   ;name = "BIC"
-  Src = SrcWord()
+  MSrcWord()
   If (Op & $38) = 0
     Res = Reg(Op & 7) & ~Src & $FFFF
     Reg(Op & 7) = Res
   Else
     Ea = EaWord(Op & $3F)
-    Res = ReadWord(Ea) & ~Src & $FFFF
-    WriteWord(Ea, Res)
+    MReadWord(Res, Ea)
+    Res = Res & ~Src & $FFFF
+    MWriteWord(Ea, Res)
   EndIf
   FlagNZ = Res
   FlagV = 0
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionBICB_14:           ; 14SSDD   entries $1800-$19FF
+  PcOut()
   ;name = "BICB"
-  Src = SrcByte()
+  MSrcByte()
   If (Op & $38) = 0
     Res = Reg(Op & 7) & ~Src & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     Ea = EaByte(Op & $3F)
-    Res = ReadByte(Ea) & ~Src & $FF
-    WriteByte(Ea, Res)
+    MReadByte(Res, Ea)
+    Res = Res & ~Src & $FF
+    MWriteByte(Ea, Res)
   EndIf
   FlagNZ = Res << 8
   FlagV = 0
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BICB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-BIS-------------------------------------------------------------------
 InstructionBIS_05:            ; 05SSDD   entries $0A00-$0BFF
+  PcOut()
   ;name = "BIS"
-  Src = SrcWord()
+  MSrcWord()
   If (Op & $38) = 0
     Res = Reg(Op & 7) | Src
     Reg(Op & 7) = Res
   Else
     Ea = EaWord(Op & $3F)
-    Res = ReadWord(Ea) | Src
-    WriteWord(Ea, Res)
+    MReadWord(Res, Ea)
+    Res = Res | Src
+    MWriteWord(Ea, Res)
   EndIf
   FlagNZ = Res
   FlagV = 0
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIS " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionBISB_15:           ; 15SSDD   entries $1A00-$1BFF
+  PcOut()
   ;name = "BISB"
-  Src = SrcByte()
+  MSrcByte()
   If (Op & $38) = 0
     Res = (Reg(Op & 7) | Src) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     Ea = EaByte(Op & $3F)
-    Res = ReadByte(Ea) | Src
-    WriteByte(Ea, Res)
+    MReadByte(Res, Ea)
+    Res = Res | Src
+    MWriteByte(Ea, Res)
   EndIf
   FlagNZ = Res << 8
   FlagV = 0
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BISB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-ADD-------------------------------------------------------------------
 InstructionADD_06:            ; 06SSDD   entries $0C00-$0DFF
+  PcOut()
   ;name = "ADD"
-  Src = SrcWord()
+  MSrcWord()
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
     Res = Src + Dst
     Reg(Op & 7) = Res & $FFFF
   Else
     Ea = EaWord(Op & $3F)
-    Dst = ReadWord(Ea)
+    MReadWord(Dst, Ea)
     Res = Src + Dst
-    WriteWord(Ea, Res)
+    MWriteWord(Ea, Res)
   EndIf
-  FlagC = (Res >> 16) & 1
-  FlagV = ((~(Src ! Dst) & (Src ! Res)) >> 15) & 1
+  FlagC = Res
+  FlagV = ~(Src ! Dst) & (Src ! Res)
   FlagNZ = Res & $FFFF
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("ADD " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-SUB-------------------------------------------------------------------
 InstructionSUB_16:            ; 16SSDD   entries $1C00-$1DFF
+  PcOut()
   ;name = "SUB"
-  Src = SrcWord()
+  MSrcWord()
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
     Res = Dst - Src
     Reg(Op & 7) = Res & $FFFF
   Else
     Ea = EaWord(Op & $3F)
-    Dst = ReadWord(Ea)
+    MReadWord(Dst, Ea)
     Res = Dst - Src
-    WriteWord(Ea, Res)
+    MWriteWord(Ea, Res)
   EndIf
-  FlagC = (Res >> 16) & 1                ; borrow
-  FlagV = (((Src ! Dst) & (Dst ! Res)) >> 15) & 1
+  FlagC = Res                ; borrow
+  FlagV = (Src ! Dst) & (Dst ! Res)
   FlagNZ = Res & $FFFF
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("SUB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ; ======================================================================
 ;  SINGLE-OPERAND. The destination is fetched at the top and stored at
@@ -509,11 +453,13 @@ InstructionSUB_16:            ; 16SSDD   entries $1C00-$1DFF
 
 ;-CLR-------------------------------------------------------------------
 InstructionCLR_0050:          ; 0050DD   entries $0140-$0147
+  PcOut()
   ;name = "CLR"
   If (Op & $38) = 0
     Reg(Op & 7) = 0
   Else
-    WriteWord(EaWord(Op & $3F), 0)
+    Ea = EaWord(Op & $3F)
+    MWriteWord(Ea, 0)
   EndIf
   FlagNZ = 0
   FlagV = 0
@@ -521,28 +467,16 @@ InstructionCLR_0050:          ; 0050DD   entries $0140-$0147
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionCLRB_1050:         ; 1050DD   entries $1140-$1147
+  PcOut()
   ;name = "CLRB"
   If (Op & $38) = 0
     Reg(Op & 7) = Reg(Op & 7) & $FF00
   Else
-    WriteByte(EaByte(Op & $3F), 0)
+    Ea = EaByte(Op & $3F)
+    MWriteByte(Ea, 0)
   EndIf
   FlagNZ = 0
   FlagV = 0
@@ -550,89 +484,52 @@ InstructionCLRB_1050:         ; 1050DD   entries $1140-$1147
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLRB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-COM-------------------------------------------------------------------
 InstructionCOM_0051:          ; 0051DD   entries $0148-$014F
+  PcOut()
   ;name = "COM"
   If (Op & $38) = 0
     Res = Reg(Op & 7) ! $FFFF
     Reg(Op & 7) = Res
   Else
     Ea = EaWord(Op & $3F)
-    Res = ReadWord(Ea) ! $FFFF
-    WriteWord(Ea, Res)
+    MReadWord(Res, Ea)
+    Res = Res ! $FFFF
+    MWriteWord(Ea, Res)
   EndIf
   FlagNZ = Res
   FlagV = 0
-  FlagC = 1
+  FlagC = $10000
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("COM " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionCOMB_1051:         ; 1051DD   entries $1148-$114F
+  PcOut()
   ;name = "COMB"
   If (Op & $38) = 0
     Res = (Reg(Op & 7) ! $FF) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     Ea = EaByte(Op & $3F)
-    Res = ReadByte(Ea) ! $FF
-    WriteByte(Ea, Res)
+    MReadByte(Res, Ea)
+    Res = Res ! $FF
+    MWriteByte(Ea, Res)
   EndIf
   FlagNZ = Res << 8
   FlagV = 0
-  FlagC = 1
+  FlagC = $10000
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("COMB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-INC-------------------------------------------------------------------
 InstructionINC_0052:          ; 0052DD   entries $0150-$0157   C unaffected
+  PcOut()
   ;name = "INC"
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
@@ -640,35 +537,22 @@ InstructionINC_0052:          ; 0052DD   entries $0150-$0157   C unaffected
     Reg(Op & 7) = Res
   Else
     Ea = EaWord(Op & $3F)
-    Dst = ReadWord(Ea)
+    MReadWord(Dst, Ea)
     Res = (Dst + 1) & $FFFF
-    WriteWord(Ea, Res)
+    MWriteWord(Ea, Res)
   EndIf
   FlagV = 0
   If Dst = $7FFF
-    FlagV = 1
+    FlagV = $8000
   EndIf
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("INC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionINCB_1052:         ; 1052DD   entries $1150-$1157
+  PcOut()
   ;name = "INCB"
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
@@ -676,36 +560,23 @@ InstructionINCB_1052:         ; 1052DD   entries $1150-$1157
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     Ea = EaByte(Op & $3F)
-    Dst = ReadByte(Ea)
+    MReadByte(Dst, Ea)
     Res = (Dst + 1) & $FF
-    WriteByte(Ea, Res)
+    MWriteByte(Ea, Res)
   EndIf
   FlagV = 0
   If Dst = $7F
-    FlagV = 1
+    FlagV = $8000
   EndIf
   FlagNZ = Res << 8
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("INCB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-DEC-------------------------------------------------------------------
 InstructionDEC_0053:          ; 0053DD   entries $0158-$015F   C unaffected
+  PcOut()
   ;name = "DEC"
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
@@ -713,35 +584,22 @@ InstructionDEC_0053:          ; 0053DD   entries $0158-$015F   C unaffected
     Reg(Op & 7) = Res
   Else
     Ea = EaWord(Op & $3F)
-    Dst = ReadWord(Ea)
+    MReadWord(Dst, Ea)
     Res = (Dst - 1) & $FFFF
-    WriteWord(Ea, Res)
+    MWriteWord(Ea, Res)
   EndIf
   FlagV = 0
   If Dst = $8000
-    FlagV = 1
+    FlagV = $8000
   EndIf
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("DEC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionDECB_1053:         ; 1053DD   entries $1158-$115F
+  PcOut()
   ;name = "DECB"
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
@@ -749,50 +607,38 @@ InstructionDECB_1053:         ; 1053DD   entries $1158-$115F
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     Ea = EaByte(Op & $3F)
-    Dst = ReadByte(Ea)
+    MReadByte(Dst, Ea)
     Res = (Dst - 1) & $FF
-    WriteByte(Ea, Res)
+    MWriteByte(Ea, Res)
   EndIf
   FlagV = 0
   If Dst = $80
-    FlagV = 1
+    FlagV = $8000
   EndIf
   FlagNZ = Res << 8
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("DECB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-NEG-------------------------------------------------------------------
 InstructionNEG_0054:          ; 0054DD   entries $0160-$0167
+  PcOut()
   ;name = "NEG"
   If (Op & $38) = 0
     Res = (0 - Reg(Op & 7)) & $FFFF      ; 100000 negates to itself
     Reg(Op & 7) = Res
   Else
     Ea = EaWord(Op & $3F)
-    Res = (0 - ReadWord(Ea)) & $FFFF
-    WriteWord(Ea, Res)
+    MReadWord(Res, Ea)
+    Res = (0 - Res) & $FFFF
+    MWriteWord(Ea, Res)
   EndIf
   FlagV = 0
   If Res = $8000
-    FlagV = 1
+    FlagV = $8000
   EndIf
-  FlagC = 1
+  FlagC = $10000
   If Res = 0
     FlagC = 0
   EndIf
@@ -800,37 +646,25 @@ InstructionNEG_0054:          ; 0054DD   entries $0160-$0167
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("NEG " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionNEGB_1054:         ; 1054DD   entries $1160-$1167
+  PcOut()
   ;name = "NEGB"
   If (Op & $38) = 0
     Res = (0 - Reg(Op & 7)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     Ea = EaByte(Op & $3F)
-    Res = (0 - ReadByte(Ea)) & $FF
-    WriteByte(Ea, Res)
+    MReadByte(Res, Ea)
+    Res = (0 - Res) & $FF
+    MWriteByte(Ea, Res)
   EndIf
   FlagV = 0
   If Res = $80
-    FlagV = 1
+    FlagV = $8000
   EndIf
-  FlagC = 1
+  FlagC = $10000
   If Res = 0
     FlagC = 0
   EndIf
@@ -838,38 +672,25 @@ InstructionNEGB_1054:         ; 1054DD   entries $1160-$1167
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("NEGB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-ADC-------------------------------------------------------------------
 InstructionADC_0055:          ; 0055DD   entries $0168-$016F
+  PcOut()
   ;name = "ADC"
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
-    Res = (Dst + FlagC) & $FFFF
+    Res = (Dst + ((FlagC >> 16) & 1)) & $FFFF
     Reg(Op & 7) = Res
   Else
     Ea = EaWord(Op & $3F)
-    Dst = ReadWord(Ea)
-    Res = (Dst + FlagC) & $FFFF
-    WriteWord(Ea, Res)
+    MReadWord(Dst, Ea)
+    Res = (Dst + ((FlagC >> 16) & 1)) & $FFFF
+    MWriteWord(Ea, Res)
   EndIf
   FlagV = 0
-  If Dst = $7FFF And FlagC = 1
-    FlagV = 1
+  If Dst = $7FFF And (FlagC & $10000) <> 0
+    FlagV = $8000
   EndIf
   If Dst <> $FFFF Or FlagC = 0
     FlagC = 0
@@ -878,37 +699,24 @@ InstructionADC_0055:          ; 0055DD   entries $0168-$016F
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ADC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionADCB_1055:         ; 1055DD   entries $1168-$116F
+  PcOut()
   ;name = "ADCB"
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
-    Res = (Dst + FlagC) & $FF
+    Res = (Dst + ((FlagC >> 16) & 1)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     Ea = EaByte(Op & $3F)
-    Dst = ReadByte(Ea)
-    Res = (Dst + FlagC) & $FF
-    WriteByte(Ea, Res)
+    MReadByte(Dst, Ea)
+    Res = (Dst + ((FlagC >> 16) & 1)) & $FF
+    MWriteByte(Ea, Res)
   EndIf
   FlagV = 0
-  If Dst = $7F And FlagC = 1
-    FlagV = 1
+  If Dst = $7F And (FlagC & $10000) <> 0
+    FlagV = $8000
   EndIf
   If Dst <> $FF Or FlagC = 0
     FlagC = 0
@@ -917,41 +725,28 @@ InstructionADCB_1055:         ; 1055DD   entries $1168-$116F
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ADCB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-SBC-------------------------------------------------------------------
 ; C: set if the destination was 0 and C was 1, cleared otherwise (the
 ; processor handbook's rule; the C core in this repository leaves C set
 ; when C was clear - worth checking against a real machine or a test).
 InstructionSBC_0056:          ; 0056DD   entries $0170-$0177
+  PcOut()
   ;name = "SBC"
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
-    Res = (Dst - FlagC) & $FFFF
+    Res = (Dst - ((FlagC >> 16) & 1)) & $FFFF
     Reg(Op & 7) = Res
   Else
     Ea = EaWord(Op & $3F)
-    Dst = ReadWord(Ea)
-    Res = (Dst - FlagC) & $FFFF
-    WriteWord(Ea, Res)
+    MReadWord(Dst, Ea)
+    Res = (Dst - ((FlagC >> 16) & 1)) & $FFFF
+    MWriteWord(Ea, Res)
   EndIf
   FlagV = 0
   If Dst = $8000
-    FlagV = 1
+    FlagV = $8000
   EndIf
   If Dst <> 0 Or FlagC = 0
     FlagC = 0
@@ -960,37 +755,24 @@ InstructionSBC_0056:          ; 0056DD   entries $0170-$0177
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SBC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionSBCB_1056:         ; 1056DD   entries $1170-$1177
+  PcOut()
   ;name = "SBCB"
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
-    Res = (Dst - FlagC) & $FF
+    Res = (Dst - ((FlagC >> 16) & 1)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     Ea = EaByte(Op & $3F)
-    Dst = ReadByte(Ea)
-    Res = (Dst - FlagC) & $FF
-    WriteByte(Ea, Res)
+    MReadByte(Dst, Ea)
+    Res = (Dst - ((FlagC >> 16) & 1)) & $FF
+    MWriteByte(Ea, Res)
   EndIf
   FlagV = 0
   If Dst = $80
-    FlagV = 1
+    FlagV = $8000
   EndIf
   If Dst <> 0 Or FlagC = 0
     FlagC = 0
@@ -999,78 +781,41 @@ InstructionSBCB_1056:         ; 1056DD   entries $1170-$1177
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SBCB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-TST-------------------------------------------------------------------
 InstructionTST_0057:          ; 0057DD   entries $0178-$017F
+  PcOut()
   ;name = "TST"
   If (Op & $38) = 0
     FlagNZ = Reg(Op & 7)
   Else
-    FlagNZ = ReadWord(EaWord(Op & $3F))
+    Ea = EaWord(Op & $3F)
+    MReadWord(FlagNZ, Ea)
   EndIf
   FlagV = 0
   FlagC = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TST " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionTSTB_1057:         ; 1057DD   entries $1178-$117F
+  PcOut()
   ;name = "TSTB"
   If (Op & $38) = 0
     FlagNZ = (Reg(Op & 7) & $FF) << 8
   Else
-    FlagNZ = ReadByte(EaByte(Op & $3F)) << 8
+    Ea = EaByte(Op & $3F)
+    MReadByte(FlagNZ, Ea)
+    FlagNZ = FlagNZ << 8
   EndIf
   FlagV = 0
   FlagC = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TSTB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ; ======================================================================
 ;  SHIFTS AND ROTATES. V is N xor C after the operation.
@@ -1078,144 +823,93 @@ InstructionTSTB_1057:         ; 1057DD   entries $1178-$117F
 
 ;-ROR-------------------------------------------------------------------
 InstructionROR_0060:          ; 0060DD   entries $0180-$0187
+  PcOut()
   ;name = "ROR"
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
-    Res = (Dst >> 1) | (FlagC << 15)
+    Res = (Dst >> 1) | ((FlagC >> 1) & $8000)
     Reg(Op & 7) = Res
   Else
     Ea = EaWord(Op & $3F)
-    Dst = ReadWord(Ea)
-    Res = (Dst >> 1) | (FlagC << 15)
-    WriteWord(Ea, Res)
+    MReadWord(Dst, Ea)
+    Res = (Dst >> 1) | ((FlagC >> 1) & $8000)
+    MWriteWord(Ea, Res)
   EndIf
-  FlagC = Dst & 1
-  FlagV = (Res >> 15) ! FlagC
+  FlagC = Dst << 16
+  FlagV = Res ! (FlagC >> 1)
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionRORB_1060:         ; 1060DD   entries $1180-$1187
+  PcOut()
   ;name = "RORB"
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
-    Res = (Dst >> 1) | (FlagC << 7)
+    Res = (Dst >> 1) | ((FlagC >> 9) & $80)
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     Ea = EaByte(Op & $3F)
-    Dst = ReadByte(Ea)
-    Res = (Dst >> 1) | (FlagC << 7)
-    WriteByte(Ea, Res)
+    MReadByte(Dst, Ea)
+    Res = (Dst >> 1) | ((FlagC >> 9) & $80)
+    MWriteByte(Ea, Res)
   EndIf
-  FlagC = Dst & 1
-  FlagV = (Res >> 7) ! FlagC
+  FlagC = Dst << 16
+  FlagV = (Res << 8) ! (FlagC >> 1)
   FlagNZ = Res << 8
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("RORB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-ROL-------------------------------------------------------------------
 InstructionROL_0061:          ; 0061DD   entries $0188-$018F
+  PcOut()
   ;name = "ROL"
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
-    Res = ((Dst << 1) | FlagC) & $FFFF
+    Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FFFF
     Reg(Op & 7) = Res
   Else
     Ea = EaWord(Op & $3F)
-    Dst = ReadWord(Ea)
-    Res = ((Dst << 1) | FlagC) & $FFFF
-    WriteWord(Ea, Res)
+    MReadWord(Dst, Ea)
+    Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FFFF
+    MWriteWord(Ea, Res)
   EndIf
-  FlagC = (Dst >> 15) & 1
-  FlagV = (Res >> 15) ! FlagC
+  FlagC = Dst << 1
+  FlagV = Res ! (FlagC >> 1)
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROL " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionROLB_1061:         ; 1061DD   entries $1188-$118F
+  PcOut()
   ;name = "ROLB"
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
-    Res = ((Dst << 1) | FlagC) & $FF
+    Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     Ea = EaByte(Op & $3F)
-    Dst = ReadByte(Ea)
-    Res = ((Dst << 1) | FlagC) & $FF
-    WriteByte(Ea, Res)
+    MReadByte(Dst, Ea)
+    Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FF
+    MWriteByte(Ea, Res)
   EndIf
-  FlagC = (Dst >> 7) & 1
-  FlagV = (Res >> 7) ! FlagC
+  FlagC = Dst << 9
+  FlagV = (Res << 8) ! (FlagC >> 1)
   FlagNZ = Res << 8
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROLB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-ASR-------------------------------------------------------------------
 InstructionASR_0062:          ; 0062DD   entries $0190-$0197
+  PcOut()
   ;name = "ASR"
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
@@ -1223,33 +917,20 @@ InstructionASR_0062:          ; 0062DD   entries $0190-$0197
     Reg(Op & 7) = Res
   Else
     Ea = EaWord(Op & $3F)
-    Dst = ReadWord(Ea)
+    MReadWord(Dst, Ea)
     Res = (Dst >> 1) | (Dst & $8000)
-    WriteWord(Ea, Res)
+    MWriteWord(Ea, Res)
   EndIf
-  FlagC = Dst & 1
-  FlagV = (Res >> 15) ! FlagC
+  FlagC = Dst << 16
+  FlagV = Res ! (FlagC >> 1)
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionASRB_1062:         ; 1062DD   entries $1190-$1197
+  PcOut()
   ;name = "ASRB"
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
@@ -1257,34 +938,21 @@ InstructionASRB_1062:         ; 1062DD   entries $1190-$1197
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     Ea = EaByte(Op & $3F)
-    Dst = ReadByte(Ea)
+    MReadByte(Dst, Ea)
     Res = (Dst >> 1) | (Dst & $80)
-    WriteByte(Ea, Res)
+    MWriteByte(Ea, Res)
   EndIf
-  FlagC = Dst & 1
-  FlagV = (Res >> 7) ! FlagC
+  FlagC = Dst << 16
+  FlagV = (Res << 8) ! (FlagC >> 1)
   FlagNZ = Res << 8
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASRB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-ASL-------------------------------------------------------------------
 InstructionASL_0063:          ; 0063DD   entries $0198-$019F
+  PcOut()
   ;name = "ASL"
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
@@ -1292,33 +960,20 @@ InstructionASL_0063:          ; 0063DD   entries $0198-$019F
     Reg(Op & 7) = Res
   Else
     Ea = EaWord(Op & $3F)
-    Dst = ReadWord(Ea)
+    MReadWord(Dst, Ea)
     Res = (Dst << 1) & $FFFF
-    WriteWord(Ea, Res)
+    MWriteWord(Ea, Res)
   EndIf
-  FlagC = (Dst >> 15) & 1
-  FlagV = (Res >> 15) ! FlagC
+  FlagC = Dst << 1
+  FlagV = Res ! (FlagC >> 1)
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASL " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionASLB_1063:         ; 1063DD   entries $1198-$119F
+  PcOut()
   ;name = "ASLB"
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
@@ -1326,34 +981,21 @@ InstructionASLB_1063:         ; 1063DD   entries $1198-$119F
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     Ea = EaByte(Op & $3F)
-    Dst = ReadByte(Ea)
+    MReadByte(Dst, Ea)
     Res = (Dst << 1) & $FF
-    WriteByte(Ea, Res)
+    MWriteByte(Ea, Res)
   EndIf
-  FlagC = (Dst >> 7) & 1
-  FlagV = (Res >> 7) ! FlagC
+  FlagC = Dst << 9
+  FlagV = (Res << 8) ! (FlagC >> 1)
   FlagNZ = Res << 8
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASLB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-SWAB------------------------------------------------------------------
 InstructionSWAB_0003:         ; 0003DD   entries $0018-$001F
+  PcOut()
   ;name = "SWAB"
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
@@ -1361,9 +1003,9 @@ InstructionSWAB_0003:         ; 0003DD   entries $0018-$001F
     Reg(Op & 7) = Res
   Else
     Ea = EaWord(Op & $3F)
-    Dst = ReadWord(Ea)
+    MReadWord(Dst, Ea)
     Res = ((Dst >> 8) | (Dst << 8)) & $FFFF
-    WriteWord(Ea, Res)
+    MWriteWord(Ea, Res)
   EndIf
   FlagNZ = (Res & $FF) << 8              ; N and Z come from the low byte
   FlagV = 0
@@ -1371,24 +1013,11 @@ InstructionSWAB_0003:         ; 0003DD   entries $0018-$001F
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SWAB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-SXT-------------------------------------------------------------------
 InstructionSXT_0067:          ; 0067DD   entries $01B8-$01BF   N unaffected
+  PcOut()
   ;name = "SXT"
   Res = 0
   If FlagN()
@@ -1397,95 +1026,60 @@ InstructionSXT_0067:          ; 0067DD   entries $01B8-$01BF   N unaffected
   If (Op & $38) = 0
     Reg(Op & 7) = Res
   Else
-    WriteWord(EaWord(Op & $3F), Res)
+    Ea = EaWord(Op & $3F)
+    MWriteWord(Ea, Res)
   EndIf
   SetNZ(FlagN(), 1 - FlagN())
   FlagV = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SXT " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-MFPS / MTPS ----------------------------------------------------------
 InstructionMFPS_1067:         ; 1067DD   entries $11B8-$11BF
+  PcOut()
   ;name = "MFPS"
   Res = PswGet() & $FF
   If (Op & $38) = 0
     Reg(Op & 7) = (Res | (0 - (Res & $80))) & $FFFF   ; sign-extended into a register
   Else
-    WriteByte(EaByte(Op & $3F), Res)
+    Ea = EaByte(Op & $3F)
+    MWriteByte(Ea, Res)
   EndIf
   FlagNZ = Res << 8
   FlagV = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MFPS " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionMTPS_1064:         ; 1064SS   entries $11A0-$11A7   the T bit is not written
+  PcOut()
   ;name = "MTPS"
   If (Op & $38) = 0
     Src = Reg(Op & 7) & $FF
   Else
-    Src = ReadByte(EaByte(Op & $3F))
+    Ea = EaByte(Op & $3F)
+    MReadByte(Src, Ea)
   EndIf
   PswSet((PswGet() & $FF10) | (Src & $EF))
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MTPS " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-MFPI / MTPI / MFPD / MTPD -------------------------------------------
 ; One address space until the memory management unit is modelled, so the
 ; "previous" space is this one.
 InstructionMFPI_0065:         ; 0065SS   entries $01A8-$01AF
+  PcOut()
   ;name = "MFPI"
   If (Op & $38) = 0
     Src = Reg(Op & 7)
   Else
-    Src = ReadWord(EaWord(Op & $3F))
+    Ea = EaWord(Op & $3F)
+    MReadWord(Src, Ea)
   EndIf
   Push(Src)
   FlagNZ = Src
@@ -1493,50 +1087,24 @@ InstructionMFPI_0065:         ; 0065SS   entries $01A8-$01AF
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MFPI " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionMTPI_0066:         ; 0066DD   entries $01B0-$01B7
+  PcOut()
   ;name = "MTPI"
   Src = Pop()
   If (Op & $38) = 0
     Reg(Op & 7) = Src
   Else
-    WriteWord(EaWord(Op & $3F), Src)
+    Ea = EaWord(Op & $3F)
+    MWriteWord(Ea, Src)
   EndIf
   FlagNZ = Src
   FlagV = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MTPI " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionMFPD_1065:         ; 1065SS   entries $11A8-$11AF
   ;name = "MFPD"
@@ -1558,316 +1126,159 @@ InstructionMTPD_1066:         ; 1066DD   entries $11B0-$11B7
 ;-BR--------------------------------------------------------------------
 InstructionBR_0004:           ; 000400   entries $0020-$003F
   ;name = "BR"
-  Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
+  BranchTo()
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BR " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 InstructionBNE_0010:          ; 001000   entries $0040-$005F   Z = 0
   ;name = "BNE"
   If FlagNZ & $FFFF
-    Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
+    BranchTo()
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BNE " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 InstructionBEQ_0014:          ; 001400   entries $0060-$007F   Z = 1
   ;name = "BEQ"
   If (FlagNZ & $FFFF) = 0
-    Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
+    BranchTo()
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BEQ " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 InstructionBGE_0020:          ; 002000   entries $0080-$009F   N xor V = 0
   ;name = "BGE"
-  If FlagN() = FlagV
-    BranchTaken()
+  If (((FlagNZ | (FlagNZ >> 1)) ! FlagV) & $8000) = 0     ; N xor V = 0 (N: bit 15, or bit 16 with Z)
+    BranchTo()
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BGE " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 InstructionBLT_0024:          ; 002400   entries $00A0-$00BF   N xor V = 1
   ;name = "BLT"
-  If FlagN() <> FlagV
-    BranchTaken()
+  If ((FlagNZ | (FlagNZ >> 1)) ! FlagV) & $8000
+    BranchTo()
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BLT " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 InstructionBGT_0030:          ; 003000   entries $00C0-$00DF   Z or (N xor V) = 0
   ;name = "BGT"
-  If (FlagNZ & $FFFF) <> 0 And FlagN() = FlagV
-    BranchTaken()
+  If FlagNZ & $FFFF                      ; nested, not And: no truth values built
+    If (((FlagNZ | (FlagNZ >> 1)) ! FlagV) & $8000) = 0     ; N xor V = 0 (N: bit 15, or bit 16 with Z)
+      BranchTo()
+    EndIf
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BGT " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 InstructionBLE_0034:          ; 003400   entries $00E0-$00FF   Z or (N xor V) = 1
   ;name = "BLE"
-  If (FlagNZ & $FFFF) = 0 Or FlagN() <> FlagV
-    BranchTaken()
+  If (FlagNZ & $FFFF) = 0
+    BranchTo()
+  ElseIf ((FlagNZ | (FlagNZ >> 1)) ! FlagV) & $8000
+    BranchTo()
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BLE " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 InstructionBPL_1000:          ; 100000   entries $1000-$101F   N = 0
   ;name = "BPL"
   If (FlagNZ & $18000) = 0
-    Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
+    BranchTo()
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BPL " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 InstructionBMI_1004:          ; 100400   entries $1020-$103F   N = 1
   ;name = "BMI"
   If FlagNZ & $18000
-    Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
+    BranchTo()
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BMI " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 InstructionBHI_1010:          ; 101000   entries $1040-$105F   C = 0 and Z = 0
   ;name = "BHI"
-  If FlagC = 0 And (FlagNZ & $FFFF) <> 0
-    BranchTaken()
+  If (FlagC & $10000) = 0
+    If FlagNZ & $FFFF
+      BranchTo()
+    EndIf
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BHI " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 InstructionBLOS_1014:         ; 101400   entries $1060-$107F   C = 1 or Z = 1
   ;name = "BLOS"
-  If FlagC = 1 Or (FlagNZ & $FFFF) = 0
-    BranchTaken()
+  If FlagC & $10000
+    BranchTo()
+  ElseIf (FlagNZ & $FFFF) = 0
+    BranchTo()
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BLOS " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 InstructionBVC_1020:          ; 102000   entries $1080-$109F   V = 0
   ;name = "BVC"
-  If FlagV = 0
-    Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
+  If (FlagV & $8000) = 0
+    BranchTo()
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BVC " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 InstructionBVS_1024:          ; 102400   entries $10A0-$10BF   V = 1
   ;name = "BVS"
-  If FlagV
-    Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
+  If FlagV & $8000
+    BranchTo()
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BVS " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 InstructionBCC_1030:          ; 103000   entries $10C0-$10DF   C = 0 (also BHIS)
   ;name = "BCC"
-  If FlagC = 0
-    Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
+  If (FlagC & $10000) = 0
+    BranchTo()
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BCC " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 InstructionBCS_1034:          ; 103400   entries $10E0-$10FF   C = 1 (also BLO)
   ;name = "BCS"
-  If FlagC
-    Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
+  If FlagC & $10000
+    BranchTo()
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BCS " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 ; ======================================================================
 ;  JUMPS AND SUBROUTINES
@@ -1875,6 +1286,7 @@ InstructionBCS_1034:          ; 103400   entries $10E0-$10FF   C = 1 (also BLO)
 
 ;-JMP-------------------------------------------------------------------
 InstructionJMP_0001:          ; 0001DD   entries $0008-$000F
+  PcOut()
   ;name = "JMP"
   If (Op & $38) = 0
     TrapVector = #VEC_BUS                ; JMP to a register is illegal
@@ -1884,24 +1296,11 @@ InstructionJMP_0001:          ; 0001DD   entries $0008-$000F
   ; ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("JMP " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-JSR-------------------------------------------------------------------
 InstructionJSR_004:           ; 004RDD   entries $0100-$013F
+  PcOut()
   ;name = "JSR"
   If (Op & $38) = 0
     TrapVector = #VEC_BUS                ; JSR to a register is illegal
@@ -1914,48 +1313,22 @@ InstructionJSR_004:           ; 004RDD   entries $0100-$013F
   ; ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("JSR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-RTS-------------------------------------------------------------------
 InstructionRTS_00020:         ; 00020R   entry $0010
+  PcOut()
   ;name = "RTS"
   Reg(7) = Reg(Op & 7)
   Reg(Op & 7) = Pop()
   ; ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("RTS " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-MARK------------------------------------------------------------------
 InstructionMARK_0064:         ; 0064NN   entries $01A0-$01A7
+  PcOut()
   ;name = "MARK"
   Reg(6) = (Reg(7) + ((Op & $3F) << 1)) & $FFFF
   Reg(7) = Reg(5)
@@ -1963,44 +1336,29 @@ InstructionMARK_0064:         ; 0064NN   entries $01A0-$01A7
   ; ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("MARK " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-SOB-------------------------------------------------------------------
 InstructionSOB_077:           ; 077RNN   entries $0FC0-$0FFF
-  ;name = "SOB"
-  Reg((Op >> 6) & 7) = (Reg((Op >> 6) & 7) - 1) & $FFFF
-  If Reg((Op >> 6) & 7)
-    Reg(7) = (Reg(7) - ((Op & $3F) << 1)) & $FFFF
+  ;name = "SOB"                          ; R0-R6 only: SOB R7 is below
+  Res = (Reg((Op >> 6) & 7) - 1) & $FFFF
+  Reg((Op >> 6) & 7) = Res
+  If Res
+    PC = (PC - ((Op & $3F) << 1)) & $FFFF
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("SOB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
+  NextNative()
+
+InstructionSOB_077_PC:        ; 0777NN   SOB R7 - legal, if strange: it counts the PC down
+  PcOut()
+  Reg(7) = (Reg(7) - 1) & $FFFF
+  If Reg(7)
+    Reg(7) = (Reg(7) - ((Op & $3F) << 1)) & $FFFF
   EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSynced()
 
 ; ======================================================================
 ;  EIS - MUL, DIV, ASH, ASHC, XOR. Register in bits 8-6, operand in 5-0.
@@ -2008,11 +1366,13 @@ InstructionSOB_077:           ; 077RNN   entries $0FC0-$0FFF
 
 ;-MUL-------------------------------------------------------------------
 InstructionMUL_070:           ; 070RSS   entries $0E00-$0E3F
+  PcOut()
   ;name = "MUL"
   If (Op & $38) = 0
     Src = Reg(Op & 7)
   Else
-    Src = ReadWord(EaWord(Op & $3F))
+    Ea = EaWord(Op & $3F)
+    MReadWord(Src, Ea)
   EndIf
   Src = Src - ((Src & $8000) << 1)                        ; signed 16
   Dst = Reg((Op >> 6) & 7)
@@ -2028,47 +1388,35 @@ InstructionMUL_070:           ; 070RSS   entries $0E00-$0E3F
   FlagV = 0
   FlagC = 0
   If Res < -32768 Or Res > 32767
-    FlagC = 1
+    FlagC = $10000
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("MUL " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-DIV-------------------------------------------------------------------
 InstructionDIV_071:           ; 071RSS   entries $0E40-$0E7F
+  PcOut()
   ;name = "DIV"
   If (Op & $38) = 0
     Src = Reg(Op & 7)
   Else
-    Src = ReadWord(EaWord(Op & $3F))
+    Ea = EaWord(Op & $3F)
+    MReadWord(Src, Ea)
   EndIf
   Src = Src - ((Src & $8000) << 1)
   Dst = (Reg((Op >> 6) & 7) << 16) | Reg(((Op >> 6) & 7) | 1)   ; the 32-bit dividend
   If Src = 0
-    FlagV = 1
-    FlagC = 1
+    FlagV = $8000
+    FlagC = $10000
   ElseIf Src = -1 And Dst = $80000000
-    FlagV = 1
+    FlagV = $8000
     FlagC = 0
   Else
     Res = Dst / Src
     If Res < -32768 Or Res > 32767
-      FlagV = 1                                            ; registers unchanged
+      FlagV = $8000                                            ; registers unchanged
       FlagC = 0
     Else
       Reg((Op >> 6) & 7) = Res & $FFFF
@@ -2081,47 +1429,36 @@ InstructionDIV_071:           ; 071RSS   entries $0E40-$0E7F
   ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("DIV " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-ASH-------------------------------------------------------------------
 ; Shift count is the low six bits of the source, signed: positive shifts
 ; left, negative shifts right. A loop - rare instruction, correct first.
 InstructionASH_072:           ; 072RSS   entries $0E80-$0EBF
+  PcOut()
   ;name = "ASH"
   If (Op & $38) = 0
     Src = Reg(Op & 7) & $3F
   Else
-    Src = ReadWord(EaWord(Op & $3F)) & $3F
+    Ea = EaWord(Op & $3F)
+    MReadWord(Src, Ea)
+    Src = Src & $3F
   EndIf
   Res = Reg((Op >> 6) & 7)
   FlagV = 0
   If Src & $20
     Src = 64 - Src                                         ; right by this many
     While Src > 0
-      FlagC = Res & 1
+      FlagC = Res << 16
       Res = (Res >> 1) | (Res & $8000)
       Src = Src - 1
     Wend
   Else
     While Src > 0
-      FlagC = (Res >> 15) & 1
+      FlagC = Res << 1
       Tmp = (Res << 1) & $FFFF
       If (Tmp ! Res) & $8000
-        FlagV = 1                                          ; the sign changed
+        FlagV = $8000                                          ; the sign changed
       EndIf
       Res = Tmp
       Src = Src - 1
@@ -2132,45 +1469,34 @@ InstructionASH_072:           ; 072RSS   entries $0E80-$0EBF
   ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("ASH " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-ASHC------------------------------------------------------------------
 InstructionASHC_073:          ; 073RSS   entries $0EC0-$0EFF
+  PcOut()
   ;name = "ASHC"
   If (Op & $38) = 0
     Src = Reg(Op & 7) & $3F
   Else
-    Src = ReadWord(EaWord(Op & $3F)) & $3F
+    Ea = EaWord(Op & $3F)
+    MReadWord(Src, Ea)
+    Src = Src & $3F
   EndIf
   Res = (Reg((Op >> 6) & 7) << 16) | Reg(((Op >> 6) & 7) | 1)
   FlagV = 0
   If Src & $20
     Src = 64 - Src
     While Src > 0
-      FlagC = Res & 1
+      FlagC = Res << 16
       Res = Res >> 1                                       ; arithmetic on a 32-bit .i
       Src = Src - 1
     Wend
   Else
     While Src > 0
-      FlagC = (Res >> 31) & 1
+      FlagC = Res >> 15
       Tmp = Res << 1
       If (Tmp ! Res) & $80000000
-        FlagV = 1
+        FlagV = $8000
       EndIf
       Res = Tmp
       Src = Src - 1
@@ -2182,105 +1508,55 @@ InstructionASHC_073:          ; 073RSS   entries $0EC0-$0EFF
   ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("ASHC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ;-XOR-------------------------------------------------------------------
 InstructionXOR_074:           ; 074RDD   entries $0F00-$0F3F
+  PcOut()
   ;name = "XOR"
   If (Op & $38) = 0
     Res = Reg(Op & 7) ! Reg((Op >> 6) & 7)
     Reg(Op & 7) = Res
   Else
     Ea = EaWord(Op & $3F)
-    Res = ReadWord(Ea) ! Reg((Op >> 6) & 7)
-    WriteWord(Ea, Res)
+    MReadWord(Res, Ea)
+    Res = Res ! Reg((Op >> 6) & 7)
+    MWriteWord(Ea, Res)
   EndIf
   FlagNZ = Res
   FlagV = 0
   ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("XOR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ; ======================================================================
 ;  TRAPS AND MACHINE CONTROL
 ; ======================================================================
 InstructionEMT_104:           ; 104000-104377   entries $1100-$111F
+  PcOut()
   ;name = "EMT"
   TrapVector = #VEC_EMT
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("EMT " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionTRAP_1044:         ; 104400-104777   entries $1120-$113F
+  PcOut()
   ;name = "TRAP"
   TrapVector = #VEC_TRAP
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("TRAP " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionHALT_000000:       ; entry $0000, sub-decoded
+  PcOut()
   ;name = "HALT"
   Halted = 1
   Reg(7) = (Reg(7) - 2) & $FFFF          ; PC stays on the HALT, as on the console
+  PC = Reg(7)
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("HALT")
   Goto SlowTail                         ; Halted is only looked at there
@@ -2292,85 +1568,35 @@ InstructionWAIT_000001:       ; entry $0000, sub-decoded
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("WAIT")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 InstructionRTI_000002:        ; entry $0000, sub-decoded
+  PcOut()
   ;name = "RTI"
   Reg(7) = Pop()
   PswSet(Pop())
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("RTI")
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionBPT_000003:        ; entry $0000, sub-decoded
+  PcOut()
   ;name = "BPT"
   TrapVector = #VEC_BPT
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("BPT")
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionIOT_000004:        ; entry $0000, sub-decoded
+  PcOut()
   ;name = "IOT"
   TrapVector = #VEC_IOT
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("IOT")
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionRESET_000005:      ; entry $0000, sub-decoded
   ;name = "RESET"
@@ -2378,41 +1604,17 @@ InstructionRESET_000005:      ; entry $0000, sub-decoded
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("RESET")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 InstructionRTT_000006:        ; entry $0000, sub-decoded (T-bit timing not modelled)
+  PcOut()
   ;name = "RTT"
   Reg(7) = Pop()
   PswSet(Pop())
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("RTT")
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 InstructionMFPT_000007:       ; entry $0000, sub-decoded
   ;name = "MFPT"
@@ -2420,18 +1622,7 @@ InstructionMFPT_000007:       ; entry $0000, sub-decoded
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("MFPT")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 InstructionSPL_00023:         ; 00023N   entry $0013
   ;name = "SPL"
@@ -2440,67 +1631,61 @@ InstructionSPL_00023:         ; 00023N   entry $0013
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("SPL")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 ; 000240-000277: bit 4 = set (1) or clear (0), bits 3-0 = N Z V C.
 ; 000240 is NOP, 000257 CCC, 000277 SCC.
 InstructionCC_00024:          ; 00024x-00027x   entries $0014-$0017
   ;name = "CLx/SEx"
-  Tmp = PswGet()
-  If Op & $10
-    Tmp = Tmp | (Op & $F)
-  Else
-    Tmp = Tmp & ~(Op & $F)
+  ; Each named flag is set or cleared where it lives (see SPEED in cpu),
+  ; with no PswGet/PswSet round trip: these are frequent (CLC, SEC, NOP,
+  ; CCC...). The priority is untouched, so the only part of PswSet that
+  ; could matter - IntCheck - is still called whenever a request waits.
+  If Op & 1
+    If Op & $10
+      FlagC = $10000
+    Else
+      FlagC = 0
+    EndIf
   EndIf
-  PswSet(Tmp)
+  If Op & 2
+    If Op & $10
+      FlagV = $8000
+    Else
+      FlagV = 0
+    EndIf
+  EndIf
+  If Op & $C                             ; N or Z named: rebuild the lazy pair
+    Tmp = 0
+    If FlagNZ & $18000
+      Tmp = 8
+    EndIf
+    If (FlagNZ & $FFFF) = 0
+      Tmp = Tmp | 4
+    EndIf
+    If Op & $10
+      Tmp = Tmp | (Op & $C)
+    Else
+      Tmp = Tmp & ~(Op & $C)
+    EndIf
+    SetNZ((Tmp >> 3) & 1, (Tmp >> 2) & 1)
+  EndIf
+  If IntReq
+    IntCheck()
+  EndIf
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("CC")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextNative()
 
 InstructionReserved:          ; every opcode this model does not execute
+  PcOut()
   ;name = "reserved"
   TrapVector = #VEC_RESV
   ; ClockCycles = ClockCycles + #J11_T_TRAP
   ;disassembly(".WORD")
   ; ---- next instruction (THE TAIL, top of file) ----
-  If TrapVector
-    Goto SlowTail
-  EndIf
-  RunLeft = RunLeft - 1
-  If RunLeft = 0
-    Goto RunEnd
-  EndIf
-  If Reg(7) < #RAM_BYTES
-    If (Reg(7) & 1) = 0
-      Op = Mem(Reg(7) >> 1)
-      Reg(7) = Reg(7) + 2
-      Goto OpTable(Op >> 3)
-    EndIf
-  EndIf
-  Goto SlowFetch
+  NextSynced()
 
 ; ======================================================================
 ;  000000-000007 - the one entry that still holds several instructions.
@@ -2530,6 +1715,581 @@ InstructionGroup0_0000:       ; 000000-000007   entry $0000
 
 
 ; ======================================================================
+;  REGISTER FAST PATHS. The commonest forms - both operands in registers,
+;  or a single operand in a register - get handlers with no mode test, no
+;  operand-helper call and no Reg(7) traffic. The Pico's table is indexed
+;  by Op >> 3, so an entry knows both addressing modes and the source
+;  register but NOT the destination register: each fast path first sends
+;  a destination of R7 back to the general handler, which keeps the PC
+;  right. The table sends a source of R7 there too. (The Pico 2 has one
+;  entry per opcode and needs no such test.) Anything not listed here
+;  (ADC, SBC, the byte rotates...) is correct through its general handler.
+; ======================================================================
+
+InstructionMOV_01_RR:               ; 01SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionMOV_01       ; the general handler
+  EndIf
+  ;name = "MOV Rs,Rd"
+  Src = Reg((Op >> 6) & 7)
+  Reg(Op & 7) = Src
+  FlagNZ = Src
+  FlagV = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("MOV " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionCMP_02_RR:               ; 02SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionCMP_02       ; the general handler
+  EndIf
+  ;name = "CMP Rs,Rd"
+  Src = Reg((Op >> 6) & 7)
+  Res = Src - Reg(Op & 7)
+  FlagC = Res                            ; the borrow is bit 16
+  FlagNZ = Res & $FFFF
+  FlagV = (Src ! (Src - Res)) & (Src ! Res)   ; bit 15; Src - Res is Rd
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("CMP " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionBIT_03_RR:               ; 03SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBIT_03       ; the general handler
+  EndIf
+  ;name = "BIT Rs,Rd"
+  FlagNZ = Reg((Op >> 6) & 7) & Reg(Op & 7)
+  FlagV = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("BIT " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionBIC_04_RR:               ; 04SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBIC_04       ; the general handler
+  EndIf
+  ;name = "BIC Rs,Rd"
+  Res = Reg(Op & 7) & ~Reg((Op >> 6) & 7) & $FFFF
+  Reg(Op & 7) = Res
+  FlagNZ = Res
+  FlagV = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("BIC " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionBIS_05_RR:               ; 05SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBIS_05       ; the general handler
+  EndIf
+  ;name = "BIS Rs,Rd"
+  Res = Reg(Op & 7) | Reg((Op >> 6) & 7)
+  Reg(Op & 7) = Res
+  FlagNZ = Res
+  FlagV = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("BIS " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionADD_06_RR:               ; 06SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionADD_06       ; the general handler
+  EndIf
+  ;name = "ADD Rs,Rd"
+  Src = Reg((Op >> 6) & 7)
+  Res = Src + Reg(Op & 7)
+  FlagC = Res                            ; C is bit 16 of the sum
+  Res = Res & $FFFF
+  Reg(Op & 7) = Res
+  FlagNZ = Res
+  FlagV = (Src ! Res) & ((Res - Src) ! Res)   ; bit 15; Res - Src is the old Rd
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("ADD " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionMOVB_11_RR:              ; 11SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionMOVB_11      ; the general handler
+  EndIf
+  ;name = "MOVB Rs,Rd"
+  Src = Reg((Op >> 6) & 7) & $FF
+  Reg(Op & 7) = (Src | (0 - (Src & $80))) & $FFFF
+  FlagNZ = Src << 8
+  FlagV = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("MOVB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionCMPB_12_RR:              ; 12SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionCMPB_12      ; the general handler
+  EndIf
+  ;name = "CMPB Rs,Rd"
+  Src = Reg((Op >> 6) & 7) & $FF
+  Dst = Reg(Op & 7) & $FF
+  Res = Src - Dst
+  FlagC = Res << 8
+  FlagV = ((Src ! Dst) & (Src ! Res)) << 8
+  FlagNZ = (Res & $FF) << 8
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("CMPB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionBITB_13_RR:              ; 13SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBITB_13      ; the general handler
+  EndIf
+  ;name = "BITB Rs,Rd"
+  FlagNZ = (Reg((Op >> 6) & 7) & Reg(Op & 7) & $FF) << 8
+  FlagV = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("BITB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionBICB_14_RR:              ; 14SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBICB_14      ; the general handler
+  EndIf
+  ;name = "BICB Rs,Rd"
+  Res = Reg(Op & 7) & ~Reg((Op >> 6) & 7) & $FF
+  Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  FlagNZ = Res << 8
+  FlagV = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("BICB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionBISB_15_RR:              ; 15SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBISB_15      ; the general handler
+  EndIf
+  ;name = "BISB Rs,Rd"
+  Res = (Reg(Op & 7) | Reg((Op >> 6) & 7)) & $FF
+  Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  FlagNZ = Res << 8
+  FlagV = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("BISB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionSUB_16_RR:               ; 16SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionSUB_16       ; the general handler
+  EndIf
+  ;name = "SUB Rs,Rd"
+  Src = Reg((Op >> 6) & 7)
+  Res = Reg(Op & 7) - Src
+  FlagC = Res                            ; the borrow is bit 16
+  Res = Res & $FFFF
+  Reg(Op & 7) = Res
+  FlagNZ = Res
+  FlagV = (Src ! (Res + Src)) & ((Res + Src) ! Res)   ; bit 15; Res + Src is the old Rd
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("SUB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionCLR_0050_R:              ; 0050R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionCLR_0050     ; the general handler
+  EndIf
+  ;name = "CLR Rd"
+  Reg(Op & 7) = 0
+  FlagNZ = 0
+  FlagV = 0
+  FlagC = 0
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("CLR " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionCOM_0051_R:              ; 0051R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionCOM_0051     ; the general handler
+  EndIf
+  ;name = "COM Rd"
+  Res = Reg(Op & 7) ! $FFFF
+  Reg(Op & 7) = Res
+  FlagNZ = Res
+  FlagV = 0
+  FlagC = $10000
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("COM " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionINC_0052_R:              ; 0052R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionINC_0052     ; the general handler
+  EndIf
+  ;name = "INC Rd"
+  Dst = Reg(Op & 7)
+  Res = (Dst + 1) & $FFFF
+  Reg(Op & 7) = Res
+  FlagV = 0
+  If Dst = $7FFF
+    FlagV = $8000
+  EndIf
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("INC " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionDEC_0053_R:              ; 0053R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionDEC_0053     ; the general handler
+  EndIf
+  ;name = "DEC Rd"
+  Dst = Reg(Op & 7)
+  Res = (Dst - 1) & $FFFF
+  Reg(Op & 7) = Res
+  FlagV = 0
+  If Dst = $8000
+    FlagV = $8000
+  EndIf
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("DEC " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionNEG_0054_R:              ; 0054R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionNEG_0054     ; the general handler
+  EndIf
+  ;name = "NEG Rd"
+  Res = (0 - Reg(Op & 7)) & $FFFF
+  Reg(Op & 7) = Res
+  FlagV = 0
+  If Res = $8000
+    FlagV = $8000
+  EndIf
+  FlagC = $10000
+  If Res = 0
+    FlagC = 0
+  EndIf
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("NEG " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionTST_0057_R:              ; 0057R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionTST_0057     ; the general handler
+  EndIf
+  ;name = "TST Rd"
+  FlagNZ = Reg(Op & 7)
+  FlagV = 0
+  FlagC = 0
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("TST " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionROR_0060_R:              ; 0060R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionROR_0060     ; the general handler
+  EndIf
+  ;name = "ROR Rd"
+  Dst = Reg(Op & 7)
+  Res = (Dst >> 1) | ((FlagC >> 1) & $8000)
+  Reg(Op & 7) = Res
+  FlagC = Dst << 16
+  FlagV = Res ! (FlagC >> 1)
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("ROR " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionROL_0061_R:              ; 0061R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionROL_0061     ; the general handler
+  EndIf
+  ;name = "ROL Rd"
+  Dst = Reg(Op & 7)
+  Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FFFF
+  Reg(Op & 7) = Res
+  FlagC = Dst << 1
+  FlagV = Res ! (FlagC >> 1)
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("ROL " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionASR_0062_R:              ; 0062R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionASR_0062     ; the general handler
+  EndIf
+  ;name = "ASR Rd"
+  Dst = Reg(Op & 7)
+  Res = (Dst >> 1) | (Dst & $8000)
+  Reg(Op & 7) = Res
+  FlagC = Dst << 16
+  FlagV = Res ! (FlagC >> 1)
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("ASR " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionASL_0063_R:              ; 0063R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionASL_0063     ; the general handler
+  EndIf
+  ;name = "ASL Rd"
+  Dst = Reg(Op & 7)
+  Res = (Dst << 1) & $FFFF
+  Reg(Op & 7) = Res
+  FlagC = Dst << 1
+  FlagV = Res ! (FlagC >> 1)
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("ASL " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionSWAB_0003_R:             ; 0003R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionSWAB_0003    ; the general handler
+  EndIf
+  ;name = "SWAB Rd"
+  Dst = Reg(Op & 7)
+  Res = ((Dst >> 8) | (Dst << 8)) & $FFFF
+  Reg(Op & 7) = Res
+  FlagNZ = (Res & $FF) << 8
+  FlagV = 0
+  FlagC = 0
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("SWAB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionCLRB_1050_R:             ; 1050R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionCLRB_1050    ; the general handler
+  EndIf
+  ;name = "CLRB Rd"
+  Reg(Op & 7) = Reg(Op & 7) & $FF00
+  FlagNZ = 0
+  FlagV = 0
+  FlagC = 0
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("CLRB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionINCB_1052_R:             ; 1052R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionINCB_1052    ; the general handler
+  EndIf
+  ;name = "INCB Rd"
+  Dst = Reg(Op & 7) & $FF
+  Res = (Dst + 1) & $FF
+  Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  FlagV = 0
+  If Dst = $7F
+    FlagV = $8000
+  EndIf
+  FlagNZ = Res << 8
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("INCB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionDECB_1053_R:             ; 1053R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionDECB_1053    ; the general handler
+  EndIf
+  ;name = "DECB Rd"
+  Dst = Reg(Op & 7) & $FF
+  Res = (Dst - 1) & $FF
+  Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  FlagV = 0
+  If Dst = $80
+    FlagV = $8000
+  EndIf
+  FlagNZ = Res << 8
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("DECB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+InstructionTSTB_1057_R:             ; 1057R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionTSTB_1057    ; the general handler
+  EndIf
+  ;name = "TSTB Rd"
+  FlagNZ = (Reg(Op & 7) & $FF) << 8
+  FlagV = 0
+  FlagC = 0
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("TSTB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNative()
+
+
+; ======================================================================
+;  IMMEDIATE FAST PATHS: OP #n,Rd - the source is the word after the
+;  instruction (mode 2 on R7) and the destination a register other than
+;  R7. The immediate is read straight at the PC, which stays in its
+;  register: no PcOut, no EaWord, no call. A destination of R7 goes back to
+;  the general handler, as in the register fast paths.
+; ======================================================================
+
+InstructionMOV_01_IR:            ; 0127DD  MOV #n,Rd, the source an immediate
+  ;name = "MOV #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionMOV_01                  ; the general handler
+  EndIf
+  MReadWord(Src, PC)                     ; the word after the instruction
+  PC = (PC + 2) & $FFFF
+  Reg(Op & 7) = Src
+  FlagNZ = Src
+  FlagV = 0
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrap()
+
+InstructionCMP_02_IR:            ; 0227DD  CMP #n,Rd, the source an immediate
+  ;name = "CMP #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionCMP_02                  ; the general handler
+  EndIf
+  MReadWord(Src, PC)                     ; the word after the instruction
+  PC = (PC + 2) & $FFFF
+  Res = Src - Reg(Op & 7)
+  FlagC = Res                            ; the borrow is bit 16
+  FlagNZ = Res & $FFFF
+  FlagV = (Src ! (Src - Res)) & (Src ! Res)   ; bit 15; Src - Res is Rd
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrap()
+
+InstructionBIT_03_IR:            ; 0327DD  BIT #n,Rd, the source an immediate
+  ;name = "BIT #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBIT_03                  ; the general handler
+  EndIf
+  MReadWord(Src, PC)                     ; the word after the instruction
+  PC = (PC + 2) & $FFFF
+  FlagNZ = Src & Reg(Op & 7)
+  FlagV = 0
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrap()
+
+InstructionBIC_04_IR:            ; 0427DD  BIC #n,Rd, the source an immediate
+  ;name = "BIC #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBIC_04                  ; the general handler
+  EndIf
+  MReadWord(Src, PC)                     ; the word after the instruction
+  PC = (PC + 2) & $FFFF
+  Res = Reg(Op & 7) & ~Src & $FFFF
+  Reg(Op & 7) = Res
+  FlagNZ = Res
+  FlagV = 0
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrap()
+
+InstructionBIS_05_IR:            ; 0527DD  BIS #n,Rd, the source an immediate
+  ;name = "BIS #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBIS_05                  ; the general handler
+  EndIf
+  MReadWord(Src, PC)                     ; the word after the instruction
+  PC = (PC + 2) & $FFFF
+  Res = Reg(Op & 7) | Src
+  Reg(Op & 7) = Res
+  FlagNZ = Res
+  FlagV = 0
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrap()
+
+InstructionADD_06_IR:            ; 0627DD  ADD #n,Rd, the source an immediate
+  ;name = "ADD #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionADD_06                  ; the general handler
+  EndIf
+  MReadWord(Src, PC)                     ; the word after the instruction
+  PC = (PC + 2) & $FFFF
+  Res = Src + Reg(Op & 7)
+  FlagC = Res                            ; C is bit 16 of the sum
+  Res = Res & $FFFF
+  Reg(Op & 7) = Res
+  FlagNZ = Res
+  FlagV = (Src ! Res) & ((Res - Src) ! Res)   ; bit 15; Res - Src is the old Rd
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrap()
+
+InstructionSUB_16_IR:            ; 1627DD  SUB #n,Rd, the source an immediate
+  ;name = "SUB #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionSUB_16                  ; the general handler
+  EndIf
+  MReadWord(Src, PC)                     ; the word after the instruction
+  PC = (PC + 2) & $FFFF
+  Res = Reg(Op & 7) - Src
+  FlagC = Res                            ; the borrow is bit 16
+  Res = Res & $FFFF
+  Reg(Op & 7) = Res
+  FlagNZ = Res
+  FlagV = (Src ! (Res + Src)) & ((Res + Src) ! Res)   ; bit 15; Res + Src is the old Rd
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrap()
+
+InstructionMOVB_11_IR:           ; 1127DD  MOVB #n,Rd, the source an immediate
+  ;name = "MOVB #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionMOVB_11                 ; the general handler
+  EndIf
+  MReadByte(Src, PC)                     ; the low byte of the word after the instruction
+  PC = (PC + 2) & $FFFF                  ; (R7 always steps by two)
+  Reg(Op & 7) = (Src | (0 - (Src & $80))) & $FFFF   ; to a register it is sign-extended
+  FlagNZ = Src << 8
+  FlagV = 0
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrap()
+
+InstructionCMPB_12_IR:           ; 1227DD  CMPB #n,Rd, the source an immediate
+  ;name = "CMPB #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionCMPB_12                 ; the general handler
+  EndIf
+  MReadByte(Src, PC)                     ; the low byte of the word after the instruction
+  PC = (PC + 2) & $FFFF                  ; (R7 always steps by two)
+  Dst = Reg(Op & 7) & $FF
+  Res = Src - Dst
+  FlagC = Res << 8
+  FlagV = ((Src ! Dst) & (Src ! Res)) << 8
+  FlagNZ = (Res & $FF) << 8
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrap()
+
+InstructionBITB_13_IR:           ; 1327DD  BITB #n,Rd, the source an immediate
+  ;name = "BITB #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBITB_13                 ; the general handler
+  EndIf
+  MReadByte(Src, PC)                     ; the low byte of the word after the instruction
+  PC = (PC + 2) & $FFFF                  ; (R7 always steps by two)
+  FlagNZ = (Src & Reg(Op & 7) & $FF) << 8
+  FlagV = 0
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrap()
+
+; ======================================================================
 ;  THE SLOW WAY OUT OF AN INSTRUCTION - a trap to take, or a HALT. The
 ;  handlers' own tails send any instruction that left TrapVector set here,
 ;  and HALT comes here always, because this is the only place that looks
@@ -2539,7 +2299,9 @@ SlowTail:
   If TrapVector
     Tmp = TrapVector
     TrapVector = 0
+    Reg(7) = PC
     TakeTrap(Tmp)
+    PC = Reg(7)
   EndIf
   RunLeft = RunLeft - 1
   If RunLeft > 0 And Halted = 0
@@ -2553,6 +2315,7 @@ SlowTail:
 ;  from the firmware, between runs).
 ; ======================================================================
 RunEnd:
+  Reg(7) = PC                            ; the devices' traps work on Reg(7)
   InstrCount = InstrCount + RunWindow - RunLeft
   RunBank = RunBank + RunLeft
   RunLeft = 0
@@ -2573,6 +2336,7 @@ RunEnd:
     Wend
     If Waiting = 0 And RunBank > 0
       StartWindow()
+      PC = Reg(7)
       Goto Fetch
     EndIf
   EndIf
@@ -2636,6 +2400,7 @@ BuildTable:
   Ops($0EC0, 64, ?InstructionASHC_073)
   Ops($0F00, 64, ?InstructionXOR_074)
   Ops($0FC0, 64, ?InstructionSOB_077)
+  Ops($0FF8, 8, ?InstructionSOB_077_PC)              ; SOB R7
 
   ; ---- 10xxxx ----
   Ops($1000, 32, ?InstructionBPL_1000)
@@ -2674,6 +2439,49 @@ BuildTable:
   Ops($1C00, 512, ?InstructionSUB_16)
 
   ; 17xxxx (floating point, $1E00-$1FFF) stays reserved until the FPJ11 is modelled.
+  ; ---- register fast paths: overlay the general entries (Op >> 3 keeps
+  ; the source register in bits 5-3 and both modes; R7 as the source stays
+  ; general, R7 as the destination is sent back by the handler) ----
+  For FillFrom = 0 To 6
+    OpTable($0200 | (FillFrom << 3)) = ?InstructionMOV_01_RR
+    OpTable($0400 | (FillFrom << 3)) = ?InstructionCMP_02_RR
+    OpTable($0600 | (FillFrom << 3)) = ?InstructionBIT_03_RR
+    OpTable($0800 | (FillFrom << 3)) = ?InstructionBIC_04_RR
+    OpTable($0A00 | (FillFrom << 3)) = ?InstructionBIS_05_RR
+    OpTable($0C00 | (FillFrom << 3)) = ?InstructionADD_06_RR
+    OpTable($1200 | (FillFrom << 3)) = ?InstructionMOVB_11_RR
+    OpTable($1400 | (FillFrom << 3)) = ?InstructionCMPB_12_RR
+    OpTable($1600 | (FillFrom << 3)) = ?InstructionBITB_13_RR
+    OpTable($1800 | (FillFrom << 3)) = ?InstructionBICB_14_RR
+    OpTable($1A00 | (FillFrom << 3)) = ?InstructionBISB_15_RR
+    OpTable($1C00 | (FillFrom << 3)) = ?InstructionSUB_16_RR
+  Next
+  OpTable($0140) = ?InstructionCLR_0050_R
+  OpTable($0148) = ?InstructionCOM_0051_R
+  OpTable($0150) = ?InstructionINC_0052_R
+  OpTable($0158) = ?InstructionDEC_0053_R
+  OpTable($0160) = ?InstructionNEG_0054_R
+  OpTable($0178) = ?InstructionTST_0057_R
+  OpTable($0180) = ?InstructionROR_0060_R
+  OpTable($0188) = ?InstructionROL_0061_R
+  OpTable($0190) = ?InstructionASR_0062_R
+  OpTable($0198) = ?InstructionASL_0063_R
+  OpTable($0018) = ?InstructionSWAB_0003_R
+  OpTable($1140) = ?InstructionCLRB_1050_R
+  OpTable($1150) = ?InstructionINCB_1052_R
+  OpTable($1158) = ?InstructionDECB_1053_R
+  OpTable($1178) = ?InstructionTSTB_1057_R
+  ; ---- immediate fast paths: OP #n,Rd (the handler sends Rd = R7 back) ----
+  OpTable($02B8) = ?InstructionMOV_01_IR
+  OpTable($04B8) = ?InstructionCMP_02_IR
+  OpTable($06B8) = ?InstructionBIT_03_IR
+  OpTable($08B8) = ?InstructionBIC_04_IR
+  OpTable($0AB8) = ?InstructionBIS_05_IR
+  OpTable($0CB8) = ?InstructionADD_06_IR
+  OpTable($1CB8) = ?InstructionSUB_16_IR
+  OpTable($12B8) = ?InstructionMOVB_11_IR
+  OpTable($14B8) = ?InstructionCMPB_12_IR
+  OpTable($16B8) = ?InstructionBITB_13_IR
   OpTableReady = 1
   Goto RunStart
 EndProcedure
