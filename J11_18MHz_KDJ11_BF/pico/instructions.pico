@@ -130,7 +130,7 @@ InstructionMOV_01:            ; 01SSDD   entries $0200-$03FF
   EndIf
   FlagNZ = Src
   FlagV = 0
-  ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("MOV " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -159,7 +159,7 @@ InstructionMOVB_11:           ; 11SSDD   entries $1200-$13FF
   EndIf
   FlagNZ = Src << 8
   FlagV = 0
-  ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("MOVB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -191,7 +191,7 @@ InstructionCMP_02:            ; 02SSDD   entries $0400-$05FF
   FlagC = (Res >> 16) & 1
   FlagV = (((Src ! Dst) & (Src ! Res)) >> 15) & 1
   FlagNZ = Res & $FFFF
-  ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("CMP " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -222,7 +222,7 @@ InstructionCMPB_12:           ; 12SSDD   entries $1400-$15FF
   FlagC = (Res >> 8) & 1
   FlagV = (((Src ! Dst) & (Src ! Res)) >> 7) & 1
   FlagNZ = (Res & $FF) << 8
-  ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("CMPB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -252,7 +252,7 @@ InstructionBIT_03:            ; 03SSDD   entries $0600-$07FF
   EndIf
   FlagNZ = Src & Dst
   FlagV = 0
-  ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIT " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -281,7 +281,7 @@ InstructionBITB_13:           ; 13SSDD   entries $1600-$17FF
   EndIf
   FlagNZ = (Src & Dst) << 8
   FlagV = 0
-  ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BITB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -314,7 +314,7 @@ InstructionBIC_04:            ; 04SSDD   entries $0800-$09FF
   EndIf
   FlagNZ = Res
   FlagV = 0
-  ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -346,7 +346,7 @@ InstructionBICB_14:           ; 14SSDD   entries $1800-$19FF
   EndIf
   FlagNZ = Res << 8
   FlagV = 0
-  ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BICB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -379,7 +379,7 @@ InstructionBIS_05:            ; 05SSDD   entries $0A00-$0BFF
   EndIf
   FlagNZ = Res
   FlagV = 0
-  ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIS " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -411,7 +411,7 @@ InstructionBISB_15:           ; 15SSDD   entries $1A00-$1BFF
   EndIf
   FlagNZ = Res << 8
   FlagV = 0
-  ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BISB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -447,7 +447,7 @@ InstructionADD_06:            ; 06SSDD   entries $0C00-$0DFF
   FlagC = (Res >> 16) & 1
   FlagV = ((~(Src ! Dst) & (Src ! Res)) >> 15) & 1
   FlagNZ = Res & $FFFF
-  ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("ADD " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -483,7 +483,7 @@ InstructionSUB_16:            ; 16SSDD   entries $1C00-$1DFF
   FlagC = (Res >> 16) & 1                ; borrow
   FlagV = (((Src ! Dst) & (Dst ! Res)) >> 15) & 1
   FlagNZ = Res & $FFFF
-  ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("SUB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -518,7 +518,7 @@ InstructionCLR_0050:          ; 0050DD   entries $0140-$0147
   FlagNZ = 0
   FlagV = 0
   FlagC = 0
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -547,7 +547,7 @@ InstructionCLRB_1050:         ; 1050DD   entries $1140-$1147
   FlagNZ = 0
   FlagV = 0
   FlagC = 0
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLRB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -580,7 +580,7 @@ InstructionCOM_0051:          ; 0051DD   entries $0148-$014F
   FlagNZ = Res
   FlagV = 0
   FlagC = 1
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("COM " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -612,7 +612,7 @@ InstructionCOMB_1051:         ; 1051DD   entries $1148-$114F
   FlagNZ = Res << 8
   FlagV = 0
   FlagC = 1
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("COMB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -649,7 +649,7 @@ InstructionINC_0052:          ; 0052DD   entries $0150-$0157   C unaffected
     FlagV = 1
   EndIf
   FlagNZ = Res
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("INC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -685,7 +685,7 @@ InstructionINCB_1052:         ; 1052DD   entries $1150-$1157
     FlagV = 1
   EndIf
   FlagNZ = Res << 8
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("INCB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -722,7 +722,7 @@ InstructionDEC_0053:          ; 0053DD   entries $0158-$015F   C unaffected
     FlagV = 1
   EndIf
   FlagNZ = Res
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("DEC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -758,7 +758,7 @@ InstructionDECB_1053:         ; 1053DD   entries $1158-$115F
     FlagV = 1
   EndIf
   FlagNZ = Res << 8
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("DECB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -797,7 +797,7 @@ InstructionNEG_0054:          ; 0054DD   entries $0160-$0167
     FlagC = 0
   EndIf
   FlagNZ = Res
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("NEG " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -835,7 +835,7 @@ InstructionNEGB_1054:         ; 1054DD   entries $1160-$1167
     FlagC = 0
   EndIf
   FlagNZ = Res << 8
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("NEGB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -875,7 +875,7 @@ InstructionADC_0055:          ; 0055DD   entries $0168-$016F
     FlagC = 0
   EndIf
   FlagNZ = Res
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ADC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -914,7 +914,7 @@ InstructionADCB_1055:         ; 1055DD   entries $1168-$116F
     FlagC = 0
   EndIf
   FlagNZ = Res << 8
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ADCB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -957,7 +957,7 @@ InstructionSBC_0056:          ; 0056DD   entries $0170-$0177
     FlagC = 0
   EndIf
   FlagNZ = Res
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SBC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -996,7 +996,7 @@ InstructionSBCB_1056:         ; 1056DD   entries $1170-$1177
     FlagC = 0
   EndIf
   FlagNZ = Res << 8
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SBCB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1025,7 +1025,7 @@ InstructionTST_0057:          ; 0057DD   entries $0178-$017F
   EndIf
   FlagV = 0
   FlagC = 0
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TST " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1053,7 +1053,7 @@ InstructionTSTB_1057:         ; 1057DD   entries $1178-$117F
   EndIf
   FlagV = 0
   FlagC = 0
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TSTB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1092,7 +1092,7 @@ InstructionROR_0060:          ; 0060DD   entries $0180-$0187
   FlagC = Dst & 1
   FlagV = (Res >> 15) ! FlagC
   FlagNZ = Res
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1126,7 +1126,7 @@ InstructionRORB_1060:         ; 1060DD   entries $1180-$1187
   FlagC = Dst & 1
   FlagV = (Res >> 7) ! FlagC
   FlagNZ = Res << 8
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("RORB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1161,7 +1161,7 @@ InstructionROL_0061:          ; 0061DD   entries $0188-$018F
   FlagC = (Dst >> 15) & 1
   FlagV = (Res >> 15) ! FlagC
   FlagNZ = Res
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROL " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1195,7 +1195,7 @@ InstructionROLB_1061:         ; 1061DD   entries $1188-$118F
   FlagC = (Dst >> 7) & 1
   FlagV = (Res >> 7) ! FlagC
   FlagNZ = Res << 8
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROLB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1230,7 +1230,7 @@ InstructionASR_0062:          ; 0062DD   entries $0190-$0197
   FlagC = Dst & 1
   FlagV = (Res >> 15) ! FlagC
   FlagNZ = Res
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1264,7 +1264,7 @@ InstructionASRB_1062:         ; 1062DD   entries $1190-$1197
   FlagC = Dst & 1
   FlagV = (Res >> 7) ! FlagC
   FlagNZ = Res << 8
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASRB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1299,7 +1299,7 @@ InstructionASL_0063:          ; 0063DD   entries $0198-$019F
   FlagC = (Dst >> 15) & 1
   FlagV = (Res >> 15) ! FlagC
   FlagNZ = Res
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASL " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1333,7 +1333,7 @@ InstructionASLB_1063:         ; 1063DD   entries $1198-$119F
   FlagC = (Dst >> 7) & 1
   FlagV = (Res >> 7) ! FlagC
   FlagNZ = Res << 8
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASLB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1368,7 +1368,7 @@ InstructionSWAB_0003:         ; 0003DD   entries $0018-$001F
   FlagNZ = (Res & $FF) << 8              ; N and Z come from the low byte
   FlagV = 0
   FlagC = 0
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SWAB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1401,7 +1401,7 @@ InstructionSXT_0067:          ; 0067DD   entries $01B8-$01BF   N unaffected
   EndIf
   SetNZ(FlagN(), 1 - FlagN())
   FlagV = 0
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SXT " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1431,7 +1431,7 @@ InstructionMFPS_1067:         ; 1067DD   entries $11B8-$11BF
   EndIf
   FlagNZ = Res << 8
   FlagV = 0
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MFPS " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1458,7 +1458,7 @@ InstructionMTPS_1064:         ; 1064SS   entries $11A0-$11A7   the T bit is not 
     Src = ReadByte(EaByte(Op & $3F))
   EndIf
   PswSet((PswGet() & $FF10) | (Src & $EF))
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MTPS " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1490,7 +1490,7 @@ InstructionMFPI_0065:         ; 0065SS   entries $01A8-$01AF
   Push(Src)
   FlagNZ = Src
   FlagV = 0
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MFPI " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1519,7 +1519,7 @@ InstructionMTPI_0066:         ; 0066DD   entries $01B0-$01B7
   EndIf
   FlagNZ = Src
   FlagV = 0
-  ClockCycles = ClockCycles + #J11_T_SINGLE
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MTPI " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1559,7 +1559,7 @@ InstructionMTPD_1066:         ; 1066DD   entries $11B0-$11B7
 InstructionBR_0004:           ; 000400   entries $0020-$003F
   ;name = "BR"
   Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
-  ClockCycles = ClockCycles + #J11_T_BRANCH
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BR " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -1580,7 +1580,7 @@ InstructionBNE_0010:          ; 001000   entries $0040-$005F   Z = 0
   If FlagNZ & $FFFF
     Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
   EndIf
-  ClockCycles = ClockCycles + #J11_T_BRANCH
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BNE " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -1601,7 +1601,7 @@ InstructionBEQ_0014:          ; 001400   entries $0060-$007F   Z = 1
   If (FlagNZ & $FFFF) = 0
     Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
   EndIf
-  ClockCycles = ClockCycles + #J11_T_BRANCH
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BEQ " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -1622,7 +1622,7 @@ InstructionBGE_0020:          ; 002000   entries $0080-$009F   N xor V = 0
   If FlagN() = FlagV
     BranchTaken()
   EndIf
-  ClockCycles = ClockCycles + #J11_T_BRANCH
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BGE " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -1643,7 +1643,7 @@ InstructionBLT_0024:          ; 002400   entries $00A0-$00BF   N xor V = 1
   If FlagN() <> FlagV
     BranchTaken()
   EndIf
-  ClockCycles = ClockCycles + #J11_T_BRANCH
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BLT " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -1664,7 +1664,7 @@ InstructionBGT_0030:          ; 003000   entries $00C0-$00DF   Z or (N xor V) = 
   If (FlagNZ & $FFFF) <> 0 And FlagN() = FlagV
     BranchTaken()
   EndIf
-  ClockCycles = ClockCycles + #J11_T_BRANCH
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BGT " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -1685,7 +1685,7 @@ InstructionBLE_0034:          ; 003400   entries $00E0-$00FF   Z or (N xor V) = 
   If (FlagNZ & $FFFF) = 0 Or FlagN() <> FlagV
     BranchTaken()
   EndIf
-  ClockCycles = ClockCycles + #J11_T_BRANCH
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BLE " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -1706,7 +1706,7 @@ InstructionBPL_1000:          ; 100000   entries $1000-$101F   N = 0
   If (FlagNZ & $18000) = 0
     Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
   EndIf
-  ClockCycles = ClockCycles + #J11_T_BRANCH
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BPL " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -1727,7 +1727,7 @@ InstructionBMI_1004:          ; 100400   entries $1020-$103F   N = 1
   If FlagNZ & $18000
     Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
   EndIf
-  ClockCycles = ClockCycles + #J11_T_BRANCH
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BMI " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -1748,7 +1748,7 @@ InstructionBHI_1010:          ; 101000   entries $1040-$105F   C = 0 and Z = 0
   If FlagC = 0 And (FlagNZ & $FFFF) <> 0
     BranchTaken()
   EndIf
-  ClockCycles = ClockCycles + #J11_T_BRANCH
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BHI " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -1769,7 +1769,7 @@ InstructionBLOS_1014:         ; 101400   entries $1060-$107F   C = 1 or Z = 1
   If FlagC = 1 Or (FlagNZ & $FFFF) = 0
     BranchTaken()
   EndIf
-  ClockCycles = ClockCycles + #J11_T_BRANCH
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BLOS " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -1790,7 +1790,7 @@ InstructionBVC_1020:          ; 102000   entries $1080-$109F   V = 0
   If FlagV = 0
     Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
   EndIf
-  ClockCycles = ClockCycles + #J11_T_BRANCH
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BVC " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -1811,7 +1811,7 @@ InstructionBVS_1024:          ; 102400   entries $10A0-$10BF   V = 1
   If FlagV
     Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
   EndIf
-  ClockCycles = ClockCycles + #J11_T_BRANCH
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BVS " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -1832,7 +1832,7 @@ InstructionBCC_1030:          ; 103000   entries $10C0-$10DF   C = 0 (also BHIS)
   If FlagC = 0
     Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
   EndIf
-  ClockCycles = ClockCycles + #J11_T_BRANCH
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BCC " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -1853,7 +1853,7 @@ InstructionBCS_1034:          ; 103400   entries $10E0-$10FF   C = 1 (also BLO)
   If FlagC
     Reg(7) = (Reg(7) + ((Op & $FF) << 1) - ((Op & $80) << 2)) & $FFFF
   EndIf
-  ClockCycles = ClockCycles + #J11_T_BRANCH
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BCS " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -1881,7 +1881,7 @@ InstructionJMP_0001:          ; 0001DD   entries $0008-$000F
   Else
     Reg(7) = EaWord(Op & $3F)
   EndIf
-  ClockCycles = ClockCycles + #J11_T_JUMP
+  ; ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("JMP " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1911,7 +1911,7 @@ InstructionJSR_004:           ; 004RDD   entries $0100-$013F
     Reg((Op >> 6) & 7) = Reg(7)
     Reg(7) = Ea
   EndIf
-  ClockCycles = ClockCycles + #J11_T_JUMP
+  ; ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("JSR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1935,7 +1935,7 @@ InstructionRTS_00020:         ; 00020R   entry $0010
   ;name = "RTS"
   Reg(7) = Reg(Op & 7)
   Reg(Op & 7) = Pop()
-  ClockCycles = ClockCycles + #J11_T_JUMP
+  ; ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("RTS " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1960,7 +1960,7 @@ InstructionMARK_0064:         ; 0064NN   entries $01A0-$01A7
   Reg(6) = (Reg(7) + ((Op & $3F) << 1)) & $FFFF
   Reg(7) = Reg(5)
   Reg(5) = Pop()
-  ClockCycles = ClockCycles + #J11_T_JUMP
+  ; ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("MARK " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -1986,7 +1986,7 @@ InstructionSOB_077:           ; 077RNN   entries $0FC0-$0FFF
   If Reg((Op >> 6) & 7)
     Reg(7) = (Reg(7) - ((Op & $3F) << 1)) & $FFFF
   EndIf
-  ClockCycles = ClockCycles + #J11_T_BRANCH
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("SOB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -2030,7 +2030,7 @@ InstructionMUL_070:           ; 070RSS   entries $0E00-$0E3F
   If Res < -32768 Or Res > 32767
     FlagC = 1
   EndIf
-  ClockCycles = ClockCycles + #J11_T_EIS
+  ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("MUL " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -2078,7 +2078,7 @@ InstructionDIV_071:           ; 071RSS   entries $0E40-$0E7F
       FlagC = 0
     EndIf
   EndIf
-  ClockCycles = ClockCycles + #J11_T_EIS
+  ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("DIV " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -2129,7 +2129,7 @@ InstructionASH_072:           ; 072RSS   entries $0E80-$0EBF
   EndIf
   Reg((Op >> 6) & 7) = Res
   FlagNZ = Res
-  ClockCycles = ClockCycles + #J11_T_EIS
+  ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("ASH " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -2179,7 +2179,7 @@ InstructionASHC_073:          ; 073RSS   entries $0EC0-$0EFF
   Reg((Op >> 6) & 7) = (Res >> 16) & $FFFF
   Reg(((Op >> 6) & 7) | 1) = Res & $FFFF
   SetNZ(Bool(Res < 0), Bool(Res = 0))
-  ClockCycles = ClockCycles + #J11_T_EIS
+  ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("ASHC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -2211,7 +2211,7 @@ InstructionXOR_074:           ; 074RDD   entries $0F00-$0F3F
   EndIf
   FlagNZ = Res
   FlagV = 0
-  ClockCycles = ClockCycles + #J11_T_EIS
+  ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("XOR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -2236,7 +2236,7 @@ InstructionXOR_074:           ; 074RDD   entries $0F00-$0F3F
 InstructionEMT_104:           ; 104000-104377   entries $1100-$111F
   ;name = "EMT"
   TrapVector = #VEC_EMT
-  ClockCycles = ClockCycles + #J11_T_MISC
+  ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("EMT " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -2258,7 +2258,7 @@ InstructionEMT_104:           ; 104000-104377   entries $1100-$111F
 InstructionTRAP_1044:         ; 104400-104777   entries $1120-$113F
   ;name = "TRAP"
   TrapVector = #VEC_TRAP
-  ClockCycles = ClockCycles + #J11_T_MISC
+  ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("TRAP " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -2281,7 +2281,7 @@ InstructionHALT_000000:       ; entry $0000, sub-decoded
   ;name = "HALT"
   Halted = 1
   Reg(7) = (Reg(7) - 2) & $FFFF          ; PC stays on the HALT, as on the console
-  ClockCycles = ClockCycles + #J11_T_MISC
+  ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("HALT")
   Goto SlowTail                         ; Halted is only looked at there
 
@@ -2289,7 +2289,7 @@ InstructionWAIT_000001:       ; entry $0000, sub-decoded
   ;name = "WAIT"
   Waiting = 1                            ; RunEnd holds the processor until an interrupt
   CpuEventIn(1)
-  ClockCycles = ClockCycles + #J11_T_MISC
+  ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("WAIT")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -2309,7 +2309,7 @@ InstructionRTI_000002:        ; entry $0000, sub-decoded
   ;name = "RTI"
   Reg(7) = Pop()
   PswSet(Pop())
-  ClockCycles = ClockCycles + #J11_T_MISC
+  ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("RTI")
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -2331,7 +2331,7 @@ InstructionRTI_000002:        ; entry $0000, sub-decoded
 InstructionBPT_000003:        ; entry $0000, sub-decoded
   ;name = "BPT"
   TrapVector = #VEC_BPT
-  ClockCycles = ClockCycles + #J11_T_MISC
+  ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("BPT")
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -2353,7 +2353,7 @@ InstructionBPT_000003:        ; entry $0000, sub-decoded
 InstructionIOT_000004:        ; entry $0000, sub-decoded
   ;name = "IOT"
   TrapVector = #VEC_IOT
-  ClockCycles = ClockCycles + #J11_T_MISC
+  ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("IOT")
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -2375,7 +2375,7 @@ InstructionIOT_000004:        ; entry $0000, sub-decoded
 InstructionRESET_000005:      ; entry $0000, sub-decoded
   ;name = "RESET"
   DevReset()                             ; the bus INIT
-  ClockCycles = ClockCycles + #J11_T_MISC
+  ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("RESET")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -2395,7 +2395,7 @@ InstructionRTT_000006:        ; entry $0000, sub-decoded (T-bit timing not model
   ;name = "RTT"
   Reg(7) = Pop()
   PswSet(Pop())
-  ClockCycles = ClockCycles + #J11_T_MISC
+  ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("RTT")
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector
@@ -2417,7 +2417,7 @@ InstructionRTT_000006:        ; entry $0000, sub-decoded (T-bit timing not model
 InstructionMFPT_000007:       ; entry $0000, sub-decoded
   ;name = "MFPT"
   Reg(0) = 5                             ; processor type 5 = J-11
-  ClockCycles = ClockCycles + #J11_T_MISC
+  ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("MFPT")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -2437,7 +2437,7 @@ InstructionSPL_00023:         ; 00023N   entry $0013
   ;name = "SPL"
   PswHigh = (PswHigh & $FF1F) | ((Op & 7) << 5)
   IntCheck()                             ; a lower priority may let a request in
-  ClockCycles = ClockCycles + #J11_T_MISC
+  ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("SPL")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -2464,7 +2464,7 @@ InstructionCC_00024:          ; 00024x-00027x   entries $0014-$0017
     Tmp = Tmp & ~(Op & $F)
   EndIf
   PswSet(Tmp)
-  ClockCycles = ClockCycles + #J11_T_MISC
+  ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("CC")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   RunLeft = RunLeft - 1
@@ -2483,7 +2483,7 @@ InstructionCC_00024:          ; 00024x-00027x   entries $0014-$0017
 InstructionReserved:          ; every opcode this model does not execute
   ;name = "reserved"
   TrapVector = #VEC_RESV
-  ClockCycles = ClockCycles + #J11_T_TRAP
+  ; ClockCycles = ClockCycles + #J11_T_TRAP
   ;disassembly(".WORD")
   ; ---- next instruction (THE TAIL, top of file) ----
   If TrapVector

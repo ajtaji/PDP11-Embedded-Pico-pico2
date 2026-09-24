@@ -77,6 +77,9 @@
 ;      AFTER that instruction finishes (the real J-11 aborts it). Recorded
 ;      here so it is not mistaken for correct behaviour.
 ;
+;  COMMENTED OUT 2026-09-23: nothing reads ClockCycles - no line clock, throttle
+;  or report uses it - so every update of it is commented out and r11 is free.
+;  Restore it (and its ReserveRegister slot) when real J-11 timing is wanted.
 ;  CLOCK. The real module runs an 18 MHz clock. ClockCycles counts the
 ;  emulated machine's time; the per-instruction amounts are the #J11_T_*
 ;  constants below, which are PLACEHOLDERS (1 each - so ClockCycles counts
@@ -130,7 +133,7 @@ Global FlagNZ.i             ; lazy N and Z - see SPEED
 Global FlagV.i, FlagC.i
 Global EaReg.i, EaStep.i    ; EaWord/EaByte scratch (Globals: cheaper than locals)
 Global PswHigh.i            ; PSW bits 15-5 (mode, register set, priority, T)
-Global ClockCycles.i
+; Global ClockCycles.i   ; commented out: nothing ever reads it (see CLOCK)
 Global TrapVector.i         ; non-zero = a trap to take after this instruction
 Global Halted.i, Waiting.i
 
@@ -163,7 +166,7 @@ Global ConInHead.i, ConInTail.i
 ; against the numbers in instructions.pico).
 #RESERVE_REGISTERS = 1
 CompilerIf #RESERVE_REGISTERS = 1
-  ReserveRegister Op = r8, Src = r9, Res = r10, ClockCycles = r11
+  ReserveRegister Op = r8, Src = r9, Res = r10   ; r11 is free: ClockCycles is commented out
 CompilerEndIf
 
 ; ======================================================================
@@ -509,7 +512,7 @@ Procedure TakeTrap(vector.i)
   Push(Reg(7))
   Reg(7) = ReadWord(vector)
   PswSet(ReadWord(vector + 2))
-  ClockCycles = ClockCycles + #J11_T_TRAP
+  ; ClockCycles = ClockCycles + #J11_T_TRAP
 EndProcedure
 
 ; ======================================================================
@@ -619,6 +622,6 @@ Procedure CpuReset()
   TrapVector = 0
   Halted = 0
   Waiting = 0
-  ClockCycles = 0
+  ; ClockCycles = 0
 EndProcedure
 
