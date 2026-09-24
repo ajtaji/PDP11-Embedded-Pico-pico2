@@ -70,9 +70,10 @@
 ;      FPJ11 is an option; 17xxxx traps as reserved). CSM, TSTSET and
 ;      WRTLCK trap as reserved for now.
 ;    * 16-bit physical addressing with the memory management unit OFF:
-;      56 KB of RAM at 000000-157777, the I/O page at 160000-177777. Only
-;      the PSW (177776) answers in the I/O page; everything else there is
-;      a bus error (trap to 4) until the devices are written.
+;      56 KB of RAM at 000000-157777, the I/O page at 160000-177777. In
+;      the I/O page the PSW (177776), the console DL11 (177560-177566)
+;      and the switch register (177570) answer; everything else there is
+;      a bus error (trap to 4). See THE I/O PAGE below.
 ;    * one processor mode. MFPI/MTPI/MFPD/MTPD therefore act on the one
 ;      address space, and the kernel/supervisor/user stack pointers are not
 ;      banked yet.
@@ -100,6 +101,19 @@
 #VEC_IOT     = $10          ; 000020
 #VEC_EMT     = $18          ; 000030
 #VEC_TRAP    = $1C          ; 000034
+#VEC_DL11_RX = $30          ; 000060 console receiver, BR4
+#VEC_DL11_TX = $34          ; 000064 console transmitter, BR4
+
+; ---- the I/O page devices (see THE I/O PAGE) --------------------------
+#DL11_RCSR   = $FF70        ; 177560 receiver status
+#DL11_RBUF   = $FF72        ; 177562 receiver data
+#DL11_XCSR   = $FF74        ; 177564 transmitter status
+#DL11_XBUF   = $FF76        ; 177566 transmitter data
+#SWR_ADDR    = $FF78        ; 177570 switch register (read), display (write)
+#DL11_TX_INSTRUCTIONS = 100 ; how long one character takes to send
+#CON_SIZE    = 256          ; each console queue, a power of two
+#INT_DL11_RX = 1            ; IntReq bits: the console receiver ...
+#INT_DL11_TX = 2            ; ... and transmitter
 
 ; ---- timing placeholders (see CLOCK above) ---------------------------
 #J11_T_DOUBLE = 1
@@ -124,6 +138,27 @@ Global ClockCycles.i
 Global TrapVector.i         ; non-zero = a trap to take after this instruction
 Global Halted.i, Waiting.i
 
+; The run loop's countdown and the machine's clock - see THE RUN WINDOW.
+Global RunLeft.i            ; instructions left in this window
+Global RunWindow.i          ; how many the window started with
+Global RunBank.i            ; instructions this CpuRun still owes after the window
+Global RunFrom.i            ; InstrCount when this CpuRun began
+Global InstrCount.i         ; instructions finished before this window began
+
+; The console DL11 and the switch register - see THE I/O PAGE.
+Global Dl11RxDone.i, Dl11RxIe.i, Dl11RxBuf.i
+Global Dl11TxRdy.i, Dl11TxIe.i, Dl11TxChar.i, Dl11TxDue.i
+Global SwitchReg.i, DisplayReg.i
+Global IntReq.i             ; interrupts asked for: #INT_DL11_RX | #INT_DL11_TX
+; The console's two byte queues - the ONLY things the firmware around the
+; emulator touches. The emulator writes ConOut at its Head and reads ConIn
+; at its Tail; the firmware does the opposite. Neither side calls the
+; other, so the serial side can move to the second core unchanged.
+Global Dim ConOut.u(#CON_SIZE)      ; characters the DL11 has sent
+Global ConOutHead.i, ConOutTail.i
+Global Dim ConIn.u(#CON_SIZE)       ; characters typed, for the DL11 to receive
+Global ConInHead.i, ConInTail.i
+
 ; ---- Globals held in registers for the whole program (see SPEED) -----
 ; The A/B switch: 0 puts these four back in RAM and changes nothing else.
 ; Chosen by measurement on both boards: Op, Src, Res and ClockCycles beat
@@ -133,6 +168,46 @@ Global Halted.i, Waiting.i
 CompilerIf #RESERVE_REGISTERS = 1
   ReserveRegister Op = r8, Src = r9, Res = r10, ClockCycles = r11
 CompilerEndIf
+
+; ======================================================================
+;  THE RUN WINDOW - how the devices get a word in without costing the
+;  instructions anything.
+;
+;  CpuRun(n) runs its n instructions as one or more WINDOWS. RunLeft is
+;  the countdown every handler's tail already keeps; when it reaches zero
+;  the loop leaves through RunEnd (instructions.pico2), which brings the
+;  clock up to date, lets the devices act (DevService), and opens the next
+;  window. So a device that needs the CPU's attention at a given moment -
+;  a character finished, an interrupt requested - only has to SHORTEN the
+;  current window: CpuEventIn(k) makes RunEnd come round after k more
+;  instructions. Nothing is added to the path an instruction takes; the
+;  only cost falls on the rare instruction that touches a device.
+;
+;  InstrCount + RunWindow - RunLeft is the number of instructions finished
+;  so far (CpuNow), and it is the devices' clock.
+; ======================================================================
+Procedure CpuEventIn(k.i)
+  If k < RunLeft
+    RunBank = RunBank + RunLeft - k
+    RunWindow = RunWindow - (RunLeft - k)
+    RunLeft = k
+  EndIf
+EndProcedure
+
+Procedure.i CpuNow()
+  ProcedureReturn InstrCount + RunWindow - RunLeft
+EndProcedure
+
+; An interrupt is asked for and the priority would let it in (the DL11
+; interrupts at BR4, so the PSW priority must be below 4). Called whenever
+; the PSW changes, so a lowered priority lets a waiting request in at once.
+Procedure IntCheck()
+  If IntReq
+    If (PswHigh & $E0) < $80
+      CpuEventIn(1)
+    EndIf
+  EndIf
+EndProcedure
 
 ; ======================================================================
 ;  PSW - assembled only when read
@@ -173,6 +248,97 @@ Procedure PswSet(v.i)
   SetNZ((v >> 3) & 1, (v >> 2) & 1)
   FlagV = (v >> 1) & 1
   FlagC = v & 1
+  IntCheck()
+EndProcedure
+
+; ======================================================================
+;  THE I/O PAGE - reached only from the four procedures below, and only
+;  for an address past the end of RAM, so none of it is on the path a RAM
+;  access takes.
+;
+;  THE CONSOLE DL11 (DL11 / KL11 manuals; the KDJ11-B console is the same
+;  four registers at the same addresses, vectors 60 and 64, BR4):
+;    177560 RCSR  bit 7 DONE (a character is waiting; read-only),
+;                 bit 6 INTERRUPT ENABLE
+;    177562 RBUF  bits 7-0 the character; reading it clears DONE
+;    177564 XCSR  bit 7 READY (read-only), bit 6 INTERRUPT ENABLE
+;    177566 XBUF  bits 7-0: writing starts a character and clears READY;
+;                 READY comes back #DL11_TX_INSTRUCTIONS instructions
+;                 later, when the character has gone into ConOut
+;  An interrupt is REQUESTED (a bit in IntReq) when DONE or READY rises
+;  with its enable set, or the enable is set while DONE or READY already
+;  is; the request is withdrawn when the enable is cleared, when RBUF is
+;  read (receiver) or XBUF written (transmitter), and when the interrupt
+;  is taken. IntReq is the one word the run loop looks at (DevService).
+;  Characters leave through the ConOut queue and arrive through ConIn;
+;  the firmware around the emulator moves them to and from the USB serial
+;  port. A character waiting in ConIn reaches RBUF at the next window
+;  boundary after DONE is clear. If ConOut is full the transmitter just
+;  stays busy until the firmware has drained it - nothing is lost.
+;
+;  THE SWITCH REGISTER (177570): reads SwitchReg, which the firmware sets
+;  (a diagnostic's options); a write goes to DisplayReg and is kept, not
+;  shown. The KDJ11-B has no switches; the diagnostics read them anyway.
+; ======================================================================
+Procedure.i IoRead(a.i)                  ; a is even and past the end of RAM
+  If a = #PSW_ADDR
+    ProcedureReturn PswGet()
+  ElseIf a = #DL11_RCSR
+    ProcedureReturn (Dl11RxDone << 7) | (Dl11RxIe << 6)
+  ElseIf a = #DL11_RBUF
+    Dl11RxDone = 0
+    IntReq = IntReq & ~#INT_DL11_RX
+    If ConInHead <> ConInTail
+      CpuEventIn(#DL11_TX_INSTRUCTIONS)  ; the next typed character arrives
+    EndIf
+    ProcedureReturn Dl11RxBuf
+  ElseIf a = #DL11_XCSR
+    ProcedureReturn (Dl11TxRdy << 7) | (Dl11TxIe << 6)
+  ElseIf a = #DL11_XBUF
+    ProcedureReturn 0
+  ElseIf a = #SWR_ADDR
+    ProcedureReturn SwitchReg
+  EndIf
+  TrapVector = #VEC_BUS
+  ProcedureReturn 0
+EndProcedure
+
+; v's low byte is the new value of the register's low byte; the DL11 has
+; nothing in its high bytes. The PSW is not handled here (see WriteWord).
+Procedure IoWrite(a.i, v.i)              ; a is even and past the end of RAM
+  If a = #DL11_RCSR
+    If v & $40
+      If Dl11RxIe = 0 And Dl11RxDone = 1
+        IntReq = IntReq | #INT_DL11_RX
+        IntCheck()
+      EndIf
+      Dl11RxIe = 1
+    Else
+      Dl11RxIe = 0
+      IntReq = IntReq & ~#INT_DL11_RX
+    EndIf
+  ElseIf a = #DL11_XCSR
+    If v & $40
+      If Dl11TxIe = 0 And Dl11TxRdy = 1
+        IntReq = IntReq | #INT_DL11_TX
+        IntCheck()
+      EndIf
+      Dl11TxIe = 1
+    Else
+      Dl11TxIe = 0
+      IntReq = IntReq & ~#INT_DL11_TX
+    EndIf
+  ElseIf a = #DL11_XBUF
+    Dl11TxChar = v & $FF
+    Dl11TxRdy = 0
+    IntReq = IntReq & ~#INT_DL11_TX
+    Dl11TxDue = CpuNow() + #DL11_TX_INSTRUCTIONS
+    CpuEventIn(#DL11_TX_INSTRUCTIONS)
+  ElseIf a = #SWR_ADDR
+    DisplayReg = v & $FFFF
+  ElseIf a <> #DL11_RBUF                 ; RBUF is read-only: a write is ignored
+    TrapVector = #VEC_BUS
+  EndIf
 EndProcedure
 
 ; ======================================================================
@@ -186,11 +352,7 @@ Procedure.i ReadWord(a.i)
   If a < #RAM_BYTES
     ProcedureReturn Mem(a >> 1)
   EndIf
-  If a = #PSW_ADDR
-    ProcedureReturn PswGet()
-  EndIf
-  TrapVector = #VEC_BUS
-  ProcedureReturn 0
+  ProcedureReturn IoRead(a)
 EndProcedure
 
 Procedure WriteWord(a.i, v.i)
@@ -206,9 +368,11 @@ Procedure WriteWord(a.i, v.i)
     PswSet(v)
     ProcedureReturn
   EndIf
-  TrapVector = #VEC_BUS
+  IoWrite(a, v)
 EndProcedure
 
+; A byte read of a device register is a word read (the bus has no other
+; kind), so reading either half of RBUF clears DONE, as on the real bus.
 Procedure.i ReadByte(a.i)
   If a < #RAM_BYTES
     If a & 1
@@ -216,14 +380,10 @@ Procedure.i ReadByte(a.i)
     EndIf
     ProcedureReturn Mem(a >> 1) & $FF
   EndIf
-  If (a & $FFFE) = #PSW_ADDR
-    If a & 1
-      ProcedureReturn (PswGet() >> 8) & $FF
-    EndIf
-    ProcedureReturn PswGet() & $FF
+  If a & 1
+    ProcedureReturn (IoRead(a - 1) >> 8) & $FF
   EndIf
-  TrapVector = #VEC_BUS
-  ProcedureReturn 0
+  ProcedureReturn IoRead(a) & $FF
 EndProcedure
 
 Procedure WriteByte(a.i, v.i)
@@ -243,7 +403,13 @@ Procedure WriteByte(a.i, v.i)
     EndIf
     ProcedureReturn
   EndIf
-  TrapVector = #VEC_BUS
+  If a & 1                               ; a device's high byte: nothing there
+    If (a & $FFFE) < #DL11_RCSR Or (a & $FFFE) > #SWR_ADDR
+      TrapVector = #VEC_BUS
+    EndIf
+    ProcedureReturn
+  EndIf
+  IoWrite(a, v & $FF)
 EndProcedure
 
 ; ---- the stack -------------------------------------------------------
@@ -347,6 +513,86 @@ Procedure TakeTrap(vector.i)
 EndProcedure
 
 ; ======================================================================
+;  THE DEVICES' TURN - called by the run loop between windows (RunEnd in
+;  instructions.pico2), when RunLeft is zero and CpuNow() = InstrCount.
+; ======================================================================
+Procedure DevService()
+  ; the transmitter finishing its character
+  If Dl11TxRdy = 0
+    If InstrCount - Dl11TxDue >= 0
+      If ConOutHead - ConOutTail < #CON_SIZE
+        ConOut(ConOutHead & (#CON_SIZE - 1)) = Dl11TxChar
+        ConOutHead = ConOutHead + 1
+        Dl11TxRdy = 1
+        If Dl11TxIe
+          IntReq = IntReq | #INT_DL11_TX
+        EndIf
+      Else
+        Dl11TxDue = InstrCount + 1000    ; ConOut is full: try again later
+      EndIf
+    EndIf
+  EndIf
+  ; the receiver taking a typed character
+  If Dl11RxDone = 0
+    If ConInHead <> ConInTail
+      Dl11RxBuf = ConIn(ConInTail & (#CON_SIZE - 1)) & $FF
+      ConInTail = ConInTail + 1
+      Dl11RxDone = 1
+      If Dl11RxIe
+        IntReq = IntReq | #INT_DL11_RX
+      EndIf
+    EndIf
+  EndIf
+  ; an interrupt, if one is asked for and the priority lets it in; the
+  ; receiver is served first, as it sits nearer the processor on the bus
+  If IntReq
+    If (PswHigh & $E0) < $80
+      Waiting = 0
+      If IntReq & #INT_DL11_RX
+        IntReq = IntReq & ~#INT_DL11_RX
+        TakeTrap(#VEC_DL11_RX)
+      Else
+        IntReq = IntReq & ~#INT_DL11_TX
+        TakeTrap(#VEC_DL11_TX)
+      EndIf
+    EndIf
+  EndIf
+EndProcedure
+
+; Open the next window: everything CpuRun still owes, but no further than
+; the transmitter's next moment, and one instruction at a time while an
+; interrupt that could be taken is still waiting (the one behind another).
+Procedure StartWindow()
+  RunLeft = RunBank
+  If Dl11TxRdy = 0
+    Tmp = Dl11TxDue - InstrCount
+    If Tmp < 1
+      Tmp = 1
+    EndIf
+    If Tmp < RunLeft
+      RunLeft = Tmp
+    EndIf
+  EndIf
+  If IntReq
+    If (PswHigh & $E0) < $80
+      RunLeft = 1
+    EndIf
+  EndIf
+  RunBank = RunBank - RunLeft
+  RunWindow = RunLeft
+EndProcedure
+
+; The bus INIT (the RESET instruction, and power-up): interrupt enables
+; and requests off, the receiver empty. A character already on its way
+; out still finishes.
+Procedure DevReset()
+  Dl11RxIe = 0
+  Dl11RxDone = 0
+  Dl11TxIe = 0
+  IntReq = 0
+EndProcedure
+
+; ======================================================================
 ;  RESET. The run loop, CpuRun(n), is in instructions.pico2.
 ; ======================================================================
 Procedure CpuReset()
@@ -354,6 +600,8 @@ Procedure CpuReset()
   For i = 0 To 7
     Reg(i) = 0
   Next
+  DevReset()
+  Dl11TxRdy = 1
   PswSet($00E0)            ; kernel, priority 7
   TrapVector = 0
   Halted = 0

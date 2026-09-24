@@ -1,0 +1,233 @@
+; ======================================================================
+;  diag.pico - runs one PDP-11 diagnostic tape on the J-11 emulator, with
+;  the console DL11 on the Pico's USB serial port.
+;
+;  BUILD
+;    python ../../tools/tape2pico.py <tape> [--start OCTAL] [--switches OCTAL]
+;        writes tape_image.pico here (and tape_image.pico2 beside
+;        diag.pico2): the tape's words, its start address and the switch
+;        register's value. Then compile this file. One build per tape.
+;
+;  WHAT IT DOES
+;    Loads the words into memory (what the Absolute Loader would have
+;    done), resets the processor, sets the switch register, and starts at
+;    the tape's start address with the PSW at 0 and SP at the start
+;    address. It waits for the serial port to be opened (up to 30 s), so
+;    the first characters are not lost, then runs, and:
+;      * everything the program types on the console appears on the
+;        serial port (bit 7 stripped; NUL and DEL fill characters left
+;        out). A BELL is not sent: it is counted, because the T1-T15
+;        tapes ring one at the end of every pass, and that count is the
+;        pass count;
+;      * a character typed at the serial port goes to the console
+;        receiver;
+;      * every 2 s a status line: instructions run, bells, the PC;
+;      * a HALT prints "HALT at <address of the HALT>" and the registers,
+;        stops the processor, and repeats that every 3 s. The board keeps
+;        answering USB (and the uploader's BOOTSEL request) throughout.
+; ======================================================================
+EnableExplicit
+XIncludeFile "RP2040/Lib/clocks.pico"
+XIncludeFile "RP2040/Lib/timer.pico"
+XIncludeFile "RP2040/Lib/uart.pico"
+XIncludeFile "RP2040/Lib/usb_serial.pico"
+XIncludeFile "RP2040/Lib/safety.pico"
+XIncludeFile "cpu.pico"
+XIncludeFile "instructions.pico"
+XIncludeFile "tape_image.pico"
+
+#CLOCK_KHZ = 200000
+; Instructions per CpuRun: under a millisecond. The USB serial library is
+; polled, and its control endpoint must be serviced about every millisecond
+; while the host opens or closes the port: with 20,000 (about 15 ms) both
+; boards stopped answering control transfers after the port was closed,
+; and the port could not be opened again.
+#SLICE = 1000
+
+Global Bells.i
+Global Total.i
+Global Column.i
+
+Procedure Ch(c.i)
+  UsbSerialWrite(c)
+EndProcedure
+
+Procedure Say(*s.i)
+  Define p.i
+  Define c.i
+  p = *s
+  c = PeekA(p) & 255
+  While c <> 0
+    Ch(c)
+    p = p + 1
+    c = PeekA(p) & 255
+  Wend
+EndProcedure
+
+Procedure Num(v.i)
+  Define n.i
+  Define p.i
+  n = v
+  If n < 0
+    Ch(45)
+    n = 0 - n
+  EndIf
+  p = 1
+  While n / p >= 10
+    p = p * 10
+  Wend
+  While p > 0
+    Ch(48 + (n / p) % 10)
+    p = p / 10
+  Wend
+EndProcedure
+
+Procedure Oct(v.i)                       ; six octal digits, as DEC prints them
+  Define k.i
+  For k = 15 To 0 Step -3
+    Ch(48 + ((v >> k) & 7))
+  Next
+EndProcedure
+
+Procedure Eol()
+  Ch(13)
+  Ch(10)
+  Column = 0
+  UsbSerialFlush()
+  UsbSerialTask()
+EndProcedure
+
+Procedure Wait(us.i)
+  Define t0.i
+  t0 = Micros()
+  While (Micros() - t0) < us
+    UsbSerialTask()
+  Wend
+EndProcedure
+
+Procedure SayName()
+  Define c.i
+  Restore TapeName
+  Read.u c
+  While c <> 0
+    Ch(c)
+    Read.u c
+  Wend
+EndProcedure
+
+; What the Absolute Loader does: runs of words into memory.
+Procedure LoadTape()
+  Define a.i
+  Define n.i
+  Define w.i
+  Restore TapeRuns
+  Read.u a
+  While (a & 1) = 0
+    Read.u n
+    While n > 0
+      Read.u w
+      Mem(a >> 1) = w
+      a = a + 2
+      n = n - 1
+    Wend
+    Read.u a
+  Wend
+EndProcedure
+
+; The console's output, from the DL11's queue to the serial port. (Input
+; goes the other way in Main: the serial port into ConIn.)
+Procedure DrainConsole()
+  Define c.i
+  While ConOutTail <> ConOutHead
+    c = ConOut(ConOutTail & (#CON_SIZE - 1)) & $7F
+    ConOutTail = ConOutTail + 1
+    If c = 7
+      Bells = Bells + 1
+    ElseIf c <> 0 And c <> 127
+      If Column = 0 And c <> 13 And c <> 10
+        Say("| ")                        ; marks the emulated console's lines
+        Column = 2
+      EndIf
+      Ch(c)
+      Column = Column + 1
+      If c = 10
+        Column = 0
+      EndIf
+    EndIf
+  Wend
+  UsbSerialFlush()
+EndProcedure
+
+Procedure Status()
+  If Column <> 0
+    Eol()
+  EndIf
+  Say("[") : SayName() : Say("] ") : Num(Total) : Say(" instructions, ")
+  Num(Bells) : Say(" bells, PC ") : Oct(Reg(7))
+  If Waiting
+    Say(" (WAIT)")
+  EndIf
+  Eol()
+EndProcedure
+
+Procedure HaltReport()
+  Define i.i
+  If Column <> 0
+    Eol()
+  EndIf
+  Say("HALT at ") : Oct(Reg(7)) : Say(" (") : SayName() : Say(", ") : Num(Total)
+  Say(" instructions, ") : Num(Bells) : Say(" bells)") : Eol()
+  For i = 0 To 5
+    Say(" R") : Num(i) : Say("=") : Oct(Reg(i))
+  Next
+  Say(" SP=") : Oct(Reg(6)) : Say(" PSW=") : Oct(PswGet()) : Eol()
+EndProcedure
+
+Procedure Main()
+  Define t0.i
+  Define tlast.i
+  SafetyBoot()
+  ClockInitKhz(#CLOCK_KHZ)
+  UsbSerialInit()
+  SafetyOk()
+  BuildOpcodeTable()
+  LoadTape()
+  CpuReset()
+  SwitchReg = #TAPE_SWITCHES
+  PswSet(0)
+  Reg(6) = #TAPE_START
+  Reg(7) = #TAPE_START
+
+  t0 = Micros()                          ; the port opened, or 30 s
+  While UsbSerialReady() = 0 And (Micros() - t0) < 30000000
+    UsbSerialTask()
+  Wend
+  Wait(500000)
+  Say("PDP-11 J-11 on Pico: ") : SayName() : Say(" from ") : Oct(#TAPE_START)
+  Say(", switches ") : Oct(#TAPE_SWITCHES) : Eol()
+
+  tlast = Micros()
+  Repeat
+    Total = Total + CpuRun(#SLICE)
+    DrainConsole()
+    While UsbSerialAvailable() > 0 And (ConInHead - ConInTail) < #CON_SIZE
+      ConIn(ConInHead & (#CON_SIZE - 1)) = UsbSerialRead()
+      ConInHead = ConInHead + 1
+    Wend
+    UsbSerialTask()
+    If Halted
+      HaltReport()
+      Repeat
+        t0 = Micros()
+        While (Micros() - t0) < 3000000
+          UsbSerialTask()
+        Wend
+        HaltReport()
+      ForEver
+    EndIf
+    If (Micros() - tlast) >= 2000000
+      tlast = Micros()
+      Status()
+    EndIf
+  ForEver
+EndProcedure

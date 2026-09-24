@@ -28,7 +28,7 @@
 ;       condition-code ops) - leaves this test out; its tail
 ;       comment says so. A handler that is changed to touch memory MUST get
 ;       the test back, or its traps are lost.
-;    2. Count the instruction (RunLeft); at zero, CpuRun returns.
+;    2. Count the instruction (RunLeft); at zero, the window ends (RunEnd).
 ;    3. Fetch the next word straight from RAM when the PC is even and in
 ;       RAM, and jump through the table. Anything else (the I/O page, an
 ;       odd PC) goes to SlowFetch.
@@ -78,7 +78,6 @@ EndProcedure
 ; ======================================================================
 Global Dim OpTable.Label(8192)
 Global OpTableReady.i                    ; 0 until the first CpuRun fills OpTable
-Global RunLeft.i                         ; instructions still to run in this CpuRun
 Global FillFrom.i, FillCount.i           ; Ops() - Globals, cheaper than locals
 
 ; OpTable(from) .. OpTable(from + count - 1) = target. A '.Label' can only
@@ -103,7 +102,11 @@ RunStart:
   If n <= 0 Or Halted <> 0
     ProcedureReturn 0
   EndIf
-  RunLeft = n
+  RunFrom = InstrCount
+  RunBank = n
+  RunLeft = 0
+  RunWindow = 0
+  Goto RunEnd                            ; which lets the devices act, then opens a window
 Fetch:
   If Reg(7) < #RAM_BYTES
     If (Reg(7) & 1) = 0
@@ -2284,7 +2287,8 @@ InstructionHALT_000000:       ; entry $0000, sub-decoded
 
 InstructionWAIT_000001:       ; entry $0000, sub-decoded
   ;name = "WAIT"
-  Waiting = 1
+  Waiting = 1                            ; RunEnd holds the processor until an interrupt
+  CpuEventIn(1)
   ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("WAIT")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
@@ -2368,8 +2372,9 @@ InstructionIOT_000004:        ; entry $0000, sub-decoded
   EndIf
   Goto SlowFetch
 
-InstructionRESET_000005:      ; entry $0000, sub-decoded - no devices yet
+InstructionRESET_000005:      ; entry $0000, sub-decoded
   ;name = "RESET"
+  DevReset()                             ; the bus INIT
   ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("RESET")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
@@ -2431,6 +2436,7 @@ InstructionMFPT_000007:       ; entry $0000, sub-decoded
 InstructionSPL_00023:         ; 00023N   entry $0013
   ;name = "SPL"
   PswHigh = (PswHigh & $FF1F) | ((Op & 7) << 5)
+  IntCheck()                             ; a lower priority may let a request in
   ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("SPL")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
@@ -2539,8 +2545,39 @@ SlowTail:
   If RunLeft > 0 And Halted = 0
     Goto Fetch
   EndIf
+; ======================================================================
+;  RUNEND - every window ends here (THE RUN WINDOW in cpu.pico): the clock
+;  is brought up to date, the devices act, and the next window opens -
+;  until CpuRun has run its n, the processor halts, or it WAITs with
+;  nothing inside the emulator left to wake it (a typed character comes
+;  from the firmware, between runs).
+; ======================================================================
 RunEnd:
-  ProcedureReturn n - RunLeft
+  InstrCount = InstrCount + RunWindow - RunLeft
+  RunBank = RunBank + RunLeft
+  RunLeft = 0
+  RunWindow = 0
+  If Halted = 0
+    DevService()
+    While Waiting <> 0 And RunBank > 0 And Dl11TxRdy = 0
+      Tmp = Dl11TxDue - InstrCount           ; WAIT: let time pass to the
+      If Tmp < 1                             ; transmitter's next moment
+        Tmp = 1
+      EndIf
+      If Tmp > RunBank
+        Tmp = RunBank
+      EndIf
+      InstrCount = InstrCount + Tmp
+      RunBank = RunBank - Tmp
+      DevService()
+    Wend
+    If Waiting = 0 And RunBank > 0
+      StartWindow()
+      Goto Fetch
+    EndIf
+  EndIf
+  RunBank = 0
+  ProcedureReturn InstrCount - RunFrom
 
 ; ======================================================================
 ;  THE TABLE - filled the first time CpuRun runs. A '.Label' is taken
