@@ -29,8 +29,12 @@
 ;      (bl/blx, push, frame set-up, pop). So:
 ;        - register mode (mode 0), the commonest operand, is handled INLINE
 ;          in every handler and never calls a helper;
-;        - condition codes are never packed while the machine runs. V and C
-;          are two Globals set by plain stores. N and Z are LAZY: nearly
+;        - condition codes are never packed while the machine runs, and
+;          all four are LAZY. V is bit 15 of FlagV and C is bit 16 of
+;          FlagC; the other bits mean nothing and every reader masks. So
+;          ADD stores its 17-bit sum as C unchanged, and V is the raw
+;          sign-bit expression, with no shift or mask on the way in (SET:
+;          FlagC = $10000, FlagV = $8000). N and Z are LAZY too: nearly
 ;          every instruction sets both from its result, so it stores the
 ;          result once in FlagNZ and nothing is decided until a branch or
 ;          the PSW asks (N = bit 15 or bit 16, Z = low 16 bits are zero;
@@ -43,7 +47,9 @@
 ;      jump (threaded dispatch - see instructions.pico), and no second
 ;      table. Every instruction family has entries of
 ;      its own; only HALT, WAIT, RTI, BPT, IOT, RESET, RTT and MFPT
-;      (000000-000007) share one, told apart by a short If chain. A table
+;      (000000-000007) share one, told apart by a short If chain. Fast
+;      paths for the commonest forms (registers, OP #n,Rd) lie over the
+;      general entries - see instructions.pico. A table
 ;      with one entry per opcode would be 256 KB: too big for the Pico's
 ;      RAM, and in flash it would miss the 16 KB XIP cache on almost every
 ;      instruction - slower than the lookup it saves.
@@ -54,10 +60,16 @@
 ;
 ;    * the four hottest Globals live in CPU registers for the whole
 ;      program: ReserveRegister, under the machine state below, holds Op,
-;      Src, Res and ClockCycles in r8-r11, which nothing else in a compiled
-;      program touches. Each access is one mov instead of a literal-pool
-;      load and a load or store. Needs a compiler from 2026-09-22 (main
-;      1770a28d) or later; an older one refuses the line with PM1100.
+;      PC (the emulated R7), Res and RunLeft in r8-r11, which nothing else
+;      in a compiled program touches. Each access is one mov instead of a
+;      literal-pool load and a load or store. Needs a compiler from
+;      2026-09-22 (main 1770a28d) or later; an older one refuses the line
+;      with PM1100. Holding the PC means Reg(7) is only a copy between
+;      instructions: see THE EMULATED PC in instructions.pico.
+;
+;    * memory is read and written through MACROS (MReadWord and friends,
+;      under MEMORY below): an even RAM address is handled inline and only
+;      the I/O page or an odd address calls a procedure.
 ;
 ;  ------------------------------------------------------------------
 ;  WHAT IS MODELLED (first cut, stated so nothing is assumed):
@@ -132,10 +144,13 @@ Global Src.i, Dst.i, Res.i, Ea.i, Tmp.i   ; handler scratch - see SPEED
 Global FlagNZ.i             ; lazy N and Z - see SPEED
 Global FlagV.i, FlagC.i
 Global EaReg.i, EaStep.i    ; EaWord/EaByte scratch (Globals: cheaper than locals)
+Global Adr.i                ; the address Push, Pop, FetchWord and EaWord work on
 Global PswHigh.i            ; PSW bits 15-5 (mode, register set, priority, T)
 ; Global ClockCycles.i   ; commented out: nothing ever reads it (see CLOCK)
 Global TrapVector.i         ; non-zero = a trap to take after this instruction
 Global Halted.i, Waiting.i
+Global PC.i                 ; the emulated PC between instructions; Reg(7) is its
+                            ; stale copy then (see THE EMULATED PC in instructions)
 
 ; The run loop's countdown and the machine's clock - see THE RUN WINDOW.
 Global RunLeft.i            ; instructions left in this window
@@ -161,12 +176,19 @@ Global ConInHead.i, ConInTail.i
 
 ; ---- Globals held in registers for the whole program (see SPEED) -----
 ; The A/B switch: 0 puts these four back in RAM and changes nothing else.
-; Chosen by measurement on both boards: Op, Src, Res and ClockCycles beat
-; Op, Res, RunLeft and ClockCycles (1,172,918 / 1,119,354 instructions/s
-; against the numbers in instructions.pico).
+; Chosen by measurement, 2026-09-23, on the desk (arm_run; the report's
+; bench and a mixed run of 19 diagnostic tapes), best on BOTH parts:
+;   Op, PC, Res, RunLeft   1,315,682 / 1,694,760 bench, 693,207 / 852,525 mix
+;   Op, Src, Res, PC       1,301,950 / 1,675,827 bench, 688,969 / 848,659 mix
+;   Op, PC, Src, RunLeft   1,281,951 / 1,648,207 bench
+; (Pico / Pico 2, instructions/s, before the immediate and CC fast paths.)
+; Two 16-bit Globals in one register's halves (the Pico 2's r8.lo/r8.hi)
+; were measured too - Op and PC sharing r8, Src, Res and RunLeft whole -
+; and LOST: 1,395,256 against 1,492,426 at the time, the half reads and
+; writes costing more than the fifth register saves.
 #RESERVE_REGISTERS = 1
 CompilerIf #RESERVE_REGISTERS = 1
-  ReserveRegister Op = r8, Src = r9, Res = r10   ; r11 is free: ClockCycles is commented out
+  ReserveRegister Op = r8, PC = r9, Res = r10, RunLeft = r11
 CompilerEndIf
 
 ; ======================================================================
@@ -240,14 +262,14 @@ Procedure SetNZ(n.i, z.i)
 EndProcedure
 
 Procedure.i PswGet()
-  ProcedureReturn (PswHigh & $FFF0) | (FlagN() << 3) | (FlagZ() << 2) | (FlagV << 1) | FlagC
+  ProcedureReturn (PswHigh & $FFF0) | (FlagN() << 3) | (FlagZ() << 2) | ((FlagV >> 14) & 2) | ((FlagC >> 16) & 1)
 EndProcedure
 
 Procedure PswSet(v.i)
   PswHigh = v & $FFF0
   SetNZ((v >> 3) & 1, (v >> 2) & 1)
-  FlagV = (v >> 1) & 1
-  FlagC = v & 1
+  FlagV = v << 14
+  FlagC = v << 16
   IntCheck()
 EndProcedure
 
@@ -415,22 +437,83 @@ Procedure WriteByte(a.i, v.i)
   IoWrite(a, v & $FF)
 EndProcedure
 
+
+; ---- the RAM fast path, INLINE (macros cost nothing at run time) ---------
+; A handler reads and writes memory through these, so the commonest case -
+; an even address in RAM - is a compare, a test and one load or store, with
+; no call. Anything else (an odd address, the I/O page) calls the procedure
+; above, which does exactly what it always did. mAdr is read several times:
+; pass a Global or a register, never an expression with a side effect. (The
+; parameters have names no caller uses: an argument spelled exactly like its
+; own parameter - MWriteWord(Adr, v) with a parameter v - makes the compiler
+; exit with no message, 2026-09-23.)
+Macro MReadWord(mDest, mAdr)
+  If mAdr < #RAM_BYTES
+    If (mAdr & 1) = 0
+      mDest = Mem(mAdr >> 1)
+    Else
+      mDest = ReadWord(mAdr)
+    EndIf
+  Else
+    mDest = ReadWord(mAdr)
+  EndIf
+EndMacro
+
+Macro MWriteWord(mAdr, mVal)                   ; Mem is .u: the store keeps the low 16 bits
+  If mAdr < #RAM_BYTES
+    If (mAdr & 1) = 0
+      Mem(mAdr >> 1) = mVal
+    Else
+      WriteWord(mAdr, mVal)
+    EndIf
+  Else
+    WriteWord(mAdr, mVal)
+  EndIf
+EndMacro
+
+Macro MReadByte(mDest, mAdr)
+  If mAdr < #RAM_BYTES
+    If mAdr & 1
+      mDest = (Mem(mAdr >> 1) >> 8) & $FF
+    Else
+      mDest = Mem(mAdr >> 1) & $FF
+    EndIf
+  Else
+    mDest = ReadByte(mAdr)
+  EndIf
+EndMacro
+
+Macro MWriteByte(mAdr, mVal)
+  If mAdr < #RAM_BYTES
+    If mAdr & 1
+      Mem(mAdr >> 1) = (Mem(mAdr >> 1) & $00FF) | ((mVal & $FF) << 8)
+    Else
+      Mem(mAdr >> 1) = (Mem(mAdr >> 1) & $FF00) | (mVal & $FF)
+    EndIf
+  Else
+    WriteByte(mAdr, mVal)
+  EndIf
+EndMacro
+
 ; ---- the stack -------------------------------------------------------
 Procedure Push(v.i)
-  Reg(6) = (Reg(6) - 2) & $FFFF
-  WriteWord(Reg(6), v)
+  Adr = (Reg(6) - 2) & $FFFF
+  Reg(6) = Adr
+  MWriteWord(Adr, v)
 EndProcedure
 
 Procedure.i Pop()
-  Tmp = ReadWord(Reg(6))
-  Reg(6) = (Reg(6) + 2) & $FFFF
+  Adr = Reg(6)
+  MReadWord(Tmp, Adr)
+  Reg(6) = (Adr + 2) & $FFFF
   ProcedureReturn Tmp
 EndProcedure
 
 ; ---- instruction stream ----------------------------------------------
 Procedure.i FetchWord()
-  Tmp = ReadWord(Reg(7))
-  Reg(7) = (Reg(7) + 2) & $FFFF
+  Adr = Reg(7)
+  MReadWord(Tmp, Adr)
+  Reg(7) = (Adr + 2) & $FFFF
   ProcedureReturn Tmp
 EndProcedure
 
@@ -449,21 +532,30 @@ Procedure.i EaWord(spec.i)
     Reg(EaReg) = (Tmp + 2) & $FFFF
     ProcedureReturn Tmp
   ElseIf Tmp = 3                             ; @(R)+  @#a when R = PC
-    Tmp = Reg(EaReg)
-    Reg(EaReg) = (Tmp + 2) & $FFFF
-    ProcedureReturn ReadWord(Tmp)
+    Adr = Reg(EaReg)
+    Reg(EaReg) = (Adr + 2) & $FFFF
+    MReadWord(Tmp, Adr)
+    ProcedureReturn Tmp
   ElseIf Tmp = 4                             ; -(R)
     Reg(EaReg) = (Reg(EaReg) - 2) & $FFFF
     ProcedureReturn Reg(EaReg)
   ElseIf Tmp = 5                             ; @-(R)
-    Reg(EaReg) = (Reg(EaReg) - 2) & $FFFF
-    ProcedureReturn ReadWord(Reg(EaReg))
+    Adr = (Reg(EaReg) - 2) & $FFFF
+    Reg(EaReg) = Adr
+    MReadWord(Tmp, Adr)
+    ProcedureReturn Tmp
   ElseIf Tmp = 6                             ; X(R)   a when R = PC
-    Tmp = FetchWord()
+    Adr = Reg(7)                             ; the index word (FetchWord, inline)
+    Reg(7) = (Adr + 2) & $FFFF
+    MReadWord(Tmp, Adr)
     ProcedureReturn (Tmp + Reg(EaReg)) & $FFFF
   ElseIf Tmp = 7                             ; @X(R)  @a when R = PC
-    Tmp = FetchWord()
-    ProcedureReturn ReadWord((Tmp + Reg(EaReg)) & $FFFF)
+    Adr = Reg(7)
+    Reg(7) = (Adr + 2) & $FFFF
+    MReadWord(Tmp, Adr)
+    Adr = (Tmp + Reg(EaReg)) & $FFFF
+    MReadWord(Tmp, Adr)
+    ProcedureReturn Tmp
   EndIf
   ProcedureReturn Reg(EaReg)
 EndProcedure
@@ -488,20 +580,25 @@ Procedure.i EaByte(spec.i)
   ProcedureReturn EaWord(spec)
 EndProcedure
 
-; Source operands for the double-operand handlers, register mode inline.
-Procedure.i SrcWord()
+; Source operands for the double-operand handlers, register mode inline:
+; macros, so the commonest source - a register - costs no call at all.
+Macro MSrcWord()
   If (Op & $0E00) = 0
-    ProcedureReturn Reg((Op >> 6) & 7)
+    Src = Reg((Op >> 6) & 7)
+  Else
+    Ea = EaWord((Op >> 6) & $3F)
+    MReadWord(Src, Ea)
   EndIf
-  ProcedureReturn ReadWord(EaWord((Op >> 6) & $3F))
-EndProcedure
+EndMacro
 
-Procedure.i SrcByte()
+Macro MSrcByte()
   If (Op & $0E00) = 0
-    ProcedureReturn Reg((Op >> 6) & 7) & $FF
+    Src = Reg((Op >> 6) & 7) & $FF
+  Else
+    Ea = EaByte((Op >> 6) & $3F)
+    MReadByte(Src, Ea)
   EndIf
-  ProcedureReturn ReadByte(EaByte((Op >> 6) & $3F))
-EndProcedure
+EndMacro
 
 ; ======================================================================
 ;  TRAPS
