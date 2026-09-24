@@ -20,6 +20,12 @@ USE
     --switches   the value the console switch register (177570) reads, in
                  octal. Default 0: run everything, no halts on error.
     --name       the name printed by the firmware. Default: the file name.
+    --patch      ADDR=WORD[,ADDR=WORD...], octal: words to change after the
+                 tape is loaded. Only for a subtest written for another
+                 PDP-11 model, where the J-11 is right and the listing
+                 expects that model (MFPT trapping on an 11/34, say). Each
+                 patch is listed in the include's header, so a build says
+                 what it changed.
     -o           where to write the include. Default: both
                  ../J11_18MHz_KDJ11_BF/pico/tape_image.pico and
                  ../J11_18MHz_KDJ11_BF/pico2/tape_image.pico2, beside this
@@ -146,7 +152,7 @@ def word_runs(mem):
     return runs
 
 
-def render(name, source, start, switches, runs, ext):
+def render(name, source, start, switches, runs, ext, patches=()):
     total = sum(len(r[1]) for r in runs)
     out = []
     out.append("; " + "=" * 70)
@@ -155,6 +161,8 @@ def render(name, source, start, switches, runs, ext):
     out.append(";  Tape:   %s" % os.path.basename(source))
     out.append(";  Loads:  %d words in %d runs; starts at %06o; switches %06o"
                % (total, len(runs), start, switches))
+    for pa, pw in patches:
+        out.append(";  PATCHED: %06o = %06o" % (pa, pw))
     out.append("; " + "=" * 70)
     out.append("#TAPE_START = $%04X          ; %06o" % (start, start))
     out.append("#TAPE_SWITCHES = $%04X       ; %06o" % (switches, switches))
@@ -180,6 +188,7 @@ def main():
     ap.add_argument("--start", help="start address, octal (default: the tape's transfer address)")
     ap.add_argument("--switches", default="0", help="switch register 177570, octal (default 0)")
     ap.add_argument("--name", help="name the firmware prints (default: the file name)")
+    ap.add_argument("--patch", default="", help="ADDR=WORD[,ADDR=WORD...] octal words to change after loading")
     ap.add_argument("-o", action="append", dest="outs", help="output file (repeatable)")
     a = ap.parse_args()
 
@@ -203,6 +212,17 @@ def main():
         fail("start address %06o is outside RAM (000000-157777). Check --start." % start)
     switches = int(a.switches, 8) & 0xFFFF
     name = a.name or os.path.splitext(os.path.basename(a.tape))[0]
+    patches = []
+    for item in [x for x in a.patch.split(",") if x.strip()]:
+        try:
+            pa, pw = [int(v, 8) for v in item.split("=")]
+        except ValueError:
+            fail("--patch %r is not ADDR=WORD in octal. Write it like 2236=210." % item)
+        if pa & 1 or pa >= RAM_BYTES:
+            fail("--patch address %06o is odd or outside RAM. Check the listing address." % pa)
+        mem[pa] = pw & 0xFF
+        mem[pa + 1] = (pw >> 8) & 0xFF
+        patches.append((pa, pw & 0xFFFF))
     runs = word_runs(mem)
 
     outs = a.outs
@@ -214,7 +234,7 @@ def main():
     for o in outs:
         ext = os.path.splitext(o)[1] or ".pico"
         with open(o, "w", newline="\n") as f:
-            f.write(render(name, a.tape, start, switches, runs, ext))
+            f.write(render(name, a.tape, start, switches, runs, ext, patches))
     print("tape2pico: %s: %d blocks, %d bytes in %d word runs, start %06o, switches %06o -> %s"
           % (name, blocks, len(mem), len(runs), start, switches, ", ".join(outs)))
 

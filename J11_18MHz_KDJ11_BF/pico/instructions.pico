@@ -207,6 +207,11 @@ SlowFetch:                               ; the I/O page, an odd PC, past the end
   Reg(7) = PC
   Op = FetchWord()
   PC = Reg(7)
+  If TrapVector                          ; the fetch itself failed (odd PC, nothing there):
+    Goto SlowTail                        ; trap through 4 and execute nothing - it read as
+  EndIf                                  ; 0, a HALT (MAINDEC-11-DFKAB test 100). The PC stays
+                                         ; incremented, as on the J-11 (Architecture Handbook
+                                         ; 1983, model differences 28 and 30)
   Goto OpTable(Op >> 3)
 
 ;-MOV-------------------------------------------------------------------
@@ -1063,7 +1068,11 @@ InstructionMTPS_1064:         ; 1064SS   entries $11A0-$11A7   the T bit is not 
     Ea = EaByte(Op & $3F)
     MReadByte(Src, Ea)
   EndIf
-  PswSet((PswGet() & $FF10) | (Src & $EF))
+  If PswHigh & $C000                     ; outside kernel mode only the condition codes
+    PswSet((PswGet() & $FFF0) | (Src & $0F))
+  Else
+    PswSet((PswGet() & $FF10) | (Src & $EF))
+  EndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MTPS " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -1077,6 +1086,9 @@ InstructionMFPI_0065:         ; 0065SS   entries $01A8-$01AF
   ;name = "MFPI"
   If (Op & $38) = 0
     Src = Reg(Op & 7)
+    If (Op & 7) = 6                      ; SP: the PREVIOUS mode's (PSW 13-12)
+      Src = ModeSp((PswHigh >> 12) & 3)
+    EndIf
   Else
     Ea = EaWord(Op & $3F)
     MReadWord(Src, Ea)
@@ -1094,7 +1106,11 @@ InstructionMTPI_0066:         ; 0066DD   entries $01B0-$01B7
   ;name = "MTPI"
   Src = Pop()
   If (Op & $38) = 0
-    Reg(Op & 7) = Src
+    If (Op & 7) = 6                      ; SP: the PREVIOUS mode's (PSW 13-12)
+      SetModeSp((PswHigh >> 12) & 3, Src)
+    Else
+      Reg(Op & 7) = Src
+    EndIf
   Else
     Ea = EaWord(Op & $3F)
     MWriteWord(Ea, Src)
@@ -1574,7 +1590,14 @@ InstructionRTI_000002:        ; entry $0000, sub-decoded
   PcOut()
   ;name = "RTI"
   Reg(7) = Pop()
-  PswSet(Pop())
+  Src = Pop()
+  If PswHigh & $C000                     ; outside kernel: bits 15-11 can only be set,
+    Src = (Src & $F81F) | (PswHigh & $F8E0)   ; and the priority stays
+  EndIf
+  PswSet(Src)
+  If PswHigh & $10                       ; RTI loading T: trace straight after it
+    TraceArm = 1
+  EndIf
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("RTI")
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -1606,11 +1629,15 @@ InstructionRESET_000005:      ; entry $0000, sub-decoded
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
-InstructionRTT_000006:        ; entry $0000, sub-decoded (T-bit timing not modelled)
+InstructionRTT_000006:        ; entry $0000, sub-decoded (the T bit: StartWindow in cpu)
   PcOut()
   ;name = "RTT"
   Reg(7) = Pop()
-  PswSet(Pop())
+  Src = Pop()
+  If PswHigh & $C000                     ; outside kernel: bits 15-11 can only be set,
+    Src = (Src & $F81F) | (PswHigh & $F8E0)   ; and the priority stays
+  EndIf
+  PswSet(Src)
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("RTT")
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -1626,8 +1653,10 @@ InstructionMFPT_000007:       ; entry $0000, sub-decoded
 
 InstructionSPL_00023:         ; 00023N   entry $0013
   ;name = "SPL"
-  PswHigh = (PswHigh & $FF1F) | ((Op & 7) << 5)
-  IntCheck()                             ; a lower priority may let a request in
+  If (PswHigh & $C000) = 0                ; kernel only; a no-op in other modes
+    PswHigh = (PswHigh & $FF1F) | ((Op & 7) << 5)
+    IntCheck()                           ; a lower priority may let a request in
+  EndIf
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("SPL")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
@@ -2296,13 +2325,32 @@ InstructionBITB_13_IR:           ; 1327DD  BITB #n,Rd, the source an immediate
 ;  at Halted (nothing else sets it).
 ; ======================================================================
 SlowTail:
+  If PswLate                             ; the PSW written through 177776 wins (PswWrite)
+    PswSet(PswLate & $FFFF)
+    PswLate = 0
+    If TrapVector = #TRAP_PSW_LATE
+      TrapVector = 0
+    EndIf
+  EndIf
+  If AbortPsw                            ; a bus error aborted the instruction (BusError)
+    PswSet(AbortPsw & $FFFF)
+    AbortPsw = 0
+  EndIf
+  If TrapVector = #TRAP_STACK            ; only a marker: StackYellow says what
+    TrapVector = 0
+  EndIf
+  Reg(7) = PC
   If TrapVector
     Tmp = TrapVector
     TrapVector = 0
-    Reg(7) = PC
+    TraceArm = 0                         ; a trapping instruction is not traced
     TakeTrap(Tmp)
-    PC = Reg(7)
+    If TrapVector = #TRAP_STACK
+      TrapVector = 0
+    EndIf
   EndIf
+  TakeStackTrap()
+  PC = Reg(7)
   RunLeft = RunLeft - 1
   If RunLeft > 0 And Halted = 0
     Goto Fetch
@@ -2321,6 +2369,11 @@ RunEnd:
   RunLeft = 0
   RunWindow = 0
   If Halted = 0
+    If TraceArm                          ; the T bit (StartWindow in cpu): trace trap
+      TraceArm = 0
+      TakeTrap(#VEC_BPT)
+      TakeStackTrap()
+    EndIf
     DevService()
     While Waiting <> 0 And RunBank > 0 And Dl11TxRdy = 0
       Tmp = Dl11TxDue - InstrCount           ; WAIT: let time pass to the

@@ -86,12 +86,19 @@
 ;      the I/O page the PSW (177776), the console DL11 (177560-177566)
 ;      and the switch register (177570) answer; everything else there is
 ;      a bus error (trap to 4). See THE I/O PAGE below.
-;    * one processor mode. MFPI/MTPI/MFPD/MTPD therefore act on the one
-;      address space, and the kernel/supervisor/user stack pointers are not
-;      banked yet.
+;    * kernel, supervisor and user mode with a stack pointer each, and the
+;      two sets of R0-R5 (PSW bit 11) - see THE MODES below. There is one
+;      address space (no memory management yet), so MFPI/MTPI/MFPD/MTPD
+;      reach the same memory; MFPI SP / MTPI SP do reach the previous
+;      mode's stack pointer.
 ;    * a bus error or odd address found inside an instruction is taken
-;      AFTER that instruction finishes (the real J-11 aborts it). Recorded
-;      here so it is not mistaken for correct behaviour.
+;      AFTER that instruction finishes (the real J-11 aborts it), but with
+;      the PSW it had before the instruction (see BusError), so the
+;      condition codes are right; registers an aborted instruction changed
+;      stay changed, as on the J-11 (PDP-11 Architecture Handbook 1983,
+;      model differences 28-30).
+;    * the fixed kernel stack limit (yellow zone, 000400) and the T-bit
+;      trace trap - see StackCheck and StartWindow.
 ;
 ;  COMMENTED OUT 2026-09-23: nothing reads ClockCycles - no line clock, throttle
 ;  or report uses it - so every update of it is commented out and r11 is free.
@@ -118,6 +125,9 @@
 #VEC_TRAP    = $1C          ; 000034
 #VEC_DL11_RX = $30          ; 000060 console receiver, BR4
 #VEC_DL11_TX = $34          ; 000064 console transmitter, BR4
+#TRAP_PSW_LATE = 1          ; not vectors: TrapVector's "see PswLate" (PswWrite)
+#TRAP_STACK  = 3            ; and "see StackYellow" (StackCheck)
+#STACK_LIMIT = $100         ; 000400, the J-11's fixed kernel stack limit
 
 ; ---- the I/O page devices (see THE I/O PAGE) --------------------------
 #DL11_RCSR   = $FF70        ; 177560 receiver status
@@ -152,6 +162,13 @@ Global Adr.i                ; the address Push, Pop, FetchWord and EaWord work o
 Global PswHigh.i            ; PSW bits 15-5 (mode, register set, priority, T)
 ; Global ClockCycles.i   ; commented out: nothing ever reads it (see CLOCK)
 Global TrapVector.i         ; non-zero = a trap to take after this instruction
+Global PswLate.i            ; a PSW written through 177776, to re-apply at the end (PswWrite)
+Global AbortPsw.i           ; the PSW before an instruction a bus error aborted (BusError)
+Global StackYellow.i        ; the kernel stack went below 000400 (StackCheck)
+Global TraceArm.i           ; the T bit was set when this instruction began (StartWindow)
+Global Dim StackBank.i(4)   ; the stack pointer of each mode not running (PswBanks)
+Global Dim RegAlt.i(6)      ; the register set not selected, R0-R5 (PswBanks)
+Global TrapPsw.i, TrapPc.i  ; TakeTrap's saved PSW and PC
 Global Halted.i, Waiting.i
 Global PC.i                 ; the emulated PC between instructions; Reg(7) is its
                             ; stale copy then (see THE EMULATED PC in instructions)
@@ -269,12 +286,96 @@ Procedure.i PswGet()
   ProcedureReturn (PswHigh & $FFF0) | (FlagN() << 3) | (FlagZ() << 2) | ((FlagV >> 14) & 2) | ((FlagC >> 16) & 1)
 EndProcedure
 
+; THE MODES AND THE TWO REGISTER SETS. The J-11 keeps a separate stack
+; pointer for kernel (PSW 15-14 = 00), supervisor (01) and user (11) mode,
+; and two sets of R0-R5 selected by PSW bit 11 (KDJ11-E user's guide
+; EK-KDJ1E-UG-001, figure 1-1, the programming model: KSP/SSP/USP, R0-R5
+; and R0'-R5'). R6 and R0-R5 always hold the ones in use; the others wait
+; here and are swapped whenever the PSW changes mode or register set, so
+; this costs nothing unless it happens. MAINDEC-11-DFKAA test 605 sets SP
+; in user mode and expects the kernel's back on return.
+Procedure PswBanks(v.i)
+  Protected i.i, t.i
+  If (v ! PswHigh) & $C000
+    StackBank((PswHigh >> 14) & 3) = Reg(6)
+    Reg(6) = StackBank((v >> 14) & 3)
+  EndIf
+  If (v ! PswHigh) & $0800
+    For i = 0 To 5
+      t = Reg(i)
+      Reg(i) = RegAlt(i)
+      RegAlt(i) = t
+    Next
+  EndIf
+EndProcedure
+
+; The stack pointer of mode m (0 kernel, 1 supervisor, 3 user), wherever
+; it is kept - MFPI SP and MTPI SP name the PREVIOUS mode's.
+Procedure.i ModeSp(m.i)
+  If m = (PswHigh >> 14) & 3
+    ProcedureReturn Reg(6)
+  EndIf
+  ProcedureReturn StackBank(m)
+EndProcedure
+
+Procedure SetModeSp(m.i, v.i)
+  If m = (PswHigh >> 14) & 3
+    Reg(6) = v & $FFFF
+  Else
+    StackBank(m) = v & $FFFF
+  EndIf
+EndProcedure
+
 Procedure PswSet(v.i)
+  If (v ! PswHigh) & $C800
+    PswBanks(v)
+  EndIf
   PswHigh = v & $FFF0
   SetNZ((v >> 3) & 1, (v >> 2) & 1)
   FlagV = v << 14
   FlagC = v << 16
   IntCheck()
+  If v & $10                             ; T set: one instruction per window (StartWindow)
+    CpuEventIn(1)
+  EndIf
+EndProcedure
+
+; The PSW written THROUGH ITS ADDRESS, 177776, by an ordinary instruction
+; (CLR @#177776, BIS #17,@#177776, MOVB R0,@#177776). Two J-11 rules:
+;  * the written value wins: the condition codes the instruction itself
+;    would set are NOT applied on top of it (MAINDEC-11-DFKAB, the 11/34
+;    traps test, checks this after SCC / CLR PSW at 002032-002116);
+;  * the T bit cannot be set this way - "The T-bit cannot be set by
+;    explicitly writing to the PSW; it can only be changed by the RTI/RTT
+;    instructions" (KDJ11-E user's guide EK-KDJ1E-UG-001, sec. 1.2.6).
+; Every handler sets its condition codes AFTER its write, so the value is
+; applied now and again at the end: PswLate carries it, and TrapVector =
+; #TRAP_PSW_LATE sends the instruction through SlowTail (every handler that
+; can write memory ends with NextSynced, which tests TrapVector), so the
+; path an instruction normally takes is untouched.
+Procedure PswWrite(v.i)
+  v = (v & $FFEF) | (PswHigh & $10)
+  PswSet(v)
+  PswLate = v | $10000
+  If TrapVector = 0
+    TrapVector = #TRAP_PSW_LATE
+  EndIf
+EndProcedure
+
+; A BUS ERROR - an odd address, or nothing at the address - ABORTS the
+; instruction on the J-11: it traps through 4 with the PSW as it was
+; before the instruction, so the condition codes the instruction would
+; have set are never set (MAINDEC-11-DFKAB test 55: CLR PSW, CCC, then TST
+; from an odd address must stack a PSW of 000000). The emulator still
+; finishes the instruction and takes the trap after it, so the PSW is
+; saved here, at the first failing access - every handler sets its
+; condition codes after its memory accesses - and SlowTail puts it back
+; before taking the trap.
+Procedure BusError()
+  If TrapVector <> #VEC_BUS
+    AbortPsw = PswGet() | $10000
+  EndIf
+  TrapVector = #VEC_BUS
 EndProcedure
 
 ; ======================================================================
@@ -328,7 +429,7 @@ Procedure.i IoRead(a.i)                  ; a is even and past the end of RAM
   ElseIf a = #SWR_ADDR
     ProcedureReturn SwitchReg
   EndIf
-  TrapVector = #VEC_BUS
+  BusError()
   ProcedureReturn 0
 EndProcedure
 
@@ -366,7 +467,7 @@ Procedure IoWrite(a.i, v.i)              ; a is even and past the end of RAM
   ElseIf a = #SWR_ADDR
     DisplayReg = v & $FFFF
   ElseIf a <> #DL11_RBUF                 ; RBUF is read-only: a write is ignored
-    TrapVector = #VEC_BUS
+    BusError()
   EndIf
 EndProcedure
 
@@ -375,7 +476,7 @@ EndProcedure
 ; ======================================================================
 Procedure.i ReadWord(a.i)
   If a & 1
-    TrapVector = #VEC_BUS
+    BusError()
     ProcedureReturn 0
   EndIf
   If a < #RAM_BYTES
@@ -386,7 +487,7 @@ EndProcedure
 
 Procedure WriteWord(a.i, v.i)
   If a & 1
-    TrapVector = #VEC_BUS
+    BusError()
     ProcedureReturn
   EndIf
   If a < #RAM_BYTES
@@ -394,7 +495,7 @@ Procedure WriteWord(a.i, v.i)
     ProcedureReturn
   EndIf
   If a = #PSW_ADDR
-    PswSet(v)
+    PswWrite(v & $FFFF)
     ProcedureReturn
   EndIf
   IoWrite(a, v)
@@ -426,15 +527,15 @@ Procedure WriteByte(a.i, v.i)
   EndIf
   If (a & $FFFE) = #PSW_ADDR
     If a & 1
-      PswSet((PswGet() & $00FF) | ((v & $FF) << 8))
+      PswWrite((PswGet() & $00FF) | ((v & $FF) << 8))
     Else
-      PswSet((PswGet() & $FF00) | (v & $FF))
+      PswWrite((PswGet() & $FF00) | (v & $FF))
     EndIf
     ProcedureReturn
   EndIf
   If a & 1                               ; a device's high byte: nothing there
     If (a & $FFFE) < #DL11_RCSR Or (a & $FFFE) > #SWR_ADDR
-      TrapVector = #VEC_BUS
+      BusError()
     EndIf
     ProcedureReturn
   EndIf
@@ -500,9 +601,29 @@ Macro MWriteByte(mAdr, mVal)
 EndMacro
 
 ; ---- the stack -------------------------------------------------------
+; THE YELLOW ZONE. The J-11 has a FIXED kernel stack limit of 000400: a
+; kernel-mode push - -(SP) or @-(SP) as an operand, JSR, MFPI/MFPD, a trap
+; or interrupt - that leaves SP below 000400 still completes, and then the
+; processor traps through 4 ("Yellow stack trap, internal, vector 4, CPU
+; error register bit 3", KDJ11-E user's guide EK-KDJ1E-UG-001 table 1-6;
+; simh pdp11_cpu.c set_stack_trap, the fixed-limit case). MAINDEC-11-DFKAB
+; test 57 does TST -(SP) with SP = 000150 and expects the trap. The red
+; zone (a push that itself fails) is not modelled.
+Procedure StackCheck()
+  If Reg(6) < #STACK_LIMIT
+    If (PswHigh & $C000) = 0                 ; kernel mode only
+      StackYellow = 1
+      If TrapVector = 0
+        TrapVector = #TRAP_STACK             ; send the instruction through SlowTail
+      EndIf
+    EndIf
+  EndIf
+EndProcedure
+
 Procedure Push(v.i)
   Adr = (Reg(6) - 2) & $FFFF
   Reg(6) = Adr
+  StackCheck()
   MWriteWord(Adr, v)
 EndProcedure
 
@@ -542,10 +663,16 @@ Procedure.i EaWord(spec.i)
     ProcedureReturn Tmp
   ElseIf Tmp = 4                             ; -(R)
     Reg(EaReg) = (Reg(EaReg) - 2) & $FFFF
+    If EaReg = 6
+      StackCheck()
+    EndIf
     ProcedureReturn Reg(EaReg)
   ElseIf Tmp = 5                             ; @-(R)
     Adr = (Reg(EaReg) - 2) & $FFFF
     Reg(EaReg) = Adr
+    If EaReg = 6
+      StackCheck()
+    EndIf
     MReadWord(Tmp, Adr)
     ProcedureReturn Tmp
   ElseIf Tmp = 6                             ; X(R)   a when R = PC
@@ -579,6 +706,9 @@ Procedure.i EaByte(spec.i)
     ProcedureReturn Tmp
   ElseIf Tmp = 4
     Reg(EaReg) = (Reg(EaReg) - EaStep) & $FFFF
+    If EaReg = 6
+      StackCheck()
+    EndIf
     ProcedureReturn Reg(EaReg)
   EndIf
   ProcedureReturn EaWord(spec)
@@ -607,13 +737,33 @@ EndMacro
 ; ======================================================================
 ;  TRAPS
 ; ======================================================================
+; The trap sequence: the new PSW comes from the vector, its previous-mode
+; bits (13-12) take the old current mode, and the old PSW and PC are pushed
+; on the NEW mode's stack (normally the kernel's).
 Procedure TakeTrap(vector.i)
-  Tmp = PswGet()
-  Push(Tmp)
-  Push(Reg(7))
+  TrapPsw = PswGet()
+  TrapPc = Reg(7)
   Reg(7) = ReadWord(vector)
-  PswSet(ReadWord(vector + 2))
+  PswSet((ReadWord(vector + 2) & $CFFF) | ((TrapPsw >> 2) & $3000))
+  Push(TrapPsw)
+  Push(TrapPc)
   ; ClockCycles = ClockCycles + #J11_T_TRAP
+EndProcedure
+
+; Take a pending yellow-zone trap. Called after an instruction, and after
+; any trap or interrupt sequence (whose own pushes may have gone below the
+; limit). The yellow trap's own pushes never trap again - simh does the
+; same - or a handler run with a low SP would trap for ever. Works on
+; Reg(7), as TakeTrap does.
+Procedure TakeStackTrap()
+  If StackYellow
+    StackYellow = 0
+    TakeTrap(#VEC_BUS)
+    StackYellow = 0
+    If TrapVector = #TRAP_STACK
+      TrapVector = 0
+    EndIf
+  EndIf
 EndProcedure
 
 ; ======================================================================
@@ -656,9 +806,11 @@ Procedure DevService()
       If IntReq & #INT_DL11_RX
         IntReq = IntReq & ~#INT_DL11_RX
         TakeTrap(#VEC_DL11_RX)
+        TakeStackTrap()
       Else
         IntReq = IntReq & ~#INT_DL11_TX
         TakeTrap(#VEC_DL11_TX)
+        TakeStackTrap()
       EndIf
     EndIf
   EndIf
@@ -682,6 +834,21 @@ Procedure StartWindow()
     If (PswHigh & $E0) < $80
       RunLeft = 1
     EndIf
+  EndIf
+  ; THE T BIT. An instruction that BEGINS with the T bit set is followed by
+  ; a trace trap through 14. While T is set the windows are one instruction
+  ; long, TraceArm records T at the start of each, and RunEnd takes the
+  ; trap. RTI that loads T traps straight after itself; RTT that loads T
+  ; lets the next instruction run first, which this gives for free (T was
+  ; clear when the RTT began) - PDP-11 Architecture Handbook 1983, model
+  ; differences 10-11, and MAINDEC-11-DFKAB test 72. An instruction that
+  ; traps (EMT, TRAP, BPT, IOT, a reserved or failing instruction) takes its
+  ; own trap instead (SlowTail clears TraceArm), as simh's trap_clear table
+  ; does. Nothing here is on the path an instruction takes while T is clear.
+  TraceArm = 0
+  If PswHigh & $10
+    RunLeft = 1
+    TraceArm = 1
   EndIf
   RunBank = RunBank - RunLeft
   RunWindow = RunLeft
