@@ -500,8 +500,9 @@ CompilerIf #DESK_PROBE = 1
 ; build takes the bytes tools/tape_ladder.py WOULD send (its --dump writes
 ; them into an empty tape_image, as ProbeFeed) and hands them to InByte, the same path the
 ; port's bytes take, #FEED_MAX at a time. A 256 in the feed means "wait
-; until the program halts, or rings a bell, or 3 s pass" - the pause the
-; host spends reading a verdict.
+; until the program halts, or rings a bell (and 2.5 s more, for the status
+; line that shows it), or 3 s pass" - the pause the host spends reading a
+; verdict.
 Global FeedPos.i, FeedWaitFrom.i, FeedBells.i, FeedLoaded.i
 Global Dim FeedBuf.u(#FEED_LEN)
 Procedure ProbeFeedLoad()                ; the feed into RAM once, before timing starts
@@ -526,6 +527,13 @@ Procedure ProbeFeedStep()
   EndIf
   If FeedWaitFrom
     If Mode = #MODE_RUN And Bells = FeedBells And (Micros() - FeedWaitFrom) < 3000000
+      ProcedureReturn
+    EndIf
+    If Bells <> FeedBells And FeedBells >= 0   ; a bell: wait for the status line that shows it
+      FeedBells = -1
+      FeedWaitFrom = Micros() - 500000
+    EndIf
+    If FeedBells = -1 And (Micros() - FeedWaitFrom) < 3000000
       ProcedureReturn
     EndIf
     FeedWaitFrom = 0
