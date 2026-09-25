@@ -47,17 +47,14 @@
 ;  #DISK_BACKEND picks where the packs live (disk.pico2): 2, the flash
 ;  pack, for the boards; 1, two RAM packs, for the desk's controller
 ;  tests. #DISK_FLASH_MODEL = 1 is the desk's model of the flash chip.
-;  THE FLASH BUILD RUNS FROM SRAM (EnableRunFromRAM): while the flash is
-;  being written it cannot be read, and the firmware keeps serving USB
-;  through a whole erase - see disk.pico2.
+;  The flash is written a slice of a few hundred microseconds at a time,
+;  with the chip's erase and program suspended in between, so the firmware
+;  keeps running from flash and serving USB - see disk.pico2.
 ; ======================================================================
 #DISK_BACKEND = 2            ; 0 none, 1 RAM (desk), 2 flash (boards)
 #DISK_READ_ONLY = 0          ; 1 = the flash is never written (disk.pico2)
 #DISK_FLASH_MODEL = 0        ; 1 = the desk model of the flash chip (disk.pico2)
 #DESK_PROBE = 0            ; 1 = the desk measurement build (see DESK PROBE)
-CompilerIf #DISK_BACKEND = 2 And #DISK_FLASH_MODEL = 0
-EnableRunFromRAM
-CompilerEndIf
 EnableExplicit
 XIncludeFile "RP2350/Lib/clocks.pico2"
 XIncludeFile "RP2350/Lib/timer.pico2"
@@ -885,6 +882,7 @@ Procedure Main()
       State = 0
     EndIf
     ReadPort()
+    Service()                            ; between the emulator's slice and the disk's
     CompilerIf #DESK_PROBE = 1
       t0 = Micros()
     CompilerEndIf

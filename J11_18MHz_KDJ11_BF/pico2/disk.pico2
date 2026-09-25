@@ -55,33 +55,30 @@
 ;  (the flash erases 4 KB at a time). A line goes back to flash when it
 ;  has been left alone for #DK_IDLE_US, when every line is dirty and a new
 ;  sector is wanted, or on DiskSync. Going back is ERASE, then PROGRAM 16
-;  pages of 256 bytes, then read it back through XIP and compare - and it
-;  is done as a STATE MACHINE, one short step per DiskTask (the compares a
-;  quarter of the line at a time): a command is
-;  sent and DiskTask returns, and the next call reads the flash's BUSY bit
-;  and returns again if it is still set. The longest step is one 256-byte
-;  page command, some tens of microseconds; a sector erase (45 ms typical,
-;  400 ms worst, W25Q16JV) is never waited for in one piece, so USB is
-;  served every pass of the loop throughout. A line whose contents already
-;  match the flash is not written at all.
+;  pages of 256 bytes, then read it back through XIP and compare. A line
+;  whose contents already match the flash is not written at all.
 ;
-;  NOTHING RUNS FROM FLASH WHILE IT IS BEING WRITTEN. Between the first
-;  and last step of a write-back the flash is out of XIP mode and cannot
-;  be read at all - not for code, not for data. So the FLASH firmware is
-;  built with EnableRunFromRAM (the whole program in SRAM; see diag.pico2):
-;  the USB library, the emulator and this file keep running while the
-;  flash is busy. The procedures that talk to the flash chip are marked
-;  ProcedureRAM as well, which says the same thing again where it matters
-;  most (the compiler notes the mark is already implied). ProcedureRAM
-;  ALONE WOULD NOT DO: the loop that serves USB between the steps of a
-;  45 ms erase would be fetching from a flash that cannot answer.
-;  While a write-back is in progress a read of a block not in the cache
-;  answers NOT READY, and the disk controller simply waits for it.
+;  NO STEP HOLDS THE FLASH FOR LONG, SO THE FIRMWARE RUNS FROM FLASH. A
+;  sector erase takes 45 ms (400 ms worst, W25Q16JV) and USB must be served
+;  every millisecond, so the erase and each page program are done in
+;  SLICES using the chip's own Erase/Program Suspend (75h) and Resume
+;  (7Ah): one call of DiskTask leaves XIP, starts or resumes the operation,
+;  watches BUSY for at most #DK_SLICE_US, suspends it if it is not done,
+;  and comes back to XIP - a few hundred microseconds with the flash
+;  unreadable, then the whole firmware (the emulator, USB) runs from flash
+;  again while the operation sits suspended, and the next DiskTask resumes
+;  it. Only that slice runs with XIP off, and it is ProcedureRAM and calls
+;  nothing in flash (not even Micros(): it reads the timer register
+;  itself). While suspended, the chip reads normally everywhere but the
+;  sector being erased or programmed, and that sector's blocks are served
+;  from its cache line. (The first cut ran the whole firmware from SRAM
+;  instead; with the J-11 memory management unit's second run loop the
+;  program no longer fits in SRAM beside the emulated memory.)
 ;
 ;  THE CHIP, spoken to directly (the ROM's flash_range_erase would block
 ;  for the whole erase). The commands are the JEDEC ones every Winbond
 ;  W25Q part takes: 06h write enable, 20h 4 KB sector erase, 02h page
-;  program, 05h read status (bit 0 BUSY). The sequence around them is the
+;  program, 05h and 35h read status (SR1 bit 0 BUSY, SR2 bit 7 SUS). The sequence around them is the
 ;  one proven on this board by RP2350/Lib/flashid.pico2: the ROM's
 ;  connect_internal_flash and flash_exit_xip (found through the lookup at
 ;  the high half of [$14], with the Arm-secure flag 4) to leave XIP; the
@@ -93,6 +90,11 @@
 ;  boot ROM keeps in boot RAM (RP2350 datasheet 4.3; pico-sdk v2.1.1
 ;  flash.c flash_init_boot2_copyout).
 
+;  Suspend and resume are the W25Q family's 75h and 7Ah; SR2 bit 7 (SUS)
+;  says an operation is suspended. The re-entry to XIP between slices
+;  (boot2) only reads status and sends the quad read, which the chip takes
+;  while suspended.
+;
 ;  THE RAM OVERLAY. Blocks in the pack's SWAP AREA (from the header, which
 ;  rk_image.py fills in: Mini-Unix swaps to blocks 4000-4871, SWPLO and
 ;  NSWAP in its /usr/sys/param.h) are kept in SRAM and never written to
@@ -114,7 +116,7 @@
 ;  THE DESK FLASH MODEL (#DISK_FLASH_MODEL = 1)
 ;
 ;  arm_run models no flash programming, so the desk replaces the bottom
-;  layer only - the Ll* procedures - with a model of the chip: every
+;  layer only - LlSlice, LlReady and the XIP reads - with a model of the chip: every
 ;  sector the firmware erases is kept in SRAM (#MD_SECTORS of them) and
 ;  everything else still reads out of arm_run's flash, where the image
 ;  was loaded with the firmware. The model is strict where it matters:
@@ -123,9 +125,10 @@
 ;  need a 0 turned back into a 1, and ANY read of the flash while it is
 ;  out of XIP mode are counted as violations and printed. Everything
 ;  above the Ll* layer - the cache, the state machine, the map, the
-;  read-back check - is the code the board runs. (The model build leaves
-;  the program in flash rather than SRAM, to give the model room: the
-;  desk's flash is never really out of XIP, so nothing depends on it.)
+;  read-back check - is the code the board runs. The model's LlSlice
+;  spends the chip's time as emulated time and counts as violations a new
+;  operation while one is suspended and a read of the sector an
+;  unfinished operation holds.
 ; ======================================================================
 
 Global Dim DkBuf.u(256)          ; the block being moved (rk11.pico2)
@@ -254,19 +257,21 @@ CompilerIf #DISK_BACKEND = 2
 ;  THE FLASH PACK - see the header
 ; ======================================================================
 #XIP_BASE     = $10000000
+#LL_TIMER     = $400B0028        ; TIMERAWL, read directly in the slice (nothing in flash may be called)
+#DK_SLICE_US  = 300              ; the longest a slice keeps the flash out of XIP (plus the suspend)
+#DK_MAX_SLICES = 4000            ; 1.2 s of slices on one operation: the flash has failed
 #FLASH_BYTES  = $400000          ; 4 MB: the Pico 2 W's flash
 #DISK_REGION  = $40000           ; 256 KB in: the firmware lives below
 #DK_SECTOR    = 4096
 #DK_LINES     = 4                ; the write cache: 4 x 4 KB
 #DK_IDLE_US   = 2000000          ; a line untouched this long goes back to flash
-#DK_BUSY_US   = 2000000          ; a flash command still busy after this has failed
 #DK_BLOCKS    = 4872
 #DK_BOOT2     = $20030600        ; 256 B: the RAM copy of boot2, called to restore XIP
 ReserveSram #DK_BOOT2, 256, "rk flash boot2 copy"
 
 Global DkPresent.i, DkMapped.i, DkStored.i, DkMapSectors.i, DkData.i, DkSlots.i, DkNext.i
 Global DkFatal.i                 ; the flash failed a write-back three times: no more writes
-#DK_OV_SLOTS  = 120               ; the RAM overlay, 512 bytes a block (see THE RAM OVERLAY)
+#DK_OV_SLOTS  = 200               ; the RAM overlay, 512 bytes a block (see THE RAM OVERLAY)
 Global Dim DkOvIdx.a(#DK_BLOCKS) ; block -> overlay slot + 1, 0 = not in the overlay
 Global Dim DkOv.u(#DK_OV_SLOTS * 256)
 Global DkOvUsed.i, DkSwapLo.i, DkSwapEnd.i
@@ -281,9 +286,9 @@ Global Dim DkLineFill.i(#DK_LINES)      ; words loaded from flash so far: 2048 =
 Global DkLoaded.i                       ; a part of a line was loaded since DiskWrite began: one per call
 Global DkStamp.i
 ; the write-back state machine
-Global DkState.i                 ; 0 idle, 6 compare, 1 erase, 2 wait erase, 3 program, 4 wait program, 5 back to XIP, 7 read back
+Global DkState.i                 ; 0 idle, 6 compare, 1 erase, 2 erase resumed, 3 page, 4 page resumed, 7 read back
 Global DkWb.i                    ; the line being written back
-Global DkPage.i, DkSince.i, DkTries.i, DkSyncAll.i, DkCmp.i
+Global DkPage.i, DkSlices.i, DkTries.i, DkSyncAll.i, DkCmp.i
 Global DkOut.i                   ; 1 while the flash is out of XIP mode
 ; counters
 Global DkErases.i, DkPages.i, DkSkipped.i, DkVerifyFails.i, DkWbBlocks.i
@@ -292,20 +297,20 @@ Global DkRomConnect.i, DkRomExit.i, DkRomFlush.i
 
 CompilerIf #DISK_FLASH_MODEL = 1
 ; ---- THE DESK FLASH MODEL (see the header) -------------------------------
-#MD_SECTORS  = 8
-#MD_ERASE_US = 45000             ; W25Q16JV tSE typical
-#MD_PAGE_US  = 700               ; tPP typical
+#MD_SECTORS  = 16
 Global Dim MdAt.i(#MD_SECTORS)   ; the flash offset each model sector holds, -1 none
 Global Dim MdData.l(#MD_SECTORS * 1024)   ; 32 bits at a time, as XIP reads them
-Global MdUsed.i, MdBusyUntil.i, MdWel.i
-Global MdViolations.i            ; reads while out of XIP, commands without write enable, 0 -> 1 programs
+Global MdUsed.i
+Global MdViolations.i            ; reads while out of XIP or of an unfinished sector, 0 -> 1 programs, a bad suspend/resume
 Global MdFull.i
+Global MdLeft.i                  ; us of the operation still to go
+Global MdOpAt.i = -1             ; the sector an unfinished operation holds; its reads are garbage
 
 Global Dim MdIdx.a(#FLASH_BYTES / #DK_SECTOR)   ; flash sector -> model sector + 1, 0 = not in the model
 
 Procedure.i LlXip32(off.i)       ; 32 bits (two words, the first in the low half), as XIP would give them
   Define k.i
-  If DkOut
+  If DkOut <> 0 Or (off & ~(#DK_SECTOR - 1)) = MdOpAt
     MdViolations = MdViolations + 1
   EndIf
   k = MdIdx(off >> 12)
@@ -323,78 +328,79 @@ Procedure.i LlXip16(off.i)       ; a 16-bit read of the flash, as XIP would give
 EndProcedure
 
 CompilerIf #DISK_READ_ONLY = 0                 ; the write side: not even compiled when read-only
-Procedure LlOpen()
+#MD_ERASE_US = 45000             ; W25Q16JV tSE typical
+#MD_PAGE_US  = 700               ; tPP typical
+
+; The model's slice: what LlSlice does on the chip, with the chip's time
+; spent as emulated time and the operation's data applied when it starts.
+Procedure.i LlSlice(kind.i, off.i, line.i, page.i)
+  Define k.i
+  Define i.i
+  Define w.i
+  Define o.i
+  Define t0.i
+  Define run.i
   DkOut = 1
-EndProcedure
-
-Procedure LlClose()
+  If kind = 1 Or kind = 2
+    If MdLeft > 0
+      MdViolations = MdViolations + 1    ; a new operation while one is suspended
+    EndIf
+    k = MdIdx(off >> 12) - 1
+    If k < 0 And kind = 1
+      If MdUsed >= #MD_SECTORS
+        MdFull = MdFull + 1              ; the model is out of room: loud, on the status line
+        DkOut = 0
+        ProcedureReturn 1
+      EndIf
+      k = MdUsed
+      MdAt(k) = off
+      MdUsed = MdUsed + 1
+      MdIdx(off >> 12) = k + 1
+    EndIf
+    If k < 0
+      MdFull = MdFull + 1
+      DkOut = 0
+      ProcedureReturn 1
+    EndIf
+    If kind = 1
+      For i = 0 To 1023
+        MdData(k * 1024 + i) = -1
+      Next
+      MdLeft = #MD_ERASE_US
+    Else
+      For i = 0 To 63
+        w = DkLine(line * 2048 + page * 128 + i * 2) | (DkLine(line * 2048 + page * 128 + i * 2 + 1) << 16)
+        o = k * 1024 + page * 64 + i
+        If (MdData(o) & w) <> w
+          MdViolations = MdViolations + 1    ; a 0 that would have to become a 1
+        EndIf
+        MdData(o) = MdData(o) & w
+      Next
+      MdLeft = #MD_PAGE_US
+    EndIf
+    MdOpAt = off & ~(#DK_SECTOR - 1)
+  ElseIf MdLeft <= 0
+    MdViolations = MdViolations + 1      ; a resume with nothing suspended
+  EndIf
+  run = MdLeft
+  If run > #DK_SLICE_US
+    run = #DK_SLICE_US
+  EndIf
+  t0 = Micros()
+  While Micros() - t0 < run
+  Wend
+  MdLeft = MdLeft - run
   DkOut = 0
-EndProcedure
-
-Procedure.i LlBusy()
-  If Micros() - MdBusyUntil < 0
+  If MdLeft <= 0
+    MdOpAt = -1
     ProcedureReturn 1
   EndIf
   ProcedureReturn 0
 EndProcedure
 
-Procedure LlWriteEnable()
-  MdWel = 1
-EndProcedure
-
-Procedure LlErase(off.i)
-  Define k.i
-  Define i.i
-  If MdWel = 0 Or DkOut = 0 Or LlBusy() <> 0
-    MdViolations = MdViolations + 1
-  EndIf
-  MdWel = 0
-  k = MdIdx(off >> 12) - 1
-  If k < 0
-    If MdUsed >= #MD_SECTORS
-      MdFull = MdFull + 1              ; the model is out of room: loud, on the status line
-      ProcedureReturn
-    EndIf
-    k = MdUsed
-    MdAt(k) = off
-    MdUsed = MdUsed + 1
-    MdIdx(off >> 12) = k + 1
-  EndIf
-  For i = 0 To 1023
-    MdData(k * 1024 + i) = -1
-  Next
-  MdBusyUntil = Micros() + #MD_ERASE_US
-EndProcedure
-
-Procedure LlProgram(off.i, line.i, page.i)
-  Define k.i
-  Define i.i
-  Define w.i
-  Define o.i
-  If MdWel = 0 Or DkOut = 0 Or LlBusy() <> 0
-    MdViolations = MdViolations + 1
-  EndIf
-  MdWel = 0
-  k = MdIdx(off >> 12) - 1
-  If k < 0
-    MdFull = MdFull + 1
-    ProcedureReturn
-  EndIf
-  For i = 0 To 63
-    w = DkLine(line * 2048 + page * 128 + i * 2) | (DkLine(line * 2048 + page * 128 + i * 2 + 1) << 16)
-    o = k * 1024 + page * 64 + i
-    If (MdData(o) & w) <> w
-      MdViolations = MdViolations + 1    ; a 0 that would have to become a 1
-    EndIf
-    MdData(o) = MdData(o) & w
-  Next
-  MdBusyUntil = Micros() + #MD_PAGE_US
-EndProcedure
-
 Procedure.i LlReady()
   ProcedureReturn 1
 EndProcedure
-
 CompilerEndIf
 CompilerElse
 ; ---- THE BOARD'S CHIP (see the header) -----------------------------------
@@ -442,76 +448,102 @@ ProcedureRAM.i LlReady()
   ProcedureReturn 1
 EndProcedure
 
-ProcedureRAM LlCs(assert.i)      ; the QMI drives chip select itself
+ProcedureRAM LlCs(assert.i)      ; the QMI drives chip select itself; 1 = a command starts
   If assert
     PokeL(#QMI_CSR, 5)                 ; EN | ASSERT_CS0N
   Else
-    While (PeekL(#QMI_CSR) & 2) <> 0        ; BUSY: the last byte still going
+    While (PeekL(#QMI_CSR) & 2) <> 0   ; BUSY: the last byte still going
     Wend
     PokeL(#QMI_CSR, 0)
   EndIf
 EndProcedure
 
 ProcedureRAM.i LlByte(b.i)       ; one byte out, its reply back: one in flight
-  While (PeekL(#QMI_CSR) & $400) <> 0       ; TXFULL
+  While (PeekL(#QMI_CSR) & $400) <> 0  ; TXFULL
   Wend
   PokeL(#QMI_TX, b & $FF)
-  While (PeekL(#QMI_CSR) & $10000) <> 0       ; RXEMPTY
+  While (PeekL(#QMI_CSR) & $10000) <> 0   ; RXEMPTY
   Wend
   ProcedureReturn PeekL(#QMI_RX) & $FF
 EndProcedure
 
-ProcedureRAM LlOpen()
+#LL_CS_ON = 1
+#LL_CS_OFF = 0
+
+ProcedureRAM LlCmd(c.i)          ; a one-byte command
+  LlCs(#LL_CS_ON)
+  LlByte(c)
+  LlCs(#LL_CS_OFF)
+EndProcedure
+
+ProcedureRAM.i LlStatus(c.i)     ; a status register: 05h SR1 (bit 0 BUSY), 35h SR2 (bit 7 SUS)
+  Define s.i
+  LlCs(#LL_CS_ON)
+  LlByte(c)
+  s = LlByte(0)
+  LlCs(#LL_CS_OFF)
+  ProcedureReturn s
+EndProcedure
+
+; ONE SLICE of an erase or a page program, with XIP off for at most
+; #DK_SLICE_US plus the suspend. kind 1 starts erasing the sector at off,
+; 2 starts programming page `page` of cache line `line` at off, 3 resumes
+; the suspended one. 1 = the operation is finished; 0 = it is suspended
+; (resume it next time). XIP is back on when this returns.
+ProcedureRAM.i LlSlice(kind.i, off.i, line.i, page.i)
+  Define t0.i
+  Define i.i
+  Define w.i
+  Define done.i
   CallFunctionFast(DkRomConnect)
   CallFunctionFast(DkRomExit)
   DkOut = 1
-EndProcedure
-
-ProcedureRAM LlClose()
-  CallFunctionFast(DkRomFlush)         ; the XIP cache
-  CallFunctionFast(#DK_BOOT2 + 1)      ; the XIP setup function: the board's own XIP mode
+  If kind = 1
+    LlCmd($06)
+    LlCs(#LL_CS_ON)
+    LlByte($20)
+    LlByte(off >> 16)
+    LlByte(off >> 8)
+    LlByte(off)
+    LlCs(#LL_CS_OFF)
+  ElseIf kind = 2
+    LlCmd($06)
+    LlCs(#LL_CS_ON)
+    LlByte($02)
+    LlByte(off >> 16)
+    LlByte(off >> 8)
+    LlByte(off)
+    For i = 0 To 127
+      w = DkLine(line * 2048 + page * 128 + i)
+      LlByte(w)
+      LlByte(w >> 8)
+    Next
+    LlCs(#LL_CS_OFF)
+  Else
+    LlCmd($7A)                           ; resume
+  EndIf
+  done = 0
+  t0 = PeekL(#LL_TIMER)
+  Repeat
+    If (LlStatus($05) & 1) = 0
+      done = 1
+    EndIf
+  Until done <> 0 Or PeekL(#LL_TIMER) - t0 >= #DK_SLICE_US
+  If done = 0
+    LlCmd($75)                           ; suspend: tSUS is at most 20 us
+    t0 = PeekL(#LL_TIMER)
+    While (LlStatus($05) & 1) <> 0 And PeekL(#LL_TIMER) - t0 < 200
+    Wend
+    If (LlStatus($35) & $80) = 0         ; SUS clear: it finished as it was asked to stop
+      done = 1
+    EndIf
+  EndIf
+  CallFunctionFast(DkRomFlush)           ; the XIP cache (and, on the RP2040, the CS override off)
+  CallFunctionFast(#DK_BOOT2 + 1)        ; back to the board's own XIP mode
   DkOut = 0
+  ProcedureReturn done
 EndProcedure
 
-ProcedureRAM.i LlBusy()
-  Define s.i
-  LlCs(1)
-  LlByte($05)
-  s = LlByte(0)
-  LlCs(0)
-  ProcedureReturn s & 1
-EndProcedure
-
-ProcedureRAM LlWriteEnable()
-  LlCs(1)
-  LlByte($06)
-  LlCs(0)
-EndProcedure
-
-ProcedureRAM LlErase(off.i)
-  LlCs(1)
-  LlByte($20)
-  LlByte(off >> 16)
-  LlByte(off >> 8)
-  LlByte(off)
-  LlCs(0)
-EndProcedure
-
-ProcedureRAM LlProgram(off.i, line.i, page.i)
-  Define i.i
-  Define w.i
-  LlCs(1)
-  LlByte($02)
-  LlByte(off >> 16)
-  LlByte(off >> 8)
-  LlByte(off)
-  For i = 0 To 127
-    w = DkLine(line * 2048 + page * 128 + i)
-    LlByte(w)
-    LlByte(w >> 8)
-  Next
-  LlCs(0)
-EndProcedure
 CompilerEndIf
 CompilerEndIf
 
@@ -924,45 +956,50 @@ Procedure DiskTask()
       DkTries = 0
       DkState = 0
     EndIf
-  ElseIf DkState = 1                         ; out of XIP, erase the sector
-    LlOpen()
-    LlWriteEnable()
-    LlErase(DkLineAt(DkWb))
-    DkErases = DkErases + 1
-    DkSince = Micros()
-    DkState = 2
-  ElseIf DkState = 2 Or DkState = 4      ; wait for BUSY to clear, one look per call
-    If LlBusy()
-      If Micros() - DkSince > #DK_BUSY_US
-        LlClose()                        ; the flash did not finish: stop, and say so
-        DkState = 0
-        DkVerifyFails = DkVerifyFails + 1
-        DkTries = DkTries + 1
-        If DkTries >= 3
-          DkFatal = 1
-        EndIf
-      EndIf
-      ProcedureReturn
-    EndIf
-    If DkState = 2
-      DkPage = 0
-      DkState = 3
-    ElseIf DkPage >= 16
-      DkState = 5
+  ElseIf DkState = 1 Or DkState = 2      ; erase: start it, or resume it, one slice
+    If DkState = 1
+      k = LlSlice(1, DkLineAt(DkWb), DkWb, 0)
     Else
-      DkState = 3
+      k = LlSlice(3, 0, 0, 0)
     EndIf
-  ElseIf DkState = 3                     ; one 256-byte page
-    LlWriteEnable()
-    LlProgram(DkLineAt(DkWb) + DkPage * 256, DkWb, DkPage)
-    DkPages = DkPages + 1
-    DkPage = DkPage + 1
-    DkSince = Micros()
-    DkState = 4
-  ElseIf DkState = 5                     ; back to XIP; then read it back (state 7)
-    LlClose()
-    DkCmp = 0
-    DkState = 7
+    If k
+      DkErases = DkErases + 1
+      DkPage = 0
+      DkSlices = 0
+      DkState = 3
+    Else
+      DkState = 2
+      DkSlices = DkSlices + 1
+    EndIf
+  ElseIf DkState = 3 Or DkState = 4      ; one page: start it, or resume it
+    If DkState = 3
+      k = LlSlice(2, DkLineAt(DkWb) + DkPage * 256, DkWb, DkPage)
+    Else
+      k = LlSlice(3, 0, 0, 0)
+    EndIf
+    If k
+      DkPages = DkPages + 1
+      DkPage = DkPage + 1
+      DkSlices = 0
+      If DkPage >= 16
+        DkCmp = 0
+        DkState = 7                      ; read it back
+      Else
+        DkState = 3
+      EndIf
+    Else
+      DkState = 4
+      DkSlices = DkSlices + 1
+    EndIf
+  EndIf
+  If DkSlices > #DK_MAX_SLICES           ; the flash did not finish: stop, and say so
+    DkSlices = 0
+    DkState = 0
+    DkVerifyFails = DkVerifyFails + 1
+    DkTries = DkTries + 1
+    If DkTries >= 3
+      DkFatal = 1
+    EndIf
   EndIf
   CompilerEndIf
 EndProcedure
