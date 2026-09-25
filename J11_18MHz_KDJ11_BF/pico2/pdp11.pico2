@@ -15,6 +15,7 @@ XIncludeFile "RP2350/Lib/uart.pico2"
 XIncludeFile "RP2350/Lib/usb_serial.pico2"
 XIncludeFile "RP2350/Lib/safety.pico2"
 XIncludeFile "cpu.pico2"
+XIncludeFile "instructions_mmu.pico2"
 XIncludeFile "instructions.pico2"
 
 #CLOCK_KHZ = 150000

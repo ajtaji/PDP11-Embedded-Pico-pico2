@@ -15,6 +15,7 @@ XIncludeFile "RP2040/Lib/uart.pico"
 XIncludeFile "RP2040/Lib/usb_serial.pico"
 XIncludeFile "RP2040/Lib/safety.pico"
 XIncludeFile "cpu.pico"
+XIncludeFile "instructions_mmu.pico"
 XIncludeFile "instructions.pico"
 
 #CLOCK_KHZ = 200000
