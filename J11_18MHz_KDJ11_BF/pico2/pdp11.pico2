@@ -150,6 +150,7 @@ Procedure Main()
   UsbSerialInit()
   SafetyOk()
   BuildOpcodeTable()
+  BuildOpcodeTableM()                    ; the mapped loop's table too, before any timing
   Repeat
     SelfTest()
     Bench()

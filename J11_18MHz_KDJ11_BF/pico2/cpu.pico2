@@ -137,6 +137,8 @@
 #MMR2_ADDR   = $FF7E        ; 177576
 #MMR3_ADDR   = $F54E        ; 172516
 #MAP_NONE    = $10000       ; a fast window that holds nothing
+#MAP_COST_ENTRY = 8         ; the run budget one map entry's rework costs (MmuCharge)
+#MAP_COST_ALL   = 128       ; ... and the whole map's
 #TRAP_STACK  = 3            ; and "see StackYellow" (StackCheck)
 #STACK_LIMIT = $100         ; 000400, the J-11's fixed kernel stack limit
 
@@ -441,8 +443,9 @@ EndProcedure
 ;                 ED (grows down), 2-1 access (00 and 10 not resident, 01
 ;                 read-only, 11 read/write). A write to a PDR or its PAR
 ;                 clears W.
-;  THE PRECOMPUTED MAP. Whenever a register changes, MmuRecompute works
-;  out, for every mode, space and page, the physical offset (MapBase), the
+;  THE PRECOMPUTED MAP. Whenever a register changes, MmuMapEntry works
+;  out again, for the mode, space and page it maps (MmuRegChanged: one PAR
+;  or PDR; MmuRecompute: MMR3, all of them), the physical offset (MapBase), the
 ;  virtual bytes the length allows (MapLo/MapHi) and the access - and the
 ;  FAST WINDOWS: the virtual range that is readable (MapRLo/MapRHi), or
 ;  writable with W already set (MapWLo/MapWHi), and lies wholly in RAM. A
@@ -450,71 +453,109 @@ EndProcedure
 ;  friends, below); anything else - outside the window, odd, the I/O page,
 ;  an abort, the first write to a page - goes through MmuPhys.
 ; ======================================================================
+; One entry of the map, from its registers (a D entry uses the I
+; registers while its mode's D space is off).
+Procedure MmuMapEntry(e.i)
+  Protected m.i, s.i, p.i, r.i, dv.i, plf.i, pb.i, lo.i, hi.i, bs.i, acf.i, dm.i
+  m = e >> 4
+  s = (e >> 3) & 1
+  p = e & 7
+  r = e
+  If s = 1                         ; D space off for this mode: the I registers
+    If m = 0
+      dm = 4
+    ElseIf m = 1
+      dm = 2
+    Else
+      dm = 1
+    EndIf
+    If (Mmr3 & dm) = 0
+      r = e - 8
+    EndIf
+  EndIf
+  MapReg(e) = r
+  dv = Pdr(r)
+  acf = (dv >> 1) & 3
+  If acf = 2 Or m = 2              ; 10 is not resident; mode 10 does not exist
+    acf = 0
+  EndIf
+  MapAcf(e) = acf
+  plf = (dv >> 8) & $7F
+  pb = p << 13
+  If dv & 8                       ; the page grows down from its top
+    lo = pb + (plf << 6)
+    hi = pb + $2000
+  Else
+    lo = pb
+    hi = pb + ((plf + 1) << 6)
+  EndIf
+  bs = (Par(r) << 6) - pb
+  MapBase(e) = bs
+  MapLo(e) = lo
+  MapHi(e) = hi
+  MapRLo(e) = #MAP_NONE
+  MapRHi(e) = 0
+  MapWLo(e) = #MAP_NONE
+  MapWHi(e) = 0
+  If bs + hi > #RAM_BYTES          ; only what lies in RAM is fast
+    hi = #RAM_BYTES - bs
+  EndIf
+  If acf <> 0 And hi > lo And bs + lo >= 0 And ((Par(r) << 6) + $2000) <= MapMask
+    MapRLo(e) = lo
+    MapRHi(e) = hi
+    If acf = 3 And (dv & $40) <> 0
+      MapWLo(e) = lo
+      MapWHi(e) = hi
+    EndIf
+  EndIf
+EndProcedure
+
+; HOST TIME, NOT EMULATED TIME. Working the map out again costs the host
+; far more than an instruction does (the I/O page path and the map code
+; are both slow paths), and a program that rewrites its PARs in a loop
+; (MAINDEC-11-DFKAB sets up all 48 PDR/PAR pairs over and over) would
+; otherwise make one CpuRun(n) take many times its usual time - the
+; firmware sizes n so that USB is served every millisecond. So the rework
+; ends the run window after this instruction and takes k instructions'
+; worth from the caller's budget: CpuRun returns sooner, having run fewer
+; instructions. Nothing the program can see changes - the emulated clock
+; (InstrCount) counts only the instructions run.
+Procedure MmuCharge(k.i)
+  CpuEventIn(1)
+  RunBank = RunBank - k
+EndProcedure
+
+; The whole map: after MMR3 changes (D space, 22-bit mapping) and at reset.
 Procedure MmuRecompute()
-  Protected m.i, s.i, p.i, e.i, r.i, dv.i, plf.i, pb.i, lo.i, hi.i, bs.i, acf.i, dm.i
+  Protected e.i
   If Mmr3 & $10
     MapMask = $3FFFFF
   Else
     MapMask = $3FFFF
   EndIf
-  For m = 0 To 3
-    For s = 0 To 1
-      For p = 0 To 7
-        e = (m << 4) | (s << 3) | p
-        r = e
-        If s = 1                         ; D space off for this mode: the I registers
-          If m = 0
-            dm = 4
-          ElseIf m = 1
-            dm = 2
-          Else
-            dm = 1
-          EndIf
-          If (Mmr3 & dm) = 0
-            r = e - 8
-          EndIf
-        EndIf
-        MapReg(e) = r
-        dv = Pdr(r)
-        acf = (dv >> 1) & 3
-        If acf = 2 Or m = 2              ; 10 is not resident; mode 10 does not exist
-          acf = 0
-        EndIf
-        MapAcf(e) = acf
-        plf = (dv >> 8) & $7F
-        pb = p << 13
-        If dv & 8                       ; the page grows down from its top
-          lo = pb + (plf << 6)
-          hi = pb + $2000
-        Else
-          lo = pb
-          hi = pb + ((plf + 1) << 6)
-        EndIf
-        bs = (Par(r) << 6) - pb
-        MapBase(e) = bs
-        MapLo(e) = lo
-        MapHi(e) = hi
-        MapRLo(e) = #MAP_NONE
-        MapRHi(e) = 0
-        MapWLo(e) = #MAP_NONE
-        MapWHi(e) = 0
-        If bs + hi > #RAM_BYTES          ; only what lies in RAM is fast
-          hi = #RAM_BYTES - bs
-        EndIf
-        If acf <> 0 And hi > lo And bs + lo >= 0 And ((Par(r) << 6) + $2000) <= MapMask
-          MapRLo(e) = lo
-          MapRHi(e) = hi
-          If acf = 3 And (dv & $40) <> 0
-            MapWLo(e) = lo
-            MapWHi(e) = hi
-          EndIf
-        EndIf
-      Next
-    Next
+  For e = 0 To 63
+    MmuMapEntry(e)
   Next
+  MmuCharge(#MAP_COST_ALL)
   CurI = ((PswHigh >> 14) & 3) << 4
   CurD = CurI + 8
   PrvBase = ((PswHigh >> 12) & 3) << 4
+  FetchLo = #MAP_NONE                    ; the fetch window is found again
+  FetchHi = 0
+EndProcedure
+
+; One register pair (entry r) changed - a PAR or PDR write, or W set: only
+; its entry, and the D entry that borrows it, are worked out again. (A
+; program that rewrites its PARs in a loop must not pay for the whole map
+; each time: that starved USB for 17 ms in MAINDEC-11-DFKAB.)
+Procedure MmuRegChanged(r.i)
+  MmuCharge(#MAP_COST_ENTRY)
+  MmuMapEntry(r)
+  If (r & 8) = 0
+    If MapReg(r + 8) = r
+      MmuMapEntry(r + 8)
+    EndIf
+  EndIf
   FetchLo = #MAP_NONE                    ; the fetch window is found again
   FetchHi = 0
 EndProcedure
@@ -608,7 +649,7 @@ Procedure MmuRegWrite(a.i, v.i)
     Else
       Pdr(r) = v & $7F0E
     EndIf
-    MmuRecompute()
+    MmuRegChanged(r)
   EndIf
 EndProcedure
 
@@ -1025,7 +1066,7 @@ Procedure.i MmuPhys(va.i, e.i, write.i)
     r = MapReg(e)
     If (Pdr(r) & $40) = 0                ; the first write: W, and a fast window
       Pdr(r) = Pdr(r) | $40
-      MmuRecompute()
+      MmuRegChanged(r)
     EndIf
   EndIf
   ProcedureReturn (va + MapBase(e)) & MapMask
