@@ -85,10 +85,15 @@
 ;      kw11.pico) answer; everything else there is a bus error (trap to
 ;      4). See THE I/O PAGE below.
 ;    * kernel, supervisor and user mode with a stack pointer each, and the
-;      two sets of R0-R5 (PSW bit 11) - see THE MODES below. There is one
-;      address space (no memory management yet), so MFPI/MTPI/MFPD/MTPD
-;      reach the same memory; MFPI SP / MTPI SP do reach the previous
-;      mode's stack pointer.
+;      two sets of R0-R5 (PSW bit 11) - see THE MODES below.
+;    * the memory management unit: PAR/PDR sets for kernel, supervisor and
+;      user, I and D space, 18- and 22-bit mapping, MMR0-3, aborts through
+;      250 - see THE MEMORY MANAGEMENT UNIT. While it is off nothing of it is
+;      on the path an instruction takes; while it is on, a second run loop
+;      (instructions_mmu, generated from instructions by tools/mmu_gen.py)
+;      runs instead. Physical memory is still the 56 KB of RAM and the I/O
+;      page: a mapped address past RAM and below the I/O page is a bus
+;      error (trap to 4), as on a machine with 56 KB fitted.
 ;    * a bus error or odd address found inside an instruction is taken
 ;      AFTER that instruction finishes (the real J-11 aborts it), but with
 ;      the PSW it had before the instruction (see BusError), so the
@@ -124,6 +129,14 @@
 #VEC_DL11_RX = $30          ; 000060 console receiver, BR4
 #VEC_DL11_TX = $34          ; 000064 console transmitter, BR4
 #TRAP_PSW_LATE = 1          ; not vectors: TrapVector's "see PswLate" (PswWrite)
+#VEC_MMU     = $A8          ; 000250 memory management abort
+#MMR0_ADDR   = $FF7A        ; 177572
+#MMR1_ADDR   = $FF7C        ; 177574
+#MMR2_ADDR   = $FF7E        ; 177576
+#MMR3_ADDR   = $F54E        ; 172516
+#MAP_NONE    = $10000       ; a fast window that holds nothing
+#MAP_COST_ENTRY = 8         ; the run budget one map entry's rework costs (MmuCharge)
+#MAP_COST_ALL   = 128       ; ... and the whole map's
 #TRAP_STACK  = 3            ; and "see StackYellow" (StackCheck)
 #STACK_LIMIT = $100         ; 000400, the J-11's fixed kernel stack limit
 
@@ -174,6 +187,34 @@ Global TraceArm.i           ; the T bit was set when this instruction began (Sta
 Global Dim StackBank.i(4)   ; the stack pointer of each mode not running (PswBanks)
 Global Dim RegAlt.i(6)      ; the register set not selected, R0-R5 (PswBanks)
 Global TrapPsw.i, TrapPc.i  ; TakeTrap's saved PSW and PC
+
+; The memory management unit - see THE MEMORY MANAGEMENT UNIT. An ENTRY is
+; mode * 16 + space * 8 + page: mode 0 kernel, 1 supervisor, 3 user; space
+; 0 I, 1 D; page = the top three bits of the virtual address.
+Global MmuOn.i              ; MMR0 bit 0: the mapped run loop runs while it is 1
+Global Mmr0.i, Mmr1.i, Mmr2.i, Mmr3.i
+Global Dim Pdr.i(64)        ; the registers, by entry
+Global Dim Par.i(64)
+Global Dim MapReg.i(64)     ; the registers an entry uses (a D entry uses I's when D space is off)
+Global Dim MapBase.i(64)    ; physical = virtual + MapBase, before the 18/22-bit mask
+Global Dim MapLo.i(64)      ; the virtual bytes the page length allows: MapLo <= va < MapHi
+Global Dim MapHi.i(64)
+Global Dim MapAcf.i(64)     ; 0 not resident, 1 read-only, 3 read/write
+Global Dim MapRLo.i(64)     ; THE FAST WINDOWS: readable and all in RAM ...
+Global Dim MapRHi.i(64)
+Global Dim MapWLo.i(64)     ; ... and writable with W already set
+Global Dim MapWHi.i(64)
+Global MapMask.i            ; $3FFFF (18-bit) or $3FFFFF (22-bit)
+Global CurI.i, CurD.i       ; the current mode's entry bases
+Global PrvBase.i            ; the previous mode's (mode * 16), for MFPI/MFPD/MTPI/MTPD
+Global TrapHeld.i            ; a trap a trap sequence left pending, across the mapped slow fetch
+Global EaBase.i             ; where the last mapped operand address lies (EaWordM)
+Global MmE.i                ; the mapped memory macros' entry
+Global RunSave.i            ; CpuRun's RunFrom while the mapped loop runs
+Global MmuPc.i              ; the address of the mapped instruction being run (MMR2)
+Global MmuPcRec.i           ; the instruction MMR1 holds the changes of
+Global FetchLo.i, FetchHi.i, FetchBase.i   ; THE FETCH WINDOW (MmuFetchWindow)
+Global MmuTouches.i         ; reads and writes of the unit's registers, for tests
 Global Halted.i, Waiting.i
 Global PC.i                 ; the emulated PC between instructions; Reg(7) is its
                             ; stale copy then (see THE EMULATED PC in instructions)
@@ -326,6 +367,11 @@ Procedure PswBanks(v.i)
       RegAlt(i) = t
     Next
   EndIf
+  CurI = ((v >> 14) & 3) << 4            ; the memory management unit's entry bases
+  CurD = CurI + 8
+  PrvBase = ((v >> 12) & 3) << 4
+  FetchLo = #MAP_NONE                    ; and a new mode: a new fetch window
+  FetchHi = 0
 EndProcedure
 
 ; The stack pointer of mode m (0 kernel, 1 supervisor, 3 user), wherever
@@ -346,7 +392,7 @@ Procedure SetModeSp(m.i, v.i)
 EndProcedure
 
 Procedure PswSet(v.i)
-  If (v ! PswHigh) & $C800
+  If (v ! PswHigh) & $F800
     PswBanks(v)
   EndIf
   PswHigh = v & $FFF0
@@ -395,6 +441,235 @@ Procedure BusError()
     AbortPsw = PswGet() | $10000
   EndIf
   TrapVector = #VEC_BUS
+EndProcedure
+
+; ======================================================================
+;  THE MEMORY MANAGEMENT UNIT (KDJ11-E user's guide EK-KDJ1E-UG-001,
+;  section 1.4 and chapter on memory management; the KT11 scheme of the
+;  11/70 with the J-11's addresses):
+;    MMR0 177572  15 non-resident, 14 page length, 13 read-only abort,
+;                 8 maintenance, 6-5 mode, 4 D space, 3-1 page (all six
+;                 filled by an abort, and frozen with it until 15-13 are
+;                 cleared), 0 ENABLE
+;    MMR1 177574  the register changes (auto-increment/decrement) the
+;                 aborted instruction made: amount in 7-3, register in 2-0,
+;                 a second change in the high byte
+;    MMR2 177576  the virtual address of the instruction
+;    MMR3 172516  4 22-bit mapping, 2-0 D space for kernel/supervisor/user
+;    PDR/PAR      kernel 172300-172376, supervisor 172200-172276, user
+;                 177600-177676: I PDRs, D PDRs, I PARs, D PARs, 8 each.
+;                 PDR: 14-8 page length (64-byte blocks), 6 W (written), 3
+;                 ED (grows down), 2-1 access (00 and 10 not resident, 01
+;                 read-only, 11 read/write). A write to a PDR or its PAR
+;                 clears W.
+;  THE PRECOMPUTED MAP. Whenever a register changes, MmuMapEntry works
+;  out again, for the mode, space and page it maps (MmuRegChanged: one PAR
+;  or PDR; MmuRecompute: MMR3, all of them), the physical offset (MapBase), the
+;  virtual bytes the length allows (MapLo/MapHi) and the access - and the
+;  FAST WINDOWS: the virtual range that is readable (MapRLo/MapRHi), or
+;  writable with W already set (MapWLo/MapWHi), and lies wholly in RAM. A
+;  mapped access in that window is two compares and a load (MMReadWordE and
+;  friends, below); anything else - outside the window, odd, the I/O page,
+;  an abort, the first write to a page - goes through MmuPhys.
+; ======================================================================
+; One entry of the map, from its registers (a D entry uses the I
+; registers while its mode's D space is off).
+Procedure MmuMapEntry(e.i)
+  Protected m.i, s.i, p.i, r.i, dv.i, plf.i, pb.i, lo.i, hi.i, bs.i, acf.i, dm.i
+  m = e >> 4
+  s = (e >> 3) & 1
+  p = e & 7
+  r = e
+  If s = 1                         ; D space off for this mode: the I registers
+    If m = 0
+      dm = 4
+    ElseIf m = 1
+      dm = 2
+    Else
+      dm = 1
+    EndIf
+    If (Mmr3 & dm) = 0
+      r = e - 8
+    EndIf
+  EndIf
+  MapReg(e) = r
+  dv = Pdr(r)
+  acf = (dv >> 1) & 3
+  If acf = 2 Or m = 2              ; 10 is not resident; mode 10 does not exist
+    acf = 0
+  EndIf
+  MapAcf(e) = acf
+  plf = (dv >> 8) & $7F
+  pb = p << 13
+  If dv & 8                       ; the page grows down from its top
+    lo = pb + (plf << 6)
+    hi = pb + $2000
+  Else
+    lo = pb
+    hi = pb + ((plf + 1) << 6)
+  EndIf
+  bs = (Par(r) << 6) - pb
+  MapBase(e) = bs
+  MapLo(e) = lo
+  MapHi(e) = hi
+  MapRLo(e) = #MAP_NONE
+  MapRHi(e) = 0
+  MapWLo(e) = #MAP_NONE
+  MapWHi(e) = 0
+  If bs + hi > #RAM_BYTES          ; only what lies in RAM is fast
+    hi = #RAM_BYTES - bs
+  EndIf
+  If acf <> 0 And hi > lo And bs + lo >= 0 And ((Par(r) << 6) + $2000) <= MapMask
+    MapRLo(e) = lo
+    MapRHi(e) = hi
+    If acf = 3 And (dv & $40) <> 0
+      MapWLo(e) = lo
+      MapWHi(e) = hi
+    EndIf
+  EndIf
+EndProcedure
+
+; HOST TIME, NOT EMULATED TIME. Working the map out again costs the host
+; far more than an instruction does (the I/O page path and the map code
+; are both slow paths), and a program that rewrites its PARs in a loop
+; (MAINDEC-11-DFKAB sets up all 48 PDR/PAR pairs over and over) would
+; otherwise make one CpuRun(n) take many times its usual time - the
+; firmware sizes n so that USB is served every millisecond. So the rework
+; ends the run window after this instruction and takes k instructions'
+; worth from the caller's budget: CpuRun returns sooner, having run fewer
+; instructions. Nothing the program can see changes - the emulated clock
+; (InstrCount) counts only the instructions run.
+Procedure MmuCharge(k.i)
+  CpuEventIn(1)
+  RunBank = RunBank - k
+EndProcedure
+
+; The whole map: after MMR3 changes (D space, 22-bit mapping) and at reset.
+Procedure MmuRecompute()
+  Protected e.i
+  If Mmr3 & $10
+    MapMask = $3FFFFF
+  Else
+    MapMask = $3FFFF
+  EndIf
+  For e = 0 To 63
+    MmuMapEntry(e)
+  Next
+  MmuCharge(#MAP_COST_ALL)
+  CurI = ((PswHigh >> 14) & 3) << 4
+  CurD = CurI + 8
+  PrvBase = ((PswHigh >> 12) & 3) << 4
+  FetchLo = #MAP_NONE                    ; the fetch window is found again
+  FetchHi = 0
+EndProcedure
+
+; One register pair (entry r) changed - a PAR or PDR write, or W set: only
+; its entry, and the D entry that borrows it, are worked out again. (A
+; program that rewrites its PARs in a loop must not pay for the whole map
+; each time: that starved USB for 17 ms in MAINDEC-11-DFKAB.)
+Procedure MmuRegChanged(r.i)
+  MmuCharge(#MAP_COST_ENTRY)
+  MmuMapEntry(r)
+  If (r & 8) = 0
+    If MapReg(r + 8) = r
+      MmuMapEntry(r + 8)
+    EndIf
+  EndIf
+  FetchLo = #MAP_NONE                    ; the fetch window is found again
+  FetchHi = 0
+EndProcedure
+
+Procedure MmuReset()                     ; power-up and the bus INIT: MMR0 and MMR3 cleared
+  Mmr0 = 0
+  Mmr3 = 0
+  If MmuOn
+    MmuOn = 0
+    CpuEventIn(1)                        ; back to the unmapped run loop
+  EndIf
+  MmuRecompute()
+EndProcedure
+
+; The register an I/O page address names: entry | $100 for a PAR, the
+; entry for a PDR, or -1 if it is not a PAR or PDR.
+Procedure.i MmuRegIndex(a.i)
+  Protected b.i, m.i, o.i
+  If a >= $FF80 And a < $FFC0
+    m = 3
+    b = $FF80
+  ElseIf a >= $F4C0 And a < $F500
+    m = 0
+    b = $F4C0
+  ElseIf a >= $F480 And a < $F4C0
+    m = 1
+    b = $F480
+  Else
+    ProcedureReturn -1
+  EndIf
+  o = (a - b) >> 1                       ; 0-7 I PDR, 8-15 D PDR, 16-23 I PAR, 24-31 D PAR
+  ProcedureReturn (m << 4) | (o & 15) | ((o >> 4) << 8)
+EndProcedure
+
+Procedure.i MmuIsReg(a.i)
+  If a = #MMR0_ADDR Or a = #MMR1_ADDR Or a = #MMR2_ADDR Or a = #MMR3_ADDR
+    ProcedureReturn 1
+  EndIf
+  If MmuRegIndex(a) >= 0
+    ProcedureReturn 1
+  EndIf
+  ProcedureReturn 0
+EndProcedure
+
+Procedure.i MmuRegRead(a.i)
+  Protected r.i
+  MmuTouches = MmuTouches + 1
+  If a = #MMR0_ADDR
+    ProcedureReturn Mmr0
+  ElseIf a = #MMR1_ADDR
+    If (Mmr0 & $E000) = 0 And MmuPcRec <> MmuPc
+      ProcedureReturn 0                  ; nothing recorded for this instruction yet
+    EndIf
+    ProcedureReturn Mmr1
+  ElseIf a = #MMR2_ADDR
+    If (Mmr0 & $E000) = 0
+      ProcedureReturn MmuPc
+    EndIf
+    ProcedureReturn Mmr2
+  ElseIf a = #MMR3_ADDR
+    ProcedureReturn Mmr3
+  EndIf
+  r = MmuRegIndex(a)
+  If r & $100
+    ProcedureReturn Par(r & $FF)
+  EndIf
+  ProcedureReturn Pdr(r)
+EndProcedure
+
+Procedure MmuRegWrite(a.i, v.i)
+  Protected r.i
+  MmuTouches = MmuTouches + 1
+  If a = #MMR0_ADDR                      ; 15-13, 8 and 0 are writable
+    v = (Mmr0 & $00FE) | (v & $E101)
+    If (v ! Mmr0) & 1
+      MmuOn = v & 1
+      CpuEventIn(1)                      ; the other run loop, from the next instruction
+    EndIf
+    Mmr0 = v
+  ElseIf a = #MMR3_ADDR
+    Mmr3 = v & $3F
+    MmuRecompute()
+  ElseIf a = #MMR1_ADDR Or a = #MMR2_ADDR
+    ProcedureReturn                      ; read-only
+  Else
+    r = MmuRegIndex(a)
+    If r & $100
+      r = r & $FF
+      Par(r) = v & $FFFF
+      Pdr(r) = Pdr(r) & ~$40
+    Else
+      Pdr(r) = v & $7F0E
+    EndIf
+    MmuRegChanged(r)
+  EndIf
 EndProcedure
 
 ; ======================================================================
@@ -451,6 +726,8 @@ Procedure.i IoRead(a.i)                  ; a is even and past the end of RAM
     ProcedureReturn RkRead(a)
   ElseIf a = #KW_CSR                     ; the KW11-L (kw11.pico)
     ProcedureReturn KwRead()
+  ElseIf MmuIsReg(a)
+    ProcedureReturn MmuRegRead(a)
   EndIf
   BusError()
   ProcedureReturn 0
@@ -493,6 +770,8 @@ Procedure IoWrite(a.i, v.i)              ; a is even and past the end of RAM
     RkWrite(a, v & $FFFF)
   ElseIf a = #KW_CSR                     ; the KW11-L (kw11.pico)
     KwWrite(v)
+  ElseIf MmuIsReg(a)
+    MmuRegWrite(a, v)
   ElseIf a <> #DL11_RBUF                 ; RBUF is read-only: a write is ignored
     BusError()
   EndIf
@@ -562,6 +841,14 @@ Procedure WriteByte(a.i, v.i)
   EndIf
   If (a & $FFF0) = #RK_BASE Or (a & $FFFE) = #KW_CSR   ; a byte of a full-word device register
     DevWriteByte(a, v & $FF)
+    ProcedureReturn
+  EndIf
+  If MmuIsReg(a & $FFFE)                 ; a memory management register: one byte of it
+    If a & 1
+      MmuRegWrite(a & $FFFE, (MmuRegRead(a & $FFFE) & $00FF) | ((v & $FF) << 8))
+    Else
+      MmuRegWrite(a, (MmuRegRead(a) & $FF00) | (v & $FF))
+    EndIf
     ProcedureReturn
   EndIf
   If a & 1                               ; a device's high byte: nothing there
@@ -766,18 +1053,438 @@ Macro MSrcByte()
 EndMacro
 
 ; ======================================================================
+;  MAPPED ACCESS - what the mapped run loop (instructions_mmu) uses in
+;  place of the unmapped macros and helpers above. e = an entry.
+; ======================================================================
+; An abort: MMR0 records it (unless an earlier one froze it) and the
+; instruction traps through 250 with the PSW it started with (BusError).
+; The space recorded is the register set the reference used: a D-space
+; reference with D space off reports I (MAINDEC-11-DFKAB test 113).
+Procedure MmuAbort(bits.i, e.i)
+  Protected r.i
+  r = MapReg(e)
+  If (Mmr0 & $E000) = 0
+    Mmr0 = (Mmr0 & $0101) | bits | ((r >> 4) << 5) | (((r >> 3) & 1) << 4) | ((r & 7) << 1)
+    Mmr2 = MmuPc                         ; frozen with MMR0
+    If MmuPcRec <> MmuPc
+      Mmr1 = 0
+    EndIf
+  EndIf
+  If TrapVector <> #VEC_BUS And TrapVector <> #VEC_MMU
+    AbortPsw = PswGet() | $10000
+  EndIf
+  TrapVector = #VEC_MMU
+EndProcedure
+
+; The physical address of va in entry e, or -1 after an abort.
+Procedure.i MmuPhys(va.i, e.i, write.i)
+  Protected bits.i, r.i
+  bits = 0
+  If MapAcf(e) = 0
+    bits = $8000
+  EndIf
+  If va < MapLo(e) Or va >= MapHi(e)
+    bits = bits | $4000
+  EndIf
+  If write <> 0 And MapAcf(e) = 1
+    bits = bits | $2000
+  EndIf
+  If bits
+    MmuAbort(bits, e)
+    ProcedureReturn -1
+  EndIf
+  If write
+    r = MapReg(e)
+    If (Pdr(r) & $40) = 0                ; the first write: W, and a fast window
+      Pdr(r) = Pdr(r) | $40
+      MmuRegChanged(r)
+    EndIf
+  EndIf
+  ProcedureReturn (va + MapBase(e)) & MapMask
+EndProcedure
+
+; A physical address past RAM: the I/O page (the top 8 KB of the 18- or
+; 22-bit space), or nothing there - a bus error.
+Procedure.i MmuIoAddr(pa.i)
+  If pa >= MapMask - $1FFF
+    ProcedureReturn $E000 | (pa & $1FFF)
+  EndIf
+  BusError()
+  ProcedureReturn -1
+EndProcedure
+
+Procedure.i MmuReadWord(va.i, e.i)
+  Protected pa.i
+  If va & 1
+    BusError()
+    ProcedureReturn 0
+  EndIf
+  pa = MmuPhys(va, e, 0)
+  If pa < 0
+    ProcedureReturn 0
+  EndIf
+  If pa < #RAM_BYTES
+    ProcedureReturn Mem(pa >> 1)
+  EndIf
+  pa = MmuIoAddr(pa)
+  If pa < 0
+    ProcedureReturn 0
+  EndIf
+  ProcedureReturn ReadWord(pa)
+EndProcedure
+
+Procedure MmuWriteWord(va.i, e.i, v.i)
+  Protected pa.i
+  If va & 1
+    BusError()
+    ProcedureReturn
+  EndIf
+  pa = MmuPhys(va, e, 1)
+  If pa < 0
+    ProcedureReturn
+  EndIf
+  If pa < #RAM_BYTES
+    Mem(pa >> 1) = v & $FFFF
+    ProcedureReturn
+  EndIf
+  pa = MmuIoAddr(pa)
+  If pa >= 0
+    WriteWord(pa, v)
+  EndIf
+EndProcedure
+
+Procedure.i MmuReadByte(va.i, e.i)
+  Protected pa.i
+  pa = MmuPhys(va, e, 0)
+  If pa < 0
+    ProcedureReturn 0
+  EndIf
+  If pa < #RAM_BYTES
+    ProcedureReturn ReadByte(pa)
+  EndIf
+  pa = MmuIoAddr(pa)
+  If pa < 0
+    ProcedureReturn 0
+  EndIf
+  ProcedureReturn ReadByte(pa)
+EndProcedure
+
+Procedure MmuWriteByte(va.i, e.i, v.i)
+  Protected pa.i
+  pa = MmuPhys(va, e, 1)
+  If pa < 0
+    ProcedureReturn
+  EndIf
+  If pa >= #RAM_BYTES
+    pa = MmuIoAddr(pa)
+    If pa < 0
+      ProcedureReturn
+    EndIf
+  EndIf
+  WriteByte(pa, v)
+EndProcedure
+
+; The fast path, INLINE: in the entry's fast window, a load or store; else
+; the procedures above. mBase is an entry base (CurI, CurD, EaBase, ...).
+Macro MMReadWordE(mDest, mAdr, mBase)
+  MmE = (mBase) + (mAdr >> 13)
+  If mAdr >= MapRLo(MmE)
+    If mAdr < MapRHi(MmE)
+      If (mAdr & 1) = 0
+        mDest = Mem((mAdr + MapBase(MmE)) >> 1)
+      Else
+        mDest = MmuReadWord(mAdr, MmE)
+      EndIf
+    Else
+      mDest = MmuReadWord(mAdr, MmE)
+    EndIf
+  Else
+    mDest = MmuReadWord(mAdr, MmE)
+  EndIf
+EndMacro
+
+Macro MMWriteWordE(mAdr, mVal, mBase)
+  MmE = (mBase) + (mAdr >> 13)
+  If mAdr >= MapWLo(MmE)
+    If mAdr < MapWHi(MmE)
+      If (mAdr & 1) = 0
+        Mem((mAdr + MapBase(MmE)) >> 1) = mVal
+      Else
+        MmuWriteWord(mAdr, MmE, mVal)
+      EndIf
+    Else
+      MmuWriteWord(mAdr, MmE, mVal)
+    EndIf
+  Else
+    MmuWriteWord(mAdr, MmE, mVal)
+  EndIf
+EndMacro
+
+Macro MMReadByteE(mDest, mAdr, mBase)
+  MmE = (mBase) + (mAdr >> 13)
+  If mAdr >= MapRLo(MmE)
+    If mAdr < MapRHi(MmE)
+      If mAdr & 1
+        mDest = (Mem((mAdr + MapBase(MmE)) >> 1) >> 8) & $FF
+      Else
+        mDest = Mem((mAdr + MapBase(MmE)) >> 1) & $FF
+      EndIf
+    Else
+      mDest = MmuReadByte(mAdr, MmE)
+    EndIf
+  Else
+    mDest = MmuReadByte(mAdr, MmE)
+  EndIf
+EndMacro
+
+Macro MMWriteByteE(mAdr, mVal, mBase)
+  MmE = (mBase) + (mAdr >> 13)
+  If mAdr >= MapWLo(MmE)
+    If mAdr < MapWHi(MmE)
+      If mAdr & 1
+        Mem((mAdr + MapBase(MmE)) >> 1) = (Mem((mAdr + MapBase(MmE)) >> 1) & $00FF) | ((mVal & $FF) << 8)
+      Else
+        Mem((mAdr + MapBase(MmE)) >> 1) = (Mem((mAdr + MapBase(MmE)) >> 1) & $FF00) | (mVal & $FF)
+      EndIf
+    Else
+      MmuWriteByte(mAdr, MmE, mVal)
+    EndIf
+  Else
+    MmuWriteByte(mAdr, MmE, mVal)
+  EndIf
+EndMacro
+
+; The operand macros the handlers use: in the space the last mapped operand
+; address was formed in (EaWordM sets EaBase).
+Macro MMReadWord(mDest, mAdr)
+  MMReadWordE(mDest, mAdr, EaBase)
+EndMacro
+
+Macro MMWriteWord(mAdr, mVal)
+  MMWriteWordE(mAdr, mVal, EaBase)
+EndMacro
+
+Macro MMReadByte(mDest, mAdr)
+  MMReadByteE(mDest, mAdr, EaBase)
+EndMacro
+
+Macro MMWriteByte(mAdr, mVal)
+  MMWriteByteE(mAdr, mVal, EaBase)
+EndMacro
+
+; MMR1: a register change an abort would leave behind (not while frozen).
+; It is cleared lazily: the first change an instruction makes starts afresh.
+Procedure MmrRecord(r.i, amount.i)
+  If (Mmr0 & $E000) = 0
+    If MmuPcRec <> MmuPc
+      MmuPcRec = MmuPc
+      Mmr1 = 0
+    EndIf
+    If (Mmr1 & $FF) = 0
+      Mmr1 = ((amount & $1F) << 3) | r
+    Else
+      Mmr1 = (Mmr1 & $FF) | ((((amount & $1F) << 3) | r) << 8)
+    EndIf
+  EndIf
+EndProcedure
+
+; The start of each mapped instruction: one store. MMR2 reads it while the
+; unit is not frozen, an abort freezes it into Mmr2, and MMR1 starts afresh
+; at an instruction's first register change (MmrRecord). (An instruction
+; that loops on itself keeps adding to MMR1 - none of the diagnostics do.)
+Macro MmuInstrStart(mPc)
+  MmuPc = mPc
+EndMacro
+
+; EaWord mapped: the index word and an immediate come from I space, every
+; operand and pointer from D space, of the current mode. EaBase says where
+; the operand itself lies.
+Procedure.i EaWordM(spec.i)
+  EaReg = spec & 7
+  EaBase = CurD
+  Tmp = (spec >> 3) & 7
+  If Tmp = 1                                 ; (R)
+    ProcedureReturn Reg(EaReg)
+  ElseIf Tmp = 2                             ; (R)+   #n when R = PC
+    Tmp = Reg(EaReg)
+    Reg(EaReg) = (Tmp + 2) & $FFFF
+    If EaReg = 7
+      EaBase = CurI
+    Else
+      MmrRecord(EaReg, 2)
+    EndIf
+    ProcedureReturn Tmp
+  ElseIf Tmp = 3                             ; @(R)+  @#a when R = PC
+    Adr = Reg(EaReg)
+    Reg(EaReg) = (Adr + 2) & $FFFF
+    If EaReg = 7
+      MMReadWordE(Tmp, Adr, CurI)
+    Else
+      MmrRecord(EaReg, 2)
+      MMReadWordE(Tmp, Adr, CurD)
+    EndIf
+    ProcedureReturn Tmp
+  ElseIf Tmp = 4                             ; -(R)
+    Reg(EaReg) = (Reg(EaReg) - 2) & $FFFF
+    MmrRecord(EaReg, -2)
+    If EaReg = 6
+      StackCheck()
+    EndIf
+    ProcedureReturn Reg(EaReg)
+  ElseIf Tmp = 5                             ; @-(R)
+    Adr = (Reg(EaReg) - 2) & $FFFF
+    Reg(EaReg) = Adr
+    MmrRecord(EaReg, -2)
+    If EaReg = 6
+      StackCheck()
+    EndIf
+    MMReadWordE(Tmp, Adr, CurD)
+    ProcedureReturn Tmp
+  ElseIf Tmp = 6                             ; X(R)   a when R = PC
+    Adr = Reg(7)
+    Reg(7) = (Adr + 2) & $FFFF
+    MMReadWordE(Tmp, Adr, CurI)
+    ProcedureReturn (Tmp + Reg(EaReg)) & $FFFF
+  ElseIf Tmp = 7                             ; @X(R)  @a when R = PC
+    Adr = Reg(7)
+    Reg(7) = (Adr + 2) & $FFFF
+    MMReadWordE(Tmp, Adr, CurI)
+    Adr = (Tmp + Reg(EaReg)) & $FFFF
+    MMReadWordE(Tmp, Adr, CurD)
+    ProcedureReturn Tmp
+  EndIf
+  ProcedureReturn Reg(EaReg)
+EndProcedure
+
+Procedure.i EaByteM(spec.i)
+  EaReg = spec & 7
+  EaStep = 1
+  If EaReg >= 6
+    EaStep = 2
+  EndIf
+  Tmp = (spec >> 3) & 7
+  If Tmp = 2
+    EaBase = CurD
+    Tmp = Reg(EaReg)
+    Reg(EaReg) = (Tmp + EaStep) & $FFFF
+    If EaReg = 7
+      EaBase = CurI
+    Else
+      MmrRecord(EaReg, EaStep)
+    EndIf
+    ProcedureReturn Tmp
+  ElseIf Tmp = 4
+    EaBase = CurD
+    Reg(EaReg) = (Reg(EaReg) - EaStep) & $FFFF
+    MmrRecord(EaReg, 0 - EaStep)
+    If EaReg = 6
+      StackCheck()
+    EndIf
+    ProcedureReturn Reg(EaReg)
+  EndIf
+  ProcedureReturn EaWordM(spec)
+EndProcedure
+
+Procedure PushM(v.i)
+  Adr = (Reg(6) - 2) & $FFFF
+  Reg(6) = Adr
+  StackCheck()
+  MMWriteWordE(Adr, v, CurD)
+EndProcedure
+
+Procedure.i PopM()
+  Adr = Reg(6)
+  MMReadWordE(Tmp, Adr, CurD)
+  Reg(6) = (Adr + 2) & $FFFF
+  ProcedureReturn Tmp
+EndProcedure
+
+; THE FETCH WINDOW. The mapped loop fetches every instruction through three
+; Globals: PC in [FetchLo, FetchHi) is at PC + FetchBase in RAM. The window
+; is the fast window of the page the PC is in, joined with its neighbours'
+; while they touch and share the same offset - so an identity-mapped kernel
+; fetches from all of RAM through one window. It is found again after a
+; fetch outside it (FetchWordM) and emptied whenever the map or the mode
+; changes.
+Procedure MmuFetchWindow(va.i)
+  Protected e.i, lo.i, hi.i, bs.i
+  FetchLo = #MAP_NONE
+  FetchHi = 0
+  e = CurI + (va >> 13)
+  If va < MapRLo(e) Or va >= MapRHi(e)
+    ProcedureReturn
+  EndIf
+  lo = MapRLo(e)
+  hi = MapRHi(e)
+  bs = MapBase(e)
+  While (e & 7) > 0 And MapRHi(e - 1) = lo And MapBase(e - 1) = bs
+    e = e - 1
+    lo = MapRLo(e)
+  Wend
+  e = CurI + (va >> 13)
+  While (e & 7) < 7 And MapRLo(e + 1) = hi And MapBase(e + 1) = bs
+    e = e + 1
+    hi = MapRHi(e)
+  Wend
+  FetchLo = lo
+  FetchHi = hi
+  FetchBase = bs
+EndProcedure
+
+Procedure.i FetchWordM()
+  Adr = Reg(7)
+  MMReadWordE(Tmp, Adr, CurI)
+  Reg(7) = (Adr + 2) & $FFFF
+  MmuFetchWindow(Adr)                    ; the window the next fetches use
+  ProcedureReturn Tmp
+EndProcedure
+
+Macro MMSrcWord()
+  If (Op & $0E00) = 0
+    Src = Reg((Op >> 6) & 7)
+  Else
+    Ea = EaWordM((Op >> 6) & $3F)
+    MMReadWordE(Src, Ea, EaBase)
+  EndIf
+EndMacro
+
+Macro MMSrcByte()
+  If (Op & $0E00) = 0
+    Src = Reg((Op >> 6) & 7) & $FF
+  Else
+    Ea = EaByteM((Op >> 6) & $3F)
+    MMReadByteE(Src, Ea, EaBase)
+  EndIf
+EndMacro
+
+; ======================================================================
 ;  TRAPS
 ; ======================================================================
 ; The trap sequence: the new PSW comes from the vector, its previous-mode
 ; bits (13-12) take the old current mode, and the old PSW and PC are pushed
 ; on the NEW mode's stack (normally the kernel's).
+; With the memory management unit on, the vector is read from kernel D
+; space and the pushes go through the new mode's mapping.
 Procedure TakeTrap(vector.i)
   TrapPsw = PswGet()
   TrapPc = Reg(7)
-  Reg(7) = ReadWord(vector)
-  PswSet((ReadWord(vector + 2) & $CFFF) | ((TrapPsw >> 2) & $3000))
-  Push(TrapPsw)
-  Push(TrapPc)
+  If MmuOn
+    Reg(7) = MmuReadWord(vector, 8 + (vector >> 13))
+    PswSet((MmuReadWord(vector + 2, 8 + (vector >> 13)) & $CFFF) | ((TrapPsw >> 2) & $3000))
+    PushM(TrapPsw)
+    PushM(TrapPc)
+  Else
+    Reg(7) = ReadWord(vector)
+    PswSet((ReadWord(vector + 2) & $CFFF) | ((TrapPsw >> 2) & $3000))
+    Push(TrapPsw)
+    Push(TrapPc)
+  EndIf
+  If PswLate                             ; a push landed on the PSW (177776): PswWrite
+    PswLate = 0                          ; has applied it, and it must not be applied
+    If TrapVector = #TRAP_PSW_LATE       ; again at the end of the NEXT instruction,
+      TrapVector = 0                     ; over that instruction's condition codes
+    EndIf
+  EndIf
   ; ClockCycles = ClockCycles + #J11_T_TRAP
 EndProcedure
 
@@ -927,6 +1634,7 @@ Procedure DevReset()
   IntReq = 0
   RkInit()
   KwInit()
+  MmuReset()
 EndProcedure
 
 ; ======================================================================

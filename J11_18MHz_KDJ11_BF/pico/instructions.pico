@@ -2368,6 +2368,14 @@ RunEnd:
   RunBank = RunBank + RunLeft
   RunLeft = 0
   RunWindow = 0
+  ; ---- MMU HANDOVER (the mapped side is written by tools/mmu_gen.py) ----
+  If MmuOn                               ; the memory management unit is on: the
+    RunSave = RunFrom                    ; mapped run loop (instructions_mmu) runs
+    CpuRunM(RunBank)                     ; the rest, and comes back with what it did
+    RunFrom = RunSave                    ; not run when the unit goes off again
+    PC = Reg(7)
+  EndIf
+  ; ---- END MMU HANDOVER ----
   If Halted = 0
     If TraceArm                          ; the T bit (StartWindow in cpu): trace trap
       TraceArm = 0

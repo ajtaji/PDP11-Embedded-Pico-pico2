@@ -62,6 +62,7 @@ XIncludeFile "RP2040/Lib/uart.pico"
 XIncludeFile "RP2040/Lib/usb_serial.pico"
 XIncludeFile "RP2040/Lib/safety.pico"
 XIncludeFile "cpu.pico"
+XIncludeFile "instructions_mmu.pico"
 XIncludeFile "instructions.pico"
 XIncludeFile "disk.pico"
 XIncludeFile "kw11.pico"
@@ -805,6 +806,7 @@ Procedure Main()
   UsbSerialInit()
   SafetyOk()
   BuildOpcodeTable()
+  BuildOpcodeTableM()                    ; the mapped loop's table too, before any timing
   DiskInit()
   TapeReset()
   LoadTape()

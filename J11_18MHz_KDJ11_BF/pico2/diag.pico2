@@ -62,6 +62,7 @@ XIncludeFile "RP2350/Lib/uart.pico2"
 XIncludeFile "RP2350/Lib/usb_serial.pico2"
 XIncludeFile "RP2350/Lib/safety.pico2"
 XIncludeFile "cpu.pico2"
+XIncludeFile "instructions_mmu.pico2"
 XIncludeFile "instructions.pico2"
 XIncludeFile "disk.pico2"
 XIncludeFile "kw11.pico2"
@@ -805,6 +806,7 @@ Procedure Main()
   UsbSerialInit()
   SafetyOk()
   BuildOpcodeTable()
+  BuildOpcodeTableM()                    ; the mapped loop's table too, before any timing
   DiskInit()
   TapeReset()
   LoadTape()
