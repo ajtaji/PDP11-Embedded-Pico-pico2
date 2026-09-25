@@ -511,6 +511,15 @@ Procedure StatsBlock()
     If DkSwapEnd > DkSwapLo
       Say(" (swap ") : Num(DkSwapLo) : Say("-") : Num(DkSwapEnd - 1) : Say(")")
     EndIf
+    If RkBadBlock >= 0                   ; the storage refused a transfer: Unix saw a drive error
+      StatLine("        REFUSED: block ") : Num(RkBadBlock) : Say(" (")
+      If DkWhy = 6
+        Say("RAM overlay full")
+      Else
+        Say("reason ") : Num(DkWhy)
+      EndIf
+      Say(") - the last refusal; Unix got a drive error for it")
+    EndIf
     StatLine("        flash: ") : Num(DkErases) : Say(" erases, ") : Num(DkPages) : Say(" pages programmed")
     CompilerIf #DISK_READ_ONLY = 1
       Say(" - READ-ONLY build, never written")

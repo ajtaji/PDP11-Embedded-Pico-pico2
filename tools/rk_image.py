@@ -135,7 +135,9 @@ def unix_fs(img):
             if not isize + 2 <= nxt < fsize or seen > RK_BLOCKS:
                 ok = False
                 break
-            free.add(nxt)
+            # nxt is free too, but it HOLDS the next part of the free list:
+            # its contents must be kept, or the kernel reads a zero block
+            # when the superblock's list runs out (df: "bad free count").
             seen += 1
             blk = img[nxt * 512:(nxt + 1) * 512]
             n = struct.unpack_from("<H", blk, 0)[0]
