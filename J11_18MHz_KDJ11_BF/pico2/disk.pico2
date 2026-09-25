@@ -276,6 +276,7 @@ Global Dim DkOvIdx.a(#DK_BLOCKS) ; block -> overlay slot + 1, 0 = not in the ove
 Global Dim DkOv.u(#DK_OV_SLOTS * 256)
 Global DkOvUsed.i, DkSwapLo.i, DkSwapEnd.i
 Global DkOvWrites.i, DkSwapSpill.i
+Global DkHits.i, DkMisses.i      ; block reads served from RAM (cache line, overlay) and from flash
 Global Dim DkMap.u(#DK_BLOCKS)   ; mapped layout: slot + 1, or 0
 Global Dim DkLine.u(#DK_LINES * 2048)   ; the cache, one 4 KB sector a line, as 16-bit words
 Global Dim DkLineAt.i(#DK_LINES)        ; the flash offset of the line's sector, -1 none
@@ -717,6 +718,7 @@ Procedure.i DiskRead(d.i, blk.i)
     ProcedureReturn -1
   EndIf
   If DkOvIdx(blk)                        ; in the RAM overlay
+    DkHits = DkHits + 1
     b = (DkOvIdx(blk) - 1) * 256
     For i = 0 To 255
       DkBuf(i) = DkOv(b + i)
@@ -738,6 +740,7 @@ Procedure.i DiskRead(d.i, blk.i)
   EndIf
   k = DkFindLine(off & ~(#DK_SECTOR - 1))
   If k >= 0
+    DkHits = DkHits + 1
     b = k * 2048 + ((off & (#DK_SECTOR - 1)) >> 1)
     For i = 0 To 255
       DkBuf(i) = DkLine(b + i)
@@ -747,6 +750,7 @@ Procedure.i DiskRead(d.i, blk.i)
   If DkOut                               ; the flash is being written: wait
     ProcedureReturn 0
   EndIf
+  DkMisses = DkMisses + 1
   For i = 0 To 127
     b = LlXip32(off + i * 4)
     DkBuf(i * 2) = b & $FFFF

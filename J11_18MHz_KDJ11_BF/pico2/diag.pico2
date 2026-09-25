@@ -55,6 +55,7 @@
 #DISK_READ_ONLY = 0          ; 1 = the flash is never written (disk.pico2)
 #DISK_FLASH_MODEL = 0        ; 1 = the desk model of the flash chip (disk.pico2)
 #DESK_PROBE = 0            ; 1 = the desk measurement build (see DESK PROBE)
+#STAT_CHIP = 2350            ; for the stats block's title
 EnableExplicit
 XIncludeFile "RP2350/Lib/clocks.pico2"
 XIncludeFile "RP2350/Lib/timer.pico2"
@@ -411,6 +412,124 @@ Procedure ReportOnce()
   Say(" instructions/s") : Eol()
 EndProcedure
 
+
+; ======================================================================
+;  THE STATS BLOCK - Ctrl-] then s, typed at the serial port. The two
+;  bytes never reach the emulated console (Ctrl-] twice sends one Ctrl-]
+;  through). Every number is measured when asked, or kept by a counter
+;  that already runs; none is written down. It is printed by the firmware
+;  between CpuRun slices, with USB served between its lines, so it costs
+;  the emulated CPU nothing but the pause of printing.
+; ======================================================================
+#ESC_KEY = $1D                   ; Ctrl-]
+Global EscPending.i
+Global StatT0.i, StatN0.i, StatIps.i ; the last one-second sample (StatTick)
+Global UpAcc.i, UpSec.i              ; time since power-up, summed from Micros() deltas
+Global UpLast.i
+
+; Once a pass of the main loop: the uptime, and every second the rate.
+Procedure StatTick()
+  Define now.i
+  now = Micros()
+  UpAcc = UpAcc + (now - UpLast)
+  UpLast = now
+  While UpAcc >= 1000000
+    UpAcc = UpAcc - 1000000
+    UpSec = UpSec + 1
+  Wend
+  If now - StatT0 >= 1000000
+    StatIps = PerSecond(InstrCount - StatN0, now - StatT0)
+    StatT0 = now
+    StatN0 = InstrCount
+  EndIf
+EndProcedure
+
+Procedure StatLine(*s.i)
+  Eol()
+  Say(*s)
+EndProcedure
+
+Procedure StatsBlock()
+  Define khz.i
+  Define i.i
+  Define nz.i
+  Define up.i
+  Define t.i
+  Service()
+  khz = ClockSysKhz()                    ; the frequency counter: a 1 ms count
+  Service()
+  nz = 0
+  For i = 0 To #RAM_WORDS - 1            ; RAM words holding anything, a slice at a time
+    If Mem(i)
+      nz = nz + 1
+    EndIf
+    If (i & 2047) = 2047
+      Service()
+    EndIf
+  Next
+  up = UpSec
+  If Column <> 0
+    Eol()
+  EndIf
+  CompilerIf #STAT_CHIP = 2350
+    Say("=== PDP-11 emulator stats: RP2350 (Pico 2 W), Cortex-M33, clk_sys ")
+  CompilerElse
+    Say("=== PDP-11 emulator stats: RP2040 (Pico W), Cortex-M0+, clk_sys ")
+  CompilerEndIf
+  Num(khz / 1000) : Ch(46) : Num((khz % 1000) / 100) : Say(" MHz (measured)")
+  StatLine("CPU     J-11 (KDJ11-BF), MMU ")
+  If MmuOn
+    Say("on, ")
+    If Mmr3 & $10
+      Say("22-bit")
+    Else
+      Say("18-bit")
+    EndIf
+  Else
+    Say("off (16-bit)")
+  EndIf
+  Say(", PSW ") : Oct(PswGet()) : Say(", PC ") : Oct(Reg(7))
+  If Waiting
+    Say(" (WAIT)")
+  EndIf
+  Service()
+  StatLine("speed   ") : Num(StatIps) : Say(" instructions/s over the last second; ")
+  t = Micros() - ProgStart
+  If t > 0
+    Num(PerSecond(Total, t))
+  Else
+    Say("0")
+  EndIf
+  Say(" average since BOOT (") : Num(Total) : Say(" instructions)")
+  StatLine("memory  ") : Num(#RAM_BYTES / 1024) : Say(" KB (000000-") : Oct(#RAM_BYTES - 1) : Say("), ")
+  Num(nz * 2 / 1024) : Say(" KB in non-zero words")
+  Service()
+  StatLine("disk    RK11: ") : Num(RkReads) : Say(" blocks read, ") : Num(RkWrites) : Say(" written")
+  CompilerIf #DISK_BACKEND = 2
+    StatLine("        cache: ") : Num(DkHits) : Say(" reads from RAM, ") : Num(DkMisses) : Say(" from flash (XIP)")
+    StatLine("        RAM overlay: ") : Num(DkOvUsed) : Say(" of ") : Num(#DK_OV_SLOTS) : Say(" blocks")
+    If DkSwapEnd > DkSwapLo
+      Say(" (swap ") : Num(DkSwapLo) : Say("-") : Num(DkSwapEnd - 1) : Say(")")
+    EndIf
+    StatLine("        flash: ") : Num(DkErases) : Say(" erases, ") : Num(DkPages) : Say(" pages programmed")
+    CompilerIf #DISK_READ_ONLY = 1
+      Say(" - READ-ONLY build, never written")
+    CompilerEndIf
+  CompilerEndIf
+  Service()
+  StatLine("clock   KW11-L: ") : Num(KwTicks) : Say(" ticks at 60 Hz, ") : Num(KwLost) : Say(" dropped")
+  If KwIe
+    Say(", interrupts on")
+  Else
+    Say(", interrupts off")
+  EndIf
+  StatLine("uptime  ") : Num(up / 3600) : Ch(58) : Num((up / 600) % 6) : Num((up / 60) % 10) : Ch(58)
+  Num((up / 10) % 6) : Num(up % 10) : Say(" since power-up, ") : Num((Micros() - ProgStart) / 1000000) : Say(" s since BOOT")
+  StatLine("cores   core 0: the PDP-11 CPU, its devices, USB and the disk; core 1: not started")
+  StatLine("===")
+  Eol()
+EndProcedure
+
 ; ---- the frames ------------------------------------------------------------
 Procedure ClearMemory()                  ; 512 words at a time, with USB served between
   Define i.i
@@ -698,6 +817,19 @@ EndProcedure
 ; One byte from the port: part of a frame, or a character for the console.
 Procedure InByte(c.i)
   c = c & $FF
+  If FrameState = 0 And EscPending <> 0   ; Ctrl-] then a key: the firmware's, not Unix's
+    EscPending = 0
+    If c = 115 Or c = 83                 ; s: the stats block
+      StatsBlock()
+      ProcedureReturn
+    EndIf
+    If c <> #ESC_KEY                     ; anything else: nothing (Ctrl-] Ctrl-] sends one)
+      ProcedureReturn
+    EndIf
+  ElseIf FrameState = 0 And c = #ESC_KEY
+    EscPending = 1
+    ProcedureReturn
+  EndIf
   If FrameState = 0
     If c = #FRAME_START
       FrameState = 1
@@ -926,6 +1058,7 @@ Procedure Main()
       t0 = Micros()
     CompilerEndIf
     DiskTask()                           ; the flash write-back, one short step
+    StatTick()
     CompilerIf #DESK_PROBE = 1
       If Micros() - t0 > ProbeMaxDisk
         ProbeMaxDisk = Micros() - t0
