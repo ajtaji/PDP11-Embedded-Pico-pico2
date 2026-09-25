@@ -8,6 +8,9 @@
 ;      reporting emulated instructions per second on this board.
 ;  Open the Pico's serial port at any speed to read it.
 ; ======================================================================
+#DISK_BACKEND = 0            ; no drives: the RK11 and the KW11-L answer, with no pack (disk.pico)
+#DISK_FLASH_MODEL = 0
+#DESK_PROBE = 0             ; the desk probe's timing (rk11), off here
 EnableExplicit
 XIncludeFile "RP2040/Lib/clocks.pico"
 XIncludeFile "RP2040/Lib/timer.pico"
@@ -16,6 +19,9 @@ XIncludeFile "RP2040/Lib/usb_serial.pico"
 XIncludeFile "RP2040/Lib/safety.pico"
 XIncludeFile "cpu.pico"
 XIncludeFile "instructions.pico"
+XIncludeFile "disk.pico"
+XIncludeFile "kw11.pico"
+XIncludeFile "rk11.pico"
 
 #CLOCK_KHZ = 200000
 

@@ -1,0 +1,912 @@
+; ======================================================================
+;  disk.pico - where the RK05 packs live, behind one small interface, for
+;  the J-11 emulator on the Raspberry Pi Pico (RP2040).
+;
+;  The main file sets, BEFORE including this:
+;      #DISK_BACKEND = 0     no drives (the report firmware)
+;                    = 1     RAM: two small packs in SRAM, for the desk
+;                    = 2     FLASH: one pack in the board's flash
+;      #DISK_FLASH_MODEL = 0 the flash is the board's own chip
+;                        = 1 the DESK FLASH MODEL: the same code above the
+;                            chip, with the chip modelled in SRAM (below)
+;  Include after cpu.pico and instructions.pico, before kw11.pico and
+;  rk11.pico.
+;
+;  THE INTERFACE (rk11.pico is the only caller, plus DiskTask from the
+;  firmware's main loop):
+;      DiskInit()                once, at start-up
+;      DiskPresent(d), DiskWritable(d)     1 or 0
+;      DiskRead(d, blk)          block blk of drive d into DkBuf(0..255)
+;      DiskWrite(d, blk)         DkBuf(0..255) into block blk of drive d
+;          both return 1 done, 0 NOT READY (nothing happened - ask again
+;          later; the flash is being written), -1 cannot (the firmware
+;          says why: see DkWhy)
+;      DiskTask()                the firmware's loop calls it every pass;
+;                                it moves the flash write-back along, one
+;                                short step at a time
+;      DiskSync()                ask for every cached write to go to flash
+;      DiskIdle()                1 when nothing is waiting to be written
+;
+;  ======================================================================
+;  THE FLASH PACK (#DISK_BACKEND = 2)
+;
+;  WHERE. A region of the board's flash from #DISK_REGION (256 KB in; the
+;  firmware below it) to the end of the chip: 2 MB on the Pico W, 4 MB on
+;  the Pico 2 W. tools/rk_image.py packs an image into a UF2 for exactly
+;  this place. The region is:
+;      +0      one 4 KB header sector: "PDP11RK1", version, layout, the
+;              blocks stored, the map's size, a name (rk_image.py)
+;      +4 KB   (the mapped layout only) the block map: one 16-bit entry
+;              per RK05 block, 0 = never stored (reads as zeros), n =
+;              slot n - 1
+;      then    512-byte slots. DENSE layout: block n is slot n, for the
+;              blocks stored; MAPPED layout: a block gets a slot the first
+;              time it holds anything, so a pack whose used blocks fit is
+;              stored whole even when its block numbers run past the room
+;              (the Pico W: Mini-Unix's 3195 used blocks and its swap).
+;
+;  READS come straight from XIP - the flash as memory - except a block
+;  whose 4 KB sector is in the write cache, which is read from there.
+;
+;  WRITES go into a cache of #DK_LINES 4 KB lines, one flash sector each
+;  (the flash erases 4 KB at a time). A line goes back to flash when it
+;  has been left alone for #DK_IDLE_US, when every line is dirty and a new
+;  sector is wanted, or on DiskSync. Going back is ERASE, then PROGRAM 16
+;  pages of 256 bytes, then read it back through XIP and compare - and it
+;  is done as a STATE MACHINE, one short step per DiskTask (the compares a
+;  quarter of the line at a time): a command is
+;  sent and DiskTask returns, and the next call reads the flash's BUSY bit
+;  and returns again if it is still set. The longest step is one 256-byte
+;  page command, some tens of microseconds; a sector erase (45 ms typical,
+;  400 ms worst, W25Q16JV) is never waited for in one piece, so USB is
+;  served every pass of the loop throughout. A line whose contents already
+;  match the flash is not written at all.
+;
+;  NOTHING RUNS FROM FLASH WHILE IT IS BEING WRITTEN. Between the first
+;  and last step of a write-back the flash is out of XIP mode and cannot
+;  be read at all - not for code, not for data. So the FLASH firmware is
+;  built with EnableRunFromRAM (the whole program in SRAM; see diag.pico):
+;  the USB library, the emulator and this file keep running while the
+;  flash is busy. The procedures that talk to the flash chip are marked
+;  ProcedureRAM as well, which says the same thing again where it matters
+;  most (the compiler notes the mark is already implied). ProcedureRAM
+;  ALONE WOULD NOT DO: the loop that serves USB between the steps of a
+;  45 ms erase would be fetching from a flash that cannot answer.
+;  While a write-back is in progress a read of a block not in the cache
+;  answers NOT READY, and the disk controller simply waits for it.
+;
+;  THE CHIP, spoken to directly (the ROM's flash_range_erase would block
+;  for the whole erase). The commands are the JEDEC ones every Winbond
+;  W25Q part takes: 06h write enable, 20h 4 KB sector erase, 02h page
+;  program, 05h read status (bit 0 BUSY). The sequence around them is the
+;  one proven on this board by RP2040/Lib/flashid.pico: the ROM's
+;  connect_internal_flash and flash_exit_xip to leave XIP; the SSI's DR0,
+;  one byte in flight at a time, with chip select driven through the
+;  QSPI_SS pad override (value 2 low, 3 high); flash_flush_cache (which
+;  also drops the override) and a RAM copy of boot2 to come back to the
+;  exact XIP mode the board booted in (pico-sdk v1.5.1 flash.c:22-45).
+;
+;  POWER. A cached write reaches flash within #DK_IDLE_US of the last
+;  write to that sector; pulling the power inside that window loses it,
+;  as a disk with a write cache would. Pulling it DURING a write-back
+;  loses that 4 KB sector (eight blocks). DiskSync and the status line's
+;  "dirty" count say when it is safe.
+;
+;  WEAR. The write counters (DkErases, DkPages) are on the status line.
+;
+;  ======================================================================
+;  THE DESK FLASH MODEL (#DISK_FLASH_MODEL = 1)
+;
+;  arm_run models no flash programming, so the desk replaces the bottom
+;  layer only - the Ll* procedures - with a model of the chip: every
+;  sector the firmware erases is kept in SRAM (#MD_SECTORS of them) and
+;  everything else still reads out of arm_run's flash, where the image
+;  was loaded with the firmware. The model is strict where it matters:
+;  an erase is busy for #MD_ERASE_US and a page for #MD_PAGE_US of
+;  (emulated) time; a command without write enable, a program that would
+;  need a 0 turned back into a 1, and ANY read of the flash while it is
+;  out of XIP mode are counted as violations and printed. Everything
+;  above the Ll* layer - the cache, the state machine, the map, the
+;  read-back check - is the code the board runs. (The model build leaves
+;  the program in flash rather than SRAM, to give the model room: the
+;  desk's flash is never really out of XIP, so nothing depends on it.)
+; ======================================================================
+
+Global Dim DkBuf.u(256)          ; the block being moved (rk11.pico)
+Global DkWhy.i                   ; why the last -1: 1 no pack, 2 past the stored blocks, 3 flash full, 4 flash failed, 5 RAM disk full
+
+CompilerIf #DISK_BACKEND = 0
+; ======================================================================
+;  NO DRIVES
+; ======================================================================
+Procedure DiskInit()
+EndProcedure
+Procedure.i DiskPresent(d.i)
+  ProcedureReturn 0
+EndProcedure
+Procedure.i DiskWritable(d.i)
+  ProcedureReturn 0
+EndProcedure
+Procedure.i DiskRead(d.i, blk.i)
+  DkWhy = 1
+  ProcedureReturn -1
+EndProcedure
+Procedure.i DiskWrite(d.i, blk.i)
+  DkWhy = 1
+  ProcedureReturn -1
+EndProcedure
+Procedure DiskTask()
+EndProcedure
+Procedure DiskSync()
+EndProcedure
+Procedure.i DiskIdle()
+  ProcedureReturn 1
+EndProcedure
+CompilerEndIf
+
+CompilerIf #DISK_BACKEND = 1
+; ======================================================================
+;  THE RAM PACKS (desk). Two drives. A block never written reads as a
+;  pattern that names its drive, block and word (DiskPattern), so a read
+;  anywhere on the pack is checkable; the first #RD_SLOTS blocks written
+;  are kept. tools/rk11_model.py computes the same pattern.
+; ======================================================================
+#RD_SLOTS = 64
+Global Dim RdTag.i(#RD_SLOTS)   ; drive << 16 | block; -1 free
+Global Dim RdData.u(#RD_SLOTS * 256)
+Global RdUsed.i
+
+Procedure.i DiskPattern(d.i, blk.i, i.i)
+  ProcedureReturn (((blk << 8) + i) ! (d * $A5A5) ! ((blk >> 8) * $1111)) & $FFFF
+EndProcedure
+
+Procedure DiskInit()
+  Define k.i
+  For k = 0 To #RD_SLOTS - 1
+    RdTag(k) = -1
+  Next
+  RdUsed = 0
+EndProcedure
+
+Procedure.i DiskPresent(d.i)
+  If d >= 0 And d < 2
+    ProcedureReturn 1
+  EndIf
+  ProcedureReturn 0
+EndProcedure
+
+Procedure.i DiskWritable(d.i)
+  ProcedureReturn DiskPresent(d)
+EndProcedure
+
+Procedure.i RdFind(d.i, blk.i)
+  Define k.i
+  For k = 0 To RdUsed - 1
+    If RdTag(k) = (d << 16) | blk
+      ProcedureReturn k
+    EndIf
+  Next
+  ProcedureReturn -1
+EndProcedure
+
+Procedure.i DiskRead(d.i, blk.i)
+  Define k.i
+  Define i.i
+  k = RdFind(d, blk)
+  If k < 0
+    For i = 0 To 255
+      DkBuf(i) = DiskPattern(d, blk, i)
+    Next
+  Else
+    For i = 0 To 255
+      DkBuf(i) = RdData(k * 256 + i)
+    Next
+  EndIf
+  ProcedureReturn 1
+EndProcedure
+
+Procedure.i DiskWrite(d.i, blk.i)
+  Define k.i
+  Define i.i
+  k = RdFind(d, blk)
+  If k < 0
+    If RdUsed >= #RD_SLOTS
+      DkWhy = 5
+      ProcedureReturn -1
+    EndIf
+    k = RdUsed
+    RdTag(k) = (d << 16) | blk
+    RdUsed = RdUsed + 1
+  EndIf
+  For i = 0 To 255
+    RdData(k * 256 + i) = DkBuf(i)
+  Next
+  ProcedureReturn 1
+EndProcedure
+
+Procedure DiskTask()
+EndProcedure
+Procedure DiskSync()
+EndProcedure
+Procedure.i DiskIdle()
+  ProcedureReturn 1
+EndProcedure
+CompilerEndIf
+
+CompilerIf #DISK_BACKEND = 2
+; ======================================================================
+;  THE FLASH PACK - see the header
+; ======================================================================
+#XIP_BASE     = $10000000
+#FLASH_BYTES  = $200000          ; 2 MB: the Pico W's W25Q16JV
+#DISK_REGION  = $40000           ; 256 KB in: the firmware lives below
+#DK_SECTOR    = 4096
+#DK_LINES     = 4                ; the write cache: 4 x 4 KB
+#DK_IDLE_US   = 2000000          ; a line untouched this long goes back to flash
+#DK_BUSY_US   = 2000000          ; a flash command still busy after this has failed
+#DK_BLOCKS    = 4872
+#DK_BOOT2     = $20030600        ; 256 B: the RAM copy of boot2, called to restore XIP
+ReserveSram #DK_BOOT2, 256, "rk flash boot2 copy"
+
+Global DkPresent.i, DkMapped.i, DkStored.i, DkMapSectors.i, DkData.i, DkSlots.i, DkNext.i
+Global DkFatal.i                 ; the flash failed a write-back three times: no more writes
+Global Dim DkMap.u(#DK_BLOCKS)   ; mapped layout: slot + 1, or 0
+Global Dim DkLine.u(#DK_LINES * 2048)   ; the cache, one 4 KB sector a line, as 16-bit words
+Global Dim DkLineAt.i(#DK_LINES)        ; the flash offset of the line's sector, -1 none
+Global Dim DkLineDirty.i(#DK_LINES)
+Global Dim DkLineUsed.i(#DK_LINES)      ; LRU stamp
+Global Dim DkLineTouched.i(#DK_LINES)   ; Micros() of the last write
+Global Dim DkLineFill.i(#DK_LINES)      ; words loaded from flash so far: 2048 = the line is valid
+Global DkLoaded.i                       ; a part of a line was loaded since DiskWrite began: one per call
+Global DkStamp.i
+; the write-back state machine
+Global DkState.i                 ; 0 idle, 6 compare, 1 erase, 2 wait erase, 3 program, 4 wait program, 5 back to XIP, 7 read back
+Global DkWb.i                    ; the line being written back
+Global DkPage.i, DkSince.i, DkTries.i, DkSyncAll.i, DkCmp.i
+Global DkOut.i                   ; 1 while the flash is out of XIP mode
+; counters
+Global DkErases.i, DkPages.i, DkSkipped.i, DkVerifyFails.i, DkWbBlocks.i
+; the ROM functions (flashid.pico's lookup)
+Global DkRomConnect.i, DkRomExit.i, DkRomFlush.i
+
+CompilerIf #DISK_FLASH_MODEL = 1
+; ---- THE DESK FLASH MODEL (see the header) -------------------------------
+#MD_SECTORS  = 20
+#MD_ERASE_US = 45000             ; W25Q16JV tSE typical
+#MD_PAGE_US  = 700               ; tPP typical
+Global Dim MdAt.i(#MD_SECTORS)   ; the flash offset each model sector holds, -1 none
+Global Dim MdData.l(#MD_SECTORS * 1024)   ; 32 bits at a time, as XIP reads them
+Global MdUsed.i, MdBusyUntil.i, MdWel.i
+Global MdViolations.i            ; reads while out of XIP, commands without write enable, 0 -> 1 programs
+Global MdFull.i
+
+Global Dim MdIdx.a(#FLASH_BYTES / #DK_SECTOR)   ; flash sector -> model sector + 1, 0 = not in the model
+
+Procedure.i LlXip32(off.i)       ; 32 bits (two words, the first in the low half), as XIP would give them
+  Define k.i
+  If DkOut
+    MdViolations = MdViolations + 1
+  EndIf
+  k = MdIdx(off >> 12)
+  If k = 0
+    ProcedureReturn PeekL(#XIP_BASE + off)
+  EndIf
+  ProcedureReturn MdData((k - 1) * 1024 + ((off & (#DK_SECTOR - 1)) >> 2))
+EndProcedure
+
+Procedure.i LlXip16(off.i)       ; a 16-bit read of the flash, as XIP would give it
+  If off & 2
+    ProcedureReturn (LlXip32(off - 2) >> 16) & $FFFF
+  EndIf
+  ProcedureReturn LlXip32(off) & $FFFF
+EndProcedure
+
+Procedure LlOpen()
+  DkOut = 1
+EndProcedure
+
+Procedure LlClose()
+  DkOut = 0
+EndProcedure
+
+Procedure.i LlBusy()
+  If Micros() - MdBusyUntil < 0
+    ProcedureReturn 1
+  EndIf
+  ProcedureReturn 0
+EndProcedure
+
+Procedure LlWriteEnable()
+  MdWel = 1
+EndProcedure
+
+Procedure LlErase(off.i)
+  Define k.i
+  Define i.i
+  If MdWel = 0 Or DkOut = 0 Or LlBusy() <> 0
+    MdViolations = MdViolations + 1
+  EndIf
+  MdWel = 0
+  k = MdIdx(off >> 12) - 1
+  If k < 0
+    If MdUsed >= #MD_SECTORS
+      MdFull = MdFull + 1              ; the model is out of room: loud, on the status line
+      ProcedureReturn
+    EndIf
+    k = MdUsed
+    MdAt(k) = off
+    MdUsed = MdUsed + 1
+    MdIdx(off >> 12) = k + 1
+  EndIf
+  For i = 0 To 1023
+    MdData(k * 1024 + i) = -1
+  Next
+  MdBusyUntil = Micros() + #MD_ERASE_US
+EndProcedure
+
+Procedure LlProgram(off.i, line.i, page.i)
+  Define k.i
+  Define i.i
+  Define w.i
+  Define o.i
+  If MdWel = 0 Or DkOut = 0 Or LlBusy() <> 0
+    MdViolations = MdViolations + 1
+  EndIf
+  MdWel = 0
+  k = MdIdx(off >> 12) - 1
+  If k < 0
+    MdFull = MdFull + 1
+    ProcedureReturn
+  EndIf
+  For i = 0 To 63
+    w = DkLine(line * 2048 + page * 128 + i * 2) | (DkLine(line * 2048 + page * 128 + i * 2 + 1) << 16)
+    o = k * 1024 + page * 64 + i
+    If (MdData(o) & w) <> w
+      MdViolations = MdViolations + 1    ; a 0 that would have to become a 1
+    EndIf
+    MdData(o) = MdData(o) & w
+  Next
+  MdBusyUntil = Micros() + #MD_PAGE_US
+EndProcedure
+
+Procedure.i LlReady()
+  ProcedureReturn 1
+EndProcedure
+
+CompilerElse
+; ---- THE BOARD'S CHIP (see the header) -----------------------------------
+#SSI_SR      = $18000028         ; RP2040 XIP_SSI: SR (TFNF bit 1, RFNE bit 3)
+#SSI_DR0     = $18000060
+#QSPI_SS_CTRL = $4001800C        ; IO_QSPI GPIO_QSPI_SS_CTRL, OUTOVER bits 9:8
+
+ProcedureRAM.i LlXip16(off.i)
+  ProcedureReturn PeekU(#XIP_BASE + off)
+EndProcedure
+
+ProcedureRAM.i LlXip32(off.i)
+  ProcedureReturn PeekL(#XIP_BASE + off)
+EndProcedure
+
+; The ROM lookup, as flashid.pico does it: rom_table_lookup at [$18],
+; the function table at [$14], both 16-bit; codes are c1 | c2 << 8.
+ProcedureRAM.i LlRom(code.i)
+  Define fn.i
+  Define tbl.i
+  fn = PeekU($18)
+  tbl = PeekU($14)
+  If fn = 0 Or tbl = 0
+    ProcedureReturn 0
+  EndIf
+  ProcedureReturn CallFunctionFast(fn, tbl, code)
+EndProcedure
+
+; Once, while the flash still reads: the three ROM functions, and boot2's
+; first 256 bytes copied into SRAM (it must be copied BEFORE XIP is left,
+; because copying it is itself a flash read - flashid.pico, point 2).
+ProcedureRAM.i LlReady()
+  Define i.i
+  If DkRomConnect = 0
+    DkRomConnect = LlRom($4649)        ; 'IF' connect_internal_flash
+    DkRomExit = LlRom($5845)           ; 'EX' flash_exit_xip
+    DkRomFlush = LlRom($4346)          ; 'FC' flash_flush_cache
+    For i = 0 To 63
+      PokeL(#DK_BOOT2 + i * 4, PeekL(#XIP_BASE + i * 4))
+    Next
+  EndIf
+  If DkRomConnect = 0 Or DkRomExit = 0 Or DkRomFlush = 0
+    ProcedureReturn 0
+  EndIf
+  ProcedureReturn 1
+EndProcedure
+
+ProcedureRAM LlCs(high.i)
+  Define v.i
+  v = PeekL(#QSPI_SS_CTRL) & ~$300
+  If high
+    v = v | $300
+  Else
+    v = v | $200
+  EndIf
+  PokeL(#QSPI_SS_CTRL, v)
+EndProcedure
+
+ProcedureRAM.i LlByte(b.i)       ; one byte out, its reply back: one in flight
+  While (PeekL(#SSI_SR) & 2) = 0
+  Wend
+  PokeL(#SSI_DR0, b & $FF)
+  While (PeekL(#SSI_SR) & 8) = 0
+  Wend
+  ProcedureReturn PeekL(#SSI_DR0) & $FF
+EndProcedure
+
+ProcedureRAM LlOpen()
+  CallFunctionFast(DkRomConnect)
+  CallFunctionFast(DkRomExit)
+  DkOut = 1
+EndProcedure
+
+ProcedureRAM LlClose()
+  CallFunctionFast(DkRomFlush)         ; the XIP cache, and the CS override off
+  CallFunctionFast(#DK_BOOT2 + 1)      ; boot2 again: the board's own XIP mode
+  DkOut = 0
+EndProcedure
+
+ProcedureRAM.i LlBusy()
+  Define s.i
+  LlCs(0)
+  LlByte($05)
+  s = LlByte(0)
+  LlCs(1)
+  ProcedureReturn s & 1
+EndProcedure
+
+ProcedureRAM LlWriteEnable()
+  LlCs(0)
+  LlByte($06)
+  LlCs(1)
+EndProcedure
+
+ProcedureRAM LlErase(off.i)
+  LlCs(0)
+  LlByte($20)
+  LlByte(off >> 16)
+  LlByte(off >> 8)
+  LlByte(off)
+  LlCs(1)
+EndProcedure
+
+ProcedureRAM LlProgram(off.i, line.i, page.i)
+  Define i.i
+  Define w.i
+  LlCs(0)
+  LlByte($02)
+  LlByte(off >> 16)
+  LlByte(off >> 8)
+  LlByte(off)
+  For i = 0 To 127
+    w = DkLine(line * 2048 + page * 128 + i)
+    LlByte(w)
+    LlByte(w >> 8)
+  Next
+  LlCs(1)
+EndProcedure
+CompilerEndIf
+
+; ---- the header ----------------------------------------------------------
+Procedure.i DkHeader32(k.i)
+  ProcedureReturn LlXip16(#DISK_REGION + k) | (LlXip16(#DISK_REGION + k + 2) << 16)
+EndProcedure
+
+Procedure DiskInit()
+  Define k.i
+  Define m.i
+  DkPresent = 0
+  For k = 0 To #DK_LINES - 1
+    DkLineAt(k) = -1
+    DkLineDirty(k) = 0
+  Next
+  CompilerIf #DISK_FLASH_MODEL = 1
+    For k = 0 To #MD_SECTORS - 1
+      MdAt(k) = -1
+    Next
+  CompilerEndIf
+  ; "PDP11RK1"
+  If DkHeader32(0) <> $31504450 Or DkHeader32(4) <> $314B5231
+    ProcedureReturn
+  EndIf
+  If DkHeader32(8) <> 1
+    ProcedureReturn
+  EndIf
+  DkMapped = DkHeader32(12)
+  DkStored = DkHeader32(16)
+  DkMapSectors = DkHeader32(24)
+  If DkMapped = 0
+    DkMapSectors = 0
+  EndIf
+  DkData = #DISK_REGION + #DK_SECTOR + DkMapSectors * #DK_SECTOR
+  DkSlots = (#FLASH_BYTES - DkData) / 512
+  If DkStored > #DK_BLOCKS Or DkStored > DkSlots
+    ProcedureReturn
+  EndIf
+  DkNext = 0
+  If DkMapped
+    For k = 0 To #DK_BLOCKS - 1
+      m = LlXip16(#DISK_REGION + #DK_SECTOR + k * 2)
+      DkMap(k) = m
+      If m > DkNext
+        DkNext = m                       ; slots are handed out in order: the next is past the highest
+      EndIf
+    Next
+  EndIf
+  DkPresent = 1
+EndProcedure
+
+Procedure.i DiskPresent(d.i)
+  If d = 0
+    ProcedureReturn DkPresent
+  EndIf
+  ProcedureReturn 0
+EndProcedure
+
+Procedure.i DiskWritable(d.i)
+  If d = 0 And DkPresent <> 0 And DkFatal = 0
+    ProcedureReturn 1
+  EndIf
+  ProcedureReturn 0
+EndProcedure
+
+; ---- the cache -------------------------------------------------------------
+Procedure.i DkFindLine(sec.i)            ; a VALID line holding sector sec, or -1
+  Define k.i
+  For k = 0 To #DK_LINES - 1
+    If DkLineAt(k) = sec And DkLineFill(k) >= 2048
+      ProcedureReturn k
+    EndIf
+  Next
+  ProcedureReturn -1
+EndProcedure
+
+; Load the next #DK_LOAD_STEP words of line v from flash. A line is loaded
+; a part per call, so no call holds the firmware long.
+#DK_LOAD_STEP = 256
+Procedure DkLoadStep(v.i)
+  Define i.i
+  Define w.i
+  Define b.i
+  Define f.i
+  f = DkLineFill(v)
+  b = v * 2048 + f
+  For i = 0 To #DK_LOAD_STEP / 2 - 1
+    w = LlXip32(DkLineAt(v) + (f + i * 2) * 2)
+    DkLine(b + i * 2) = w & $FFFF
+    DkLine(b + i * 2 + 1) = (w >> 16) & $FFFF
+  Next
+  DkLineFill(v) = f + #DK_LOAD_STEP
+  DkLoaded = 1
+EndProcedure
+
+; The line for sector sec. -1 when it is not ready now - it is being loaded
+; (a part more is loaded on every call, and by DiskTask), the flash is out
+; of XIP (a write-back is running), or every line is dirty (a write-back is
+; started); the caller asks again later.
+Procedure.i DkGetLine(sec.i)
+  Define k.i
+  Define v.i
+  For k = 0 To #DK_LINES - 1
+    If DkLineAt(k) = sec
+      DkStamp = DkStamp + 1
+      DkLineUsed(k) = DkStamp
+      If DkLineFill(k) >= 2048
+        ProcedureReturn k
+      EndIf
+      If DkOut
+        ProcedureReturn -1
+      EndIf
+      DkLoadStep(k)
+      If DkLineFill(k) >= 2048
+        ProcedureReturn k
+      EndIf
+      ProcedureReturn -1
+    EndIf
+  Next
+  If DkOut
+    ProcedureReturn -1
+  EndIf
+  v = -1
+  For k = 0 To #DK_LINES - 1             ; an empty line, else the least recent clean one
+    If DkLineAt(k) = -1
+      v = k
+      Break
+    EndIf
+    If DkLineDirty(k) = 0
+      If v < 0
+        v = k
+      ElseIf DkLineUsed(k) < DkLineUsed(v)
+        v = k
+      EndIf
+    EndIf
+  Next
+  If v < 0
+    DkSyncAll = 1                        ; all dirty: start writing them back
+    ProcedureReturn -1
+  EndIf
+  DkLineAt(v) = sec
+  DkLineDirty(v) = 0
+  DkLineFill(v) = 0
+  DkStamp = DkStamp + 1
+  DkLineUsed(v) = DkStamp
+  DkLoadStep(v)
+  ProcedureReturn -1
+EndProcedure
+
+; The flash offset of block blk, or -1 if it has no slot (mapped, never stored).
+Procedure.i DkWhere(blk.i)
+  If DkMapped
+    If DkMap(blk) = 0
+      ProcedureReturn -1
+    EndIf
+    ProcedureReturn DkData + (DkMap(blk) - 1) * 512
+  EndIf
+  ProcedureReturn DkData + blk * 512
+EndProcedure
+
+Procedure.i DiskRead(d.i, blk.i)
+  Define off.i
+  Define k.i
+  Define i.i
+  Define b.i
+  If d <> 0 Or DkPresent = 0
+    DkWhy = 1
+    ProcedureReturn -1
+  EndIf
+  If DkMapped = 0 And blk >= DkStored    ; past a truncated dense pack: never written, so zeros
+    For i = 0 To 255
+      DkBuf(i) = 0
+    Next
+    ProcedureReturn 1
+  EndIf
+  off = DkWhere(blk)
+  If off < 0
+    For i = 0 To 255
+      DkBuf(i) = 0
+    Next
+    ProcedureReturn 1
+  EndIf
+  k = DkFindLine(off & ~(#DK_SECTOR - 1))
+  If k >= 0
+    b = k * 2048 + ((off & (#DK_SECTOR - 1)) >> 1)
+    For i = 0 To 255
+      DkBuf(i) = DkLine(b + i)
+    Next
+    ProcedureReturn 1
+  EndIf
+  If DkOut                               ; the flash is being written: wait
+    ProcedureReturn 0
+  EndIf
+  For i = 0 To 127
+    b = LlXip32(off + i * 4)
+    DkBuf(i * 2) = b & $FFFF
+    DkBuf(i * 2 + 1) = (b >> 16) & $FFFF
+  Next
+  ProcedureReturn 1
+EndProcedure
+
+Procedure.i DiskWrite(d.i, blk.i)
+  Define off.i
+  Define k.i
+  Define km.i
+  Define i.i
+  Define b.i
+  Define slot.i
+  Define msec.i
+  If d <> 0 Or DkPresent = 0
+    DkWhy = 1
+    ProcedureReturn -1
+  EndIf
+  If DkFatal
+    DkWhy = 4
+    ProcedureReturn -1
+  EndIf
+  If DkMapped = 0 And blk >= DkStored
+    DkWhy = 2
+    ProcedureReturn -1
+  EndIf
+  km = -1
+  off = DkWhere(blk)
+  If off < 0                             ; mapped, first write: a new slot, and the map entry
+    If DkNext >= DkSlots
+      DkWhy = 3
+      ProcedureReturn -1
+    EndIf
+    slot = DkNext
+    off = DkData + slot * 512
+    msec = (#DISK_REGION + #DK_SECTOR + blk * 2) & ~(#DK_SECTOR - 1)
+    DkLoaded = 0
+    km = DkGetLine(msec)
+    If km < 0 Or DkLoaded <> 0             ; not ready, or it took this call's one load step
+      ProcedureReturn 0
+    EndIf
+    DkLineUsed(km) = DkStamp + 1         ; keep it from being chosen for the data line
+  EndIf
+  If DkState <> 0 And DkLineAt(DkWb) = (off & ~(#DK_SECTOR - 1))
+    ProcedureReturn 0                    ; that sector is being written back: wait
+  EndIf
+  k = DkGetLine(off & ~(#DK_SECTOR - 1))
+  If k < 0
+    ProcedureReturn 0
+  EndIf
+  If km >= 0
+    If DkLineAt(km) <> msec              ; loading the data line pushed the map line out:
+      DkSyncAll = 1                      ; write lines back to make room, and ask again
+      ProcedureReturn 0
+    EndIf
+    If DkState <> 0 And DkWb = km
+      ProcedureReturn 0
+    EndIf
+    DkNext = DkNext + 1
+    DkMap(blk) = slot + 1
+    b = km * 2048 + (((#DISK_REGION + #DK_SECTOR + blk * 2) & (#DK_SECTOR - 1)) >> 1)
+    DkLine(b) = slot + 1
+    DkLineDirty(km) = 1
+    DkLineTouched(km) = Micros()
+  EndIf
+  b = k * 2048 + ((off & (#DK_SECTOR - 1)) >> 1)
+  For i = 0 To 255
+    DkLine(b + i) = DkBuf(i)
+  Next
+  DkLineDirty(k) = 1
+  DkLineTouched(k) = Micros()
+  ProcedureReturn 1
+EndProcedure
+
+Procedure DiskSync()
+  DkSyncAll = 1
+EndProcedure
+
+Procedure.i DkDirtyCount()
+  Define k.i
+  Define n.i
+  n = 0
+  For k = 0 To #DK_LINES - 1
+    If DkLineDirty(k)
+      n = n + 1
+    EndIf
+  Next
+  ProcedureReturn n
+EndProcedure
+
+Procedure.i DiskIdle()
+  If DkState = 0 And DkDirtyCount() = 0
+    ProcedureReturn 1
+  EndIf
+  ProcedureReturn 0
+EndProcedure
+
+; Does the line already hold what the flash holds? Then it need not be written.
+; Compare the next #DK_CMP_STEP words of line k with the flash (DkCmp
+; counts them): 1 while they match, 0 at the first difference. A whole
+; line is 2048 words, so the comparison is spread over several DiskTask
+; calls and none takes long.
+#DK_CMP_STEP = 256
+Procedure.i DkSameStep(k.i)
+  Define i.i
+  Define w.i
+  Define b.i
+  b = k * 2048 + DkCmp
+  For i = 0 To #DK_CMP_STEP / 2 - 1
+    w = LlXip32(DkLineAt(k) + (DkCmp + i * 2) * 2)
+    If DkLine(b + i * 2) <> (w & $FFFF) Or DkLine(b + i * 2 + 1) <> ((w >> 16) & $FFFF)
+      ProcedureReturn 0
+    EndIf
+  Next
+  DkCmp = DkCmp + #DK_CMP_STEP
+  ProcedureReturn 1
+EndProcedure
+
+; ---- the write-back, one step per call (see the header) ------------------
+Procedure DiskTask()
+  Define k.i
+  Define v.i
+  If DkPresent = 0 Or DkFatal <> 0     ; failed three times: stop, and never wear it further
+    ProcedureReturn
+  EndIf
+  If DkState = 0
+    For k = 0 To #DK_LINES - 1           ; a line being loaded: one part more
+      If DkLineAt(k) >= 0 And DkLineFill(k) < 2048
+        DkLoadStep(k)
+        ProcedureReturn
+      EndIf
+    Next
+    ; the next line to write back: the highest-addressed dirty one that is
+    ; old enough (or any, when asked to), so a pack's data goes before
+    ; the map entry that points at it
+    v = -1
+    For k = 0 To #DK_LINES - 1
+      If DkLineDirty(k)
+        If DkSyncAll <> 0 Or Micros() - DkLineTouched(k) >= #DK_IDLE_US
+          If v < 0
+            v = k
+          ElseIf DkLineAt(k) > DkLineAt(v)
+            v = k
+          EndIf
+        EndIf
+      EndIf
+    Next
+    If v < 0
+      DkSyncAll = 0
+      ProcedureReturn
+    EndIf
+    DkWb = v
+    DkCmp = 0
+    DkState = 6                          ; first: is it already what the flash holds?
+    ProcedureReturn
+  EndIf
+  If DkState = 6                         ; compare, a part per call
+    If DkSameStep(DkWb) = 0
+      If LlReady() = 0
+        DkFatal = 1
+        DkState = 0
+        ProcedureReturn
+      EndIf
+      DkState = 1                        ; it differs: write it back
+    ElseIf DkCmp >= 2048
+      DkLineDirty(DkWb) = 0              ; unchanged: nothing to write
+      DkSkipped = DkSkipped + 1
+      DkState = 0
+    EndIf
+  ElseIf DkState = 7                     ; read back what was written, a part per call
+    If DkSameStep(DkWb) = 0
+      DkVerifyFails = DkVerifyFails + 1  ; stays dirty: written again next time
+      DkTries = DkTries + 1
+      If DkTries >= 3
+        DkFatal = 1
+      EndIf
+      DkState = 0
+    ElseIf DkCmp >= 2048
+      DkLineDirty(DkWb) = 0
+      DkWbBlocks = DkWbBlocks + 8
+      DkTries = 0
+      DkState = 0
+    EndIf
+  ElseIf DkState = 1                         ; out of XIP, erase the sector
+    LlOpen()
+    LlWriteEnable()
+    LlErase(DkLineAt(DkWb))
+    DkErases = DkErases + 1
+    DkSince = Micros()
+    DkState = 2
+  ElseIf DkState = 2 Or DkState = 4      ; wait for BUSY to clear, one look per call
+    If LlBusy()
+      If Micros() - DkSince > #DK_BUSY_US
+        LlClose()                        ; the flash did not finish: stop, and say so
+        DkState = 0
+        DkVerifyFails = DkVerifyFails + 1
+        DkTries = DkTries + 1
+        If DkTries >= 3
+          DkFatal = 1
+        EndIf
+      EndIf
+      ProcedureReturn
+    EndIf
+    If DkState = 2
+      DkPage = 0
+      DkState = 3
+    ElseIf DkPage >= 16
+      DkState = 5
+    Else
+      DkState = 3
+    EndIf
+  ElseIf DkState = 3                     ; one 256-byte page
+    LlWriteEnable()
+    LlProgram(DkLineAt(DkWb) + DkPage * 256, DkWb, DkPage)
+    DkPages = DkPages + 1
+    DkPage = DkPage + 1
+    DkSince = Micros()
+    DkState = 4
+  ElseIf DkState = 5                     ; back to XIP; then read it back (state 7)
+    LlClose()
+    DkCmp = 0
+    DkState = 7
+  EndIf
+EndProcedure
+CompilerEndIf

@@ -83,9 +83,11 @@
 ;      WRTLCK trap as reserved for now.
 ;    * 16-bit physical addressing with the memory management unit OFF:
 ;      56 KB of RAM at 000000-157777, the I/O page at 160000-177777. In
-;      the I/O page the PSW (177776), the console DL11 (177560-177566)
-;      and the switch register (177570) answer; everything else there is
-;      a bus error (trap to 4). See THE I/O PAGE below.
+;      the I/O page the PSW (177776), the console DL11 (177560-177566),
+;      the switch register (177570), the RK11 disk controller
+;      (177400-177416, rk11.pico2) and the KW11-L line clock (177546,
+;      kw11.pico2) answer; everything else there is a bus error (trap to
+;      4). See THE I/O PAGE below.
 ;    * kernel, supervisor and user mode with a stack pointer each, and the
 ;      two sets of R0-R5 (PSW bit 11) - see THE MODES below. There is one
 ;      address space (no memory management yet), so MFPI/MTPI/MFPD/MTPD
@@ -138,7 +140,14 @@
 #DL11_TX_INSTRUCTIONS = 100 ; how long one character takes to send
 #CON_SIZE    = 256          ; each console queue, a power of two
 #INT_DL11_RX = 1            ; IntReq bits: the console receiver ...
-#INT_DL11_TX = 2            ; ... and transmitter
+#INT_DL11_TX = 2            ; ... and transmitter (both BR4)
+#INT_RK      = 4            ; the RK11 disk controller, BR5 (rk11.pico2)
+#INT_KW      = 8            ; the KW11-L line clock, BR6 (kw11.pico2)
+#VEC_RK      = $90          ; 000220 RK11
+#VEC_KW      = $40          ; 000100 KW11-L
+#RK_BASE     = $FF00        ; 177400-177416, the RK11's eight registers
+#KW_CSR      = $FF66        ; 177546, the KW11-L's one register
+#DEV_WINDOW  = 200          ; the longest window while a device needs polling (DevActive)
 
 ; ---- timing placeholders (see CLOCK above) ---------------------------
 #J11_T_DOUBLE = 1
@@ -185,7 +194,8 @@ Global Dl11RxDone.i, Dl11RxIe.i, Dl11RxBuf.i
 Global Dl11RxPolled.i      ; the program has looked at RCSR since the last character
 Global Dl11TxRdy.i, Dl11TxIe.i, Dl11TxChar.i, Dl11TxDue.i
 Global SwitchReg.i, DisplayReg.i
-Global IntReq.i             ; interrupts asked for: #INT_DL11_RX | #INT_DL11_TX
+Global IntReq.i             ; interrupts asked for: #INT_DL11_RX | #INT_DL11_TX | #INT_RK | #INT_KW
+Global DevActive.i          ; the disk or the clock needs a look every window (DevPoll, rk11/kw11)
 ; The console's two byte queues - the ONLY things the firmware around the
 ; emulator touches. The emulator writes ConOut at its Head and reads ConIn
 ; at its Tail; the firmware does the opposite. Neither side calls the
@@ -241,12 +251,25 @@ Procedure.i CpuNow()
   ProcedureReturn InstrCount + RunWindow - RunLeft
 EndProcedure
 
-; An interrupt is asked for and the priority would let it in (the DL11
-; interrupts at BR4, so the PSW priority must be below 4). Called whenever
-; the PSW changes, so a lowered priority lets a waiting request in at once.
+; The bus request level of the highest interrupt asked for, as a PSW
+; priority field: the line clock at BR6, the disk at BR5, the console at
+; BR4. A request gets in when the PSW priority is BELOW it.
+Procedure.i IntLevel()
+  If IntReq & #INT_KW
+    ProcedureReturn $C0
+  EndIf
+  If IntReq & #INT_RK
+    ProcedureReturn $A0
+  EndIf
+  ProcedureReturn $80
+EndProcedure
+
+; An interrupt is asked for and the priority would let it in. Called
+; whenever the PSW changes, so a lowered priority lets a waiting request in
+; at once.
 Procedure IntCheck()
   If IntReq
-    If (PswHigh & $E0) < $80
+    If (PswHigh & $E0) < IntLevel()
       CpuEventIn(1)
     EndIf
   EndIf
@@ -428,6 +451,10 @@ Procedure.i IoRead(a.i)                  ; a is even and past the end of RAM
     ProcedureReturn 0
   ElseIf a = #SWR_ADDR
     ProcedureReturn SwitchReg
+  ElseIf (a & $FFF0) = #RK_BASE          ; the RK11 (rk11.pico2)
+    ProcedureReturn RkRead(a)
+  ElseIf a = #KW_CSR                     ; the KW11-L (kw11.pico2)
+    ProcedureReturn KwRead()
   EndIf
   BusError()
   ProcedureReturn 0
@@ -466,6 +493,10 @@ Procedure IoWrite(a.i, v.i)              ; a is even and past the end of RAM
     CpuEventIn(#DL11_TX_INSTRUCTIONS)
   ElseIf a = #SWR_ADDR
     DisplayReg = v & $FFFF
+  ElseIf (a & $FFF0) = #RK_BASE          ; the RK11 (rk11.pico2)
+    RkWrite(a, v & $FFFF)
+  ElseIf a = #KW_CSR                     ; the KW11-L (kw11.pico2)
+    KwWrite(v)
   ElseIf a <> #DL11_RBUF                 ; RBUF is read-only: a write is ignored
     BusError()
   EndIf
@@ -531,6 +562,10 @@ Procedure WriteByte(a.i, v.i)
     Else
       PswWrite((PswGet() & $FF00) | (v & $FF))
     EndIf
+    ProcedureReturn
+  EndIf
+  If (a & $FFF0) = #RK_BASE Or (a & $FFFE) = #KW_CSR   ; a byte of a full-word device register
+    DevWriteByte(a, v & $FF)
     ProcedureReturn
   EndIf
   If a & 1                               ; a device's high byte: nothing there
@@ -798,12 +833,26 @@ Procedure DevService()
       EndIf
     EndIf
   EndIf
-  ; an interrupt, if one is asked for and the priority lets it in; the
-  ; receiver is served first, as it sits nearer the processor on the bus
+  ; the disk and the line clock, while either needs a look (rk11, kw11)
+  If DevActive
+    DevPoll()
+  EndIf
+  ; an interrupt, if one is asked for and the priority lets it in: the
+  ; highest bus request level first (clock BR6, disk BR5, console BR4),
+  ; and on the console the receiver first, as it sits nearer the processor
   If IntReq
-    If (PswHigh & $E0) < $80
+    If (PswHigh & $E0) < IntLevel()
       Waiting = 0
-      If IntReq & #INT_DL11_RX
+      If IntReq & #INT_KW
+        IntReq = IntReq & ~#INT_KW
+        TakeTrap(#VEC_KW)
+        TakeStackTrap()
+      ElseIf IntReq & #INT_RK
+        IntReq = IntReq & ~#INT_RK
+        RkIntTaken()
+        TakeTrap(#VEC_RK)
+        TakeStackTrap()
+      ElseIf IntReq & #INT_DL11_RX
         IntReq = IntReq & ~#INT_DL11_RX
         TakeTrap(#VEC_DL11_RX)
         TakeStackTrap()
@@ -831,8 +880,13 @@ Procedure StartWindow()
     EndIf
   EndIf
   If IntReq
-    If (PswHigh & $E0) < $80
+    If (PswHigh & $E0) < IntLevel()
       RunLeft = 1
+    EndIf
+  EndIf
+  If DevActive                           ; the disk or the clock: look again soon
+    If RunLeft > #DEV_WINDOW
+      RunLeft = #DEV_WINDOW
     EndIf
   EndIf
   ; THE T BIT. An instruction that BEGINS with the T bit set is followed by
@@ -868,12 +922,15 @@ EndProcedure
 
 ; The bus INIT (the RESET instruction, and power-up): interrupt enables
 ; and requests off, the receiver empty. A character already on its way
-; out still finishes.
+; out still finishes. The disk controller and the line clock take their
+; own INIT (rk11.pico2, kw11.pico2).
 Procedure DevReset()
   Dl11RxIe = 0
   Dl11RxDone = 0
   Dl11TxIe = 0
   IntReq = 0
+  RkInit()
+  KwInit()
 EndProcedure
 
 ; ======================================================================

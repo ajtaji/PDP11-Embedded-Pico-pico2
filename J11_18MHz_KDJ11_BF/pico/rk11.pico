@@ -1,0 +1,639 @@
+; ======================================================================
+;  rk11.pico - the RK11-D disk controller with RK05 drives, at 177400-
+;  177416, vector 220, BR5, for the J-11 emulator on the Raspberry Pi Pico.
+;
+;  Include after cpu.pico, instructions.pico and disk.pico (the main file
+;  lists them). The drives' contents live behind disk.pico's small
+;  interface - DiskRead and DiskWrite of one 512-byte block through DkBuf -
+;  so this file does not know whether a pack is in RAM or in flash.
+;
+;  THE AUTHORITY is DEC's RK11-D and RK11-E Moving Head Disk Drive
+;  Controller User's Manual, EK-RK11D-OP-001 (1976), in this repository
+;  as PureMetal/EK-RK11D-OP-001.pdf: chapter 1.3 for the functions, 3.2
+;  for the registers, 3.4 for the interrupts. Where the manual leaves a
+;  choice open, simh's PDP11/pdp11_rk.c was read as a cross-check and is
+;  named at the line.
+;
+;  THE GEOMETRY. An RK05 pack: 203 cylinders (0-312 octal), 2 surfaces,
+;  12 sectors of 256 words - 4872 blocks, 2,494,464 bytes. Block number =
+;  (cylinder * 2 + surface) * 12 + sector, which is how every PDP-11
+;  system numbers an RK05. Up to #RK_DRIVES drives (2; the boards use 1).
+;
+;  THE REGISTERS (manual 3.2)
+;    177400 RKDS  read-only. 15-13 the drive that last interrupted,
+;                 11 RK05, 8 sector counter OK, 7 drive ready, 6 read/
+;                 write/seek ready (not seeking), 5 write-protected,
+;                 4 SC = SA, 3-0 the sector counter. Status is for the
+;                 drive RKDA selects; a drive that does not exist reads 0.
+;                 The sector counter reads the sector RKDA names, with
+;                 SC = SA always set: the emulated disk is always on the
+;                 sector wanted, and a program that waits for SC = SA
+;                 (none of the Unix drivers does) never waits.
+;    177402 RKER  read-only. 0 WCE, 1 CSE (soft, cleared when a function
+;                 starts); 5 NXS, 6 NXC, 7 NXD, 8 TE, 9 DLT, 10 NXM,
+;                 11 PGE, 12 SKE, 13 WLO, 14 OVR, 15 DRE (hard, cleared
+;                 only by INIT or a control reset).
+;    177404 RKCS  0 GO (write-only), 3-1 function, 5-4 MEX (bus address
+;                 17-16), 6 IDE, 7 RDY (read-only), 8 SSE, 10 FMT, 11 IBA,
+;                 13 SCP (read-only), 14 HE and 15 ERR (read-only, from
+;                 RKER). The writable bits are simh's RKCS_RW, 006576.
+;    177406 RKWC  two's complement of the words to transfer; counts up.
+;    177410 RKBA  bus address, bits 15-0; carries into MEX.
+;    177412 RKDA  15-13 drive, 12-5 cylinder, 4 surface, 3-0 sector;
+;                 advanced past the last sector transferred. Written only
+;                 while the controller is ready (manual: "will not respond
+;                 to commands while the controller is busy").
+;    177414 RKMR  unused on the RK11-D: reads 0, writes ignored.
+;    177416 RKDB  read-only: the last word through the controller.
+;  While a transfer is in progress (RDY clear) RKWC, RKBA and RKDA ignore
+;  writes and RKCS takes only its IDE bit; GO is honoured only when RDY.
+;
+;  THE FUNCTIONS (manual 1.3.2)
+;    0 control reset  every register cleared except RDY, which is set;
+;                     no interrupt.
+;    1 write          2 read          3 write check        5 read check
+;                     A transfer of -RKWC words, sector after sector, from
+;                     the block RKDA names, to or from the 18-bit address
+;                     MEX:RKBA (IBA holds it still). A short last sector
+;                     is filled with zeros on a write (manual 3.3). Write
+;                     check compares memory with the disk and sets WCE;
+;                     with SSE it stops at the end of that sector. Read
+;                     check reads and moves nothing. FMT with a read
+;                     moves one header word (the cylinder << 5) per sector
+;                     (manual, RKCS 10); FMT with a write writes as usual.
+;                     Past the last block of the pack: OVR.
+;    4 seek           6 drive reset (a seek to cylinder 0)
+;                     The controller is free at once and interrupts then
+;                     (IDE); when the heads arrive, #RK_SEEK_INSTRUCTIONS
+;                     later, the hardware poll sets SCP, puts the drive in
+;                     RKDS 15-13 and interrupts again (manual 1.3.2.9 and
+;                     3.4 items d and f).
+;    7 write lock     the drive refuses writes (WLO) until power-up or
+;                     INIT (simh rk_reset clears it at INIT too).
+;  ERRORS AT GO, first match wins (simh rk_go's order): a drive that does
+;  not exist - NXD; FMT with anything but read or write - PGE; a write to
+;  a locked drive - WLO; sector 12 or more - NXS; cylinder over 312 - NXC.
+;  A block the storage cannot serve (disk.pico returns -1: a block past a
+;  truncated pack that was never written, say) is DRE, drive error, and
+;  the firmware says which block.
+;
+;  THE BUS. DMA goes to physical memory through RkMemRead and RkMemWrite,
+;  which today reach Mem below #RAM_BYTES and call anything else
+;  nonexistent memory (NXM, the transfer stops there - simh does the
+;  same). The controller makes 18-bit addresses (RKBA plus MEX), as the
+;  RK11-E/RKV11-D do; with the J-11's memory management the same two
+;  procedures become the 22-bit physical path, and nothing else here
+;  changes.
+;
+;  THE INTERRUPT goes through IntReq (#INT_RK, BR5, vector 220) and is
+;  taken at an instruction boundary by DevService (cpu.pico), exactly as
+;  the console's are. It is asked for, when IDE is set, by: the end of a
+;  function (errors included), IDE being set while the controller is
+;  ready (manual 3.2, RKCS 06 item d), and a seek completing. Clearing
+;  IDE or setting GO withdraws a request not yet taken.
+;
+;  TIMING. A transfer ends #RK_XFER_INSTRUCTIONS after GO at the earliest
+;  (the processor gets to run between GO and the interrupt, as on the
+;  real controller; simh's rk_rwait is 10), and moves one sector each time
+;  the run loop looks, and no sooner than #RK_SECTOR_US of the board's time
+;  and #RK_SECTOR_INSTRUCTIONS of the processor's after the last - up to 2,000 sectors (1 MB) a second, some seven times
+;  a real RK05 (300), and never more than one sector's work (a few hundred
+;  microseconds, measured by the desk probe) between two USB services.
+;  While the processor is in a WAIT, instructions are taken to have passed
+;  and only the board-time spacing applies.
+; ======================================================================
+
+#RK_DRIVES           = 2
+#RK_BLOCKS           = 4872     ; 203 * 2 * 12
+#RK_LAST_CYL         = 202      ; 312 octal
+#RK_XFER_INSTRUCTIONS = 20
+#RK_SEEK_INSTRUCTIONS = 50
+#RK_SECTORS_PER_POLL = 1
+#RK_SECTOR_US        = 500      ; and no sooner than this after the last one (board time)
+#RK_SECTOR_INSTRUCTIONS = 256    ; nor this many instructions (more than the firmware's slice)
+
+; RKER
+#RKER_WCE = $0001
+#RKER_CSE = $0002
+#RKER_NXS = $0020
+#RKER_NXC = $0040
+#RKER_NXD = $0080
+#RKER_NXM = $0400
+#RKER_PGE = $0800
+#RKER_WLO = $2000
+#RKER_OVR = $4000
+#RKER_DRE = $8000
+#RKER_HARD = $FFE0
+; RKCS
+#RKCS_RW  = $0D7E               ; 006576: function, MEX, IDE, SSE, FMT, IBA
+#RKCS_IDE = $0040
+#RKCS_RDY = $0080
+#RKCS_SSE = $0100
+#RKCS_FMT = $0400
+#RKCS_IBA = $0800
+#RKCS_SCP = $2000
+
+Global RkCs.i                   ; the stored bits of RKCS (HE and ERR are made from RkEr)
+Global RkEr.i, RkWc.i, RkBa.i, RkDa.i, RkDb.i
+Global RkBusy.i                 ; a transfer is in progress (RDY clear)
+Global RkDue.i                  ; CpuNow() before which it does not end
+Global RkIntDrive.i             ; RKDS 15-13
+Global RkSeekMask.i             ; drives whose heads are still moving (bit per drive)
+Global RkSeekDone.i             ; drives arrived, their poll interrupt not yet given
+Global Dim RkSeekAt.i(#RK_DRIVES)
+Global Dim RkCyl.i(#RK_DRIVES)  ; where each drive's heads are
+Global Dim RkLock.i(#RK_DRIVES) ; write-locked by function 7
+; the transfer in progress
+Global RkXFunc.i, RkXDrive.i, RkXBlock.i, RkXLeft.i, RkXDone.i, RkXMa.i, RkXStop.i
+; counters for the firmware's status line and the desk proof
+Global RkReads.i, RkWrites.i    ; blocks read and written since power-up
+Global RkLastUs.i, RkLastAt.i     ; Micros() and CpuNow() of the last sector moved (RkStep)
+Global RkBadBlock.i = -1        ; the last block the storage refused (-1 none)
+
+; ---- the bus: physical memory for the controller's DMA ------------------
+; Return -1 for nonexistent memory. (18-bit today; see THE BUS above.)
+Procedure.i RkMemRead(pa.i)
+  If pa < #RAM_BYTES
+    ProcedureReturn Mem(pa >> 1)
+  EndIf
+  ProcedureReturn -1
+EndProcedure
+
+Procedure.i RkMemWrite(pa.i, v.i)
+  If pa < #RAM_BYTES
+    Mem(pa >> 1) = v
+    ProcedureReturn 1
+  EndIf
+  ProcedureReturn 0
+EndProcedure
+
+; ---- status ------------------------------------------------------------
+Procedure.i RkCsRead()
+  Define v.i
+  v = RkCs
+  If RkEr
+    v = v | $8000
+    If RkEr & #RKER_HARD
+      v = v | $4000
+    EndIf
+  EndIf
+  ProcedureReturn v
+EndProcedure
+
+Procedure.i RkDsRead()
+  Define d.i
+  Define v.i
+  d = (RkDa >> 13) & 7
+  v = RkIntDrive << 13
+  If d < #RK_DRIVES
+    If DiskPresent(d)
+      v = v | $0800 | $0100 | $0080 | $0010    ; RK05, SOK, DRY, SC=SA
+      If (RkSeekMask & (1 << d)) = 0
+        v = v | $0040                          ; R/W/S ready: not seeking
+      EndIf
+      If RkLock(d) <> 0 Or DiskWritable(d) = 0
+        v = v | $0020                          ; write-protected
+      EndIf
+      If (RkDa & 15) < 12
+        v = v | (RkDa & 15)
+      EndIf
+    EndIf
+  EndIf
+  ProcedureReturn v
+EndProcedure
+
+; ---- the end of a function, and the interrupt --------------------------
+Procedure RkAsk()                       ; an interrupt, if IDE
+  If RkCs & #RKCS_IDE
+    IntReq = IntReq | #INT_RK
+    IntCheck()
+  EndIf
+EndProcedure
+
+Procedure RkDone()
+  RkCs = RkCs | #RKCS_RDY
+  RkBusy = 0
+  RkAsk()
+  DevUpdate()
+EndProcedure
+
+Procedure RkFail(bits.i)                ; an error found at GO
+  RkEr = RkEr | bits
+  RkDone()
+EndProcedure
+
+; DevService takes the interrupt: the request is over. A drive that
+; arrived meanwhile gets its own poll interrupt next (RkPoll).
+Procedure RkIntTaken()
+  If RkSeekDone
+    DevUpdate()
+  EndIf
+EndProcedure
+
+; The block's disk address back into RKDA, keeping the drive bits.
+Procedure RkSetDa(blk.i)
+  RkDa = (RkDa & $E000) | ((blk / 24) << 5) | (((blk / 12) & 1) << 4) | (blk % 12)
+EndProcedure
+
+; ---- GO ----------------------------------------------------------------
+Procedure RkGo()
+  Define f.i
+  Define d.i
+  Define cyl.i
+  f = (RkCs >> 1) & 7
+  d = (RkDa >> 13) & 7
+  RkCs = RkCs & ~(#RKCS_RDY | #RKCS_SCP)
+  IntReq = IntReq & ~#INT_RK
+  RkEr = RkEr & ~(#RKER_WCE | #RKER_CSE)
+  RkIntDrive = d
+  If f = 0                               ; control reset
+    RkCs = #RKCS_RDY
+    RkEr = 0
+    RkWc = 0
+    RkBa = 0
+    RkDa = 0
+    RkDb = 0
+    RkBusy = 0
+    RkIntDrive = 0
+    DevUpdate()
+    ProcedureReturn
+  EndIf
+  If d >= #RK_DRIVES
+    RkFail(#RKER_NXD)
+    ProcedureReturn
+  EndIf
+  If DiskPresent(d) = 0
+    RkFail(#RKER_NXD)
+    ProcedureReturn
+  EndIf
+  If (RkCs & #RKCS_FMT) <> 0 And f <> 1 And f <> 2
+    RkFail(#RKER_PGE)
+    ProcedureReturn
+  EndIf
+  If f = 7                               ; write lock
+    RkLock(d) = 1
+    RkDone()
+    ProcedureReturn
+  EndIf
+  cyl = (RkDa >> 5) & $FF
+  If f = 4 Or f = 6                      ; seek, drive reset
+    If f = 6
+      cyl = 0
+    ElseIf cyl > #RK_LAST_CYL
+      RkFail(#RKER_NXC)
+      ProcedureReturn
+    EndIf
+    RkCyl(d) = cyl
+    RkSeekMask = RkSeekMask | (1 << d)
+    RkSeekAt(d) = CpuNow() + #RK_SEEK_INSTRUCTIONS
+    RkDone()                             ; the controller is free at once
+    ProcedureReturn
+  EndIf
+  If f = 1
+    If RkLock(d) <> 0 Or DiskWritable(d) = 0
+      RkFail(#RKER_WLO)
+      ProcedureReturn
+    EndIf
+  EndIf
+  If (RkDa & 15) >= 12
+    RkFail(#RKER_NXS)
+    ProcedureReturn
+  EndIf
+  If cyl > #RK_LAST_CYL
+    RkFail(#RKER_NXC)
+    ProcedureReturn
+  EndIf
+  RkCyl(d) = cyl
+  RkXFunc = f
+  RkXDrive = d
+  RkXBlock = (cyl * 2 + ((RkDa >> 4) & 1)) * 12 + (RkDa & 15)
+  RkXLeft = (65536 - RkWc) & $FFFF
+  If RkXLeft = 0
+    RkXLeft = 65536
+  EndIf
+  RkXDone = 0
+  RkXStop = 0
+  RkXMa = ((RkCs & $30) << 12) | RkBa
+  RkBusy = 1
+  RkDue = CpuNow() + #RK_XFER_INSTRUCTIONS
+  CpuEventIn(#RK_XFER_INSTRUCTIONS)
+  DevUpdate()
+EndProcedure
+
+; ---- the transfer ------------------------------------------------------
+; Registers after the transfer: RKWC counts the words moved, RKBA and MEX
+; hold the next bus address, RKDA the next sector (simh rk_svc).
+Procedure RkFinish()
+  RkWc = (RkWc + RkXDone) & $FFFF
+  RkBa = RkXMa & $FFFF
+  RkCs = (RkCs & ~$30) | ((RkXMa >> 12) & $30)
+  RkSetDa(RkXBlock)
+  RkDone()
+EndProcedure
+
+; One sector. Returns 1 when it was done, 0 when the storage is not ready
+; yet (nothing has moved, the sector is tried again at the next look).
+Procedure.i RkSector()
+  Define n.i
+  Define i.i
+  Define w.i
+  Define r.i
+  Define ma.i
+  Define step.i
+  n = RkXLeft
+  If n > 256
+    n = 256
+  EndIf
+  step = 2
+  If RkCs & #RKCS_IBA
+    step = 0
+  EndIf
+  ma = RkXMa
+  If RkXFunc = 1                         ; WRITE: memory into the buffer, zeros after
+    For i = 0 To n - 1
+      w = RkMemRead(ma)
+      If w < 0
+        RkEr = RkEr | #RKER_NXM
+        n = i                            ; the words before it still go
+        RkXStop = 1
+        Break
+      EndIf
+      DkBuf(i) = w
+      RkDb = w
+      ma = (ma + step) & $3FFFF
+    Next
+    If n = 0                             ; nothing to write: the sector is not touched (simh)
+      ProcedureReturn 1
+    EndIf
+    For i = n To 255
+      DkBuf(i) = 0
+    Next
+    r = DiskWrite(RkXDrive, RkXBlock)
+    If r = 0
+      RkEr = RkEr & ~#RKER_NXM           ; not ready: as if never begun
+      RkXStop = 0
+      ProcedureReturn 0
+    EndIf
+    If r < 0
+      RkEr = RkEr | #RKER_DRE
+      RkBadBlock = RkXBlock
+      RkXStop = 1
+      ProcedureReturn 1
+    EndIf
+    RkWrites = RkWrites + 1
+  Else                                   ; READ, WRITE CHECK, READ CHECK
+    If RkXFunc = 2 And (RkCs & #RKCS_FMT) <> 0
+      DkBuf(0) = (RkXBlock / 24) << 5    ; FORMAT READ: the header word only
+      n = 1
+    Else
+      r = DiskRead(RkXDrive, RkXBlock)
+      If r = 0
+        ProcedureReturn 0
+      EndIf
+      If r < 0
+        RkEr = RkEr | #RKER_DRE
+        RkBadBlock = RkXBlock
+        RkXStop = 1
+        ProcedureReturn 1
+      EndIf
+      RkReads = RkReads + 1
+    EndIf
+    If RkXFunc = 2                       ; READ: into memory
+      For i = 0 To n - 1
+        RkDb = DkBuf(i)
+        If RkMemWrite(ma, RkDb) = 0
+          RkEr = RkEr | #RKER_NXM
+          n = i
+          RkXStop = 1
+          Break
+        EndIf
+        ma = (ma + step) & $3FFFF
+      Next
+    ElseIf RkXFunc = 3                   ; WRITE CHECK: compare
+      For i = 0 To n - 1
+        w = RkMemRead(ma)
+        If w < 0
+          RkEr = RkEr | #RKER_NXM
+          n = i
+          RkXStop = 1
+          Break
+        EndIf
+        RkDb = w
+        If w <> DkBuf(i)
+          RkEr = RkEr | #RKER_WCE
+        EndIf
+        ma = (ma + step) & $3FFFF
+      Next
+      If (RkEr & #RKER_WCE) <> 0 And (RkCs & #RKCS_SSE) <> 0
+        RkXStop = 1                      ; stop on soft error, at the end of this sector
+      EndIf
+    EndIf                                ; READ CHECK moves nothing, and neither does the address
+    If n = 0                             ; stopped before its first word: RKDA stays (simh
+      ProcedureReturn 1                  ; advances it by the words moved, rounded up)
+    EndIf
+  EndIf
+  If RkXFunc <> 5
+    RkXMa = ma
+  EndIf
+  RkXDone = RkXDone + n
+  RkXLeft = RkXLeft - n
+  RkXBlock = RkXBlock + 1
+  ProcedureReturn 1
+EndProcedure
+
+Procedure RkStep()
+  Define k.i
+  If Micros() - RkLastUs < #RK_SECTOR_US   ; a sector at most every #RK_SECTOR_US of board time,
+    ProcedureReturn                        ; and every #RK_SECTOR_INSTRUCTIONS of the processor's
+  EndIf                                    ; (unless it WAITs): one per CpuRun slice
+  If Waiting = 0 And CpuNow() - RkLastAt < #RK_SECTOR_INSTRUCTIONS
+    ProcedureReturn
+  EndIf
+  k = 0
+  While RkXLeft > 0 And RkXStop = 0 And k < #RK_SECTORS_PER_POLL
+    If RkXBlock >= #RK_BLOCKS            ; past sector 13, surface 1, cylinder 312
+      RkEr = RkEr | #RKER_OVR
+      RkXStop = 1
+      Break
+    EndIf
+    If RkSector() = 0
+      RkLastUs = Micros()
+      RkLastAt = CpuNow()
+      ProcedureReturn                    ; the storage is busy: try again at the next look
+    EndIf
+    k = k + 1
+  Wend
+  RkLastUs = Micros()                    ; the spacing runs from the END of this sector's work
+  RkLastAt = CpuNow()
+  If RkXLeft = 0 Or RkXStop <> 0
+    RkFinish()
+  EndIf
+EndProcedure
+
+; ---- the run loop's look (DevPoll) -------------------------------------
+Procedure RkPoll()
+  Define d.i
+  Define now.i
+  now = CpuNow()
+  If RkBusy
+    If Waiting <> 0 Or now - RkDue >= 0
+      RkStep()
+    EndIf
+  EndIf
+  If RkSeekMask
+    For d = 0 To #RK_DRIVES - 1
+      If RkSeekMask & (1 << d)
+        If Waiting <> 0 Or now - RkSeekAt(d) >= 0
+          RkSeekMask = RkSeekMask & ~(1 << d)
+          RkSeekDone = RkSeekDone | (1 << d)
+        EndIf
+      EndIf
+    Next
+  EndIf
+  ; the hardware poll: one arrived drive at a time, when the controller is
+  ; ready and has no interrupt of its own waiting (manual 1.3.2.9)
+  If RkSeekDone
+    If RkBusy = 0 And (IntReq & #INT_RK) = 0
+      For d = 0 To #RK_DRIVES - 1
+        If RkSeekDone & (1 << d)
+          RkSeekDone = RkSeekDone & ~(1 << d)
+          If RkCs & #RKCS_IDE
+            RkCs = RkCs | #RKCS_SCP
+            RkIntDrive = d
+            RkAsk()
+          EndIf
+          Break
+        EndIf
+      Next
+    EndIf
+  EndIf
+  DevUpdate()
+EndProcedure
+
+; ---- the registers from the bus ----------------------------------------
+Procedure.i RkRead(a.i)
+  Define r.i
+  r = (a >> 1) & 7
+  If r = 0
+    ProcedureReturn RkDsRead()
+  ElseIf r = 1
+    ProcedureReturn RkEr
+  ElseIf r = 2
+    ProcedureReturn RkCsRead()
+  ElseIf r = 3
+    ProcedureReturn RkWc
+  ElseIf r = 4
+    ProcedureReturn RkBa
+  ElseIf r = 5
+    ProcedureReturn RkDa
+  ElseIf r = 7
+    ProcedureReturn RkDb
+  EndIf
+  ProcedureReturn 0                      ; 177414, unused
+EndProcedure
+
+Procedure RkWrite(a.i, v.i)
+  Define r.i
+  Define oldie.i
+  r = (a >> 1) & 7
+  If r = 2                               ; RKCS
+    oldie = RkCs & #RKCS_IDE
+    If RkBusy
+      RkCs = (RkCs & ~#RKCS_IDE) | (v & #RKCS_IDE)
+    Else
+      RkCs = (RkCs & ~#RKCS_RW) | (v & #RKCS_RW)
+    EndIf
+    If (v & #RKCS_IDE) = 0
+      IntReq = IntReq & ~#INT_RK
+    ElseIf oldie = 0 And (RkCs & #RKCS_RDY) <> 0 And (v & 1) = 0
+      RkAsk()                            ; IDE set while ready, no GO: interrupt (RKCS 06 d)
+    EndIf
+    If (v & 1) <> 0 And (RkCs & #RKCS_RDY) <> 0
+      RkGo()
+    EndIf
+  ElseIf RkBusy = 0
+    If r = 3
+      RkWc = v
+    ElseIf r = 4
+      RkBa = v & $FFFE                   ; the bus moves words
+    ElseIf r = 5
+      RkDa = v
+    EndIf
+  EndIf                                  ; RKDS, RKER, RKDB read-only; RKMR unused
+EndProcedure
+
+; The bus INIT (and power-up): every register clear but RDY; drives
+; stop seeking, write locks come off; a transfer in progress is dropped.
+Procedure RkInit()
+  Define d.i
+  RkCs = #RKCS_RDY
+  RkEr = 0
+  RkWc = 0
+  RkBa = 0
+  RkDa = 0
+  RkDb = 0
+  RkBusy = 0
+  RkIntDrive = 0
+  RkSeekMask = 0
+  RkSeekDone = 0
+  For d = 0 To #RK_DRIVES - 1
+    RkLock(d) = 0
+  Next
+  IntReq = IntReq & ~#INT_RK
+  DevUpdate()
+EndProcedure
+
+; ======================================================================
+;  THE DEVICES' SHARED PROCEDURES (called from cpu.pico)
+; ======================================================================
+; DevActive says whether the run loop must look at the devices every
+; window: only while the clock may interrupt or the disk is busy.
+Procedure DevUpdate()
+  DevActive = KwIe | RkBusy | RkSeekMask | RkSeekDone
+EndProcedure
+
+; Called by DevService at the end of a window while DevActive is set.
+; The desk probe build (#DESK_PROBE = 1) times it: DevPollMax, in us.
+Global DevPollMax.i
+Procedure DevPoll()
+  CompilerIf #DESK_PROBE = 1
+    Define t.i
+    t = Micros()
+  CompilerEndIf
+  If KwIe
+    KwPoll()
+  EndIf
+  If RkBusy | RkSeekMask | RkSeekDone
+    RkPoll()
+  EndIf
+  DevUpdate()
+  CompilerIf #DESK_PROBE = 1
+    If Micros() - t > DevPollMax
+      DevPollMax = Micros() - t
+    EndIf
+  CompilerEndIf
+EndProcedure
+
+; A byte written into one of these full-word registers (MOVB, BISB ...):
+; the other byte keeps what the register reads, and the word goes in.
+Procedure DevWriteByte(a.i, v.i)
+  Define w.i
+  If (a & $FFFE) = #KW_CSR
+    w = KwRead()
+  Else
+    w = RkRead(a & $FFFE)
+    If ((a >> 1) & 7) = 2
+      w = w & ~1                         ; GO reads 0 and is not written back
+    EndIf
+  EndIf
+  If a & 1
+    w = (w & $00FF) | (v << 8)
+  Else
+    w = (w & $FF00) | v
+  EndIf
+  If (a & $FFFE) = #KW_CSR
+    KwWrite(w)
+  Else
+    RkWrite(a & $FFFE, w)
+  EndIf
+EndProcedure

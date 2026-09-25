@@ -32,7 +32,31 @@
 ;        stops the processor, and repeats that every 3 s. The board keeps
 ;        answering USB, loader commands and the uploader's BOOTSEL request
 ;        throughout.
+;
+;  THE DISK AND THE CLOCK. The RK11 with its RK05 packs (rk11.pico,
+;  disk.pico) and the KW11-L line clock (kw11.pico) are on the bus. BOOT
+;  does what the RK05 bootstrap ROM does - block 0 of the pack into
+;  000000-000777, then start at 000000 - from any of three places:
+;    * typed at the serial port while no program runs:  BOOT RK0
+;      (or BOOT RK0 173030 to set the switch register as well);
+;    * the tape reader's B frame (drive, switches);
+;    * the desk harness's feed, which is the same bytes.
+;  A program booted from the disk owns the terminal: its output goes out
+;  exactly as typed (no "| " marks, the bell passed through) and there is
+;  no status line; the S frame still answers.
+;  #DISK_BACKEND picks where the packs live (disk.pico): 2, the flash
+;  pack, for the boards; 1, two RAM packs, for the desk's controller
+;  tests. #DISK_FLASH_MODEL = 1 is the desk's model of the flash chip.
+;  THE FLASH BUILD RUNS FROM SRAM (EnableRunFromRAM): while the flash is
+;  being written it cannot be read, and the firmware keeps serving USB
+;  through a whole erase - see disk.pico.
 ; ======================================================================
+#DISK_BACKEND = 2            ; 0 none, 1 RAM (desk), 2 flash (boards)
+#DISK_FLASH_MODEL = 0        ; 1 = the desk model of the flash chip (disk.pico)
+#DESK_PROBE = 0            ; 1 = the desk measurement build (see DESK PROBE)
+CompilerIf #DISK_BACKEND = 2 And #DISK_FLASH_MODEL = 0
+EnableRunFromRAM
+CompilerEndIf
 EnableExplicit
 XIncludeFile "RP2040/Lib/clocks.pico"
 XIncludeFile "RP2040/Lib/timer.pico"
@@ -41,6 +65,9 @@ XIncludeFile "RP2040/Lib/usb_serial.pico"
 XIncludeFile "RP2040/Lib/safety.pico"
 XIncludeFile "cpu.pico"
 XIncludeFile "instructions.pico"
+XIncludeFile "disk.pico"
+XIncludeFile "kw11.pico"
+XIncludeFile "rk11.pico"
 XIncludeFile "tape_image.pico"
 XIncludeFile "tapeload.pico"
 
@@ -57,16 +84,18 @@ XIncludeFile "tapeload.pico"
 ; The gaps are MEASURED, not argued: build with #DESK_PROBE = 1 and run
 ; it in arm_run - see DESK PROBE at the foot.
 #SLICE = 200
-#DESK_PROBE = 0            ; 1 = the desk measurement build (see DESK PROBE)
 #PROBE_BOOTSEL_US = 0      ; with the probe: send the reboot phrase after this long (0 = never)
 
 Global Bells.i
+Global FromDisk.i           ; the running program was booted from the disk (BOOT)
+Global ProgStart.i          ; Micros() when the program was started (the desk's status line)
 Global Total.i
 Global Column.i
 Global State.i             ; 0 waiting for the port, 1 running, 2 halted, 3 in a WAIT
 Global Dim MaxGap.i(4)     ; the probe: longest gap between services, per State
 Global LastService.i
 Global ProbeStart.i, ProbeSent.i
+Global ProbeMaxRun.i, ProbeMaxDisk.i ; the probe: the longest CpuRun slice and DiskTask step, us
 
 Procedure Service()
   CompilerIf #DESK_PROBE = 1
@@ -188,7 +217,15 @@ Procedure DrainConsole()
   While ConOutTail <> ConOutHead
     c = ConOut(ConOutTail & (#CON_SIZE - 1)) & $7F
     ConOutTail = ConOutTail + 1
-    If c = 7
+    If FromDisk                          ; a booted system owns the terminal: as typed
+      If c <> 0 And c <> 127
+        Ch(c)
+        wrote = 1
+        If c = 7
+          Bells = Bells + 1
+        EndIf
+      EndIf
+    ElseIf c = 7
       Bells = Bells + 1
     ElseIf c <> 0 And c <> 127
       If Column = 0 And c <> 13 And c <> 10
@@ -217,9 +254,18 @@ Procedure Status()
   If Waiting
     Say(" (WAIT)")
   EndIf
+  If RkReads | RkWrites | KwTicks
+    Say(" | RK ") : Num(RkReads) : Say(" read ") : Num(RkWrites) : Say(" written | clock ") : Num(KwTicks)
+    Service()                            ; a long line: USB is served between its parts
+    DiskStats()
+    Service()
+  EndIf
   CompilerIf #DESK_PROBE = 1
+    Say(" | ") : Num(Micros() - ProgStart) : Say(" us since start")
+    Service()
     Say(" | longest gap between USB services, us: port-wait ") : Num(MaxGap(0))
     Say(" running ") : Num(MaxGap(1)) : Say(" halted ") : Num(MaxGap(2)) : Say(" WAIT ") : Num(MaxGap(3))
+    Say(" | longest CpuRun slice ") : Num(ProbeMaxRun) : Say(" us, device poll ") : Num(DevPollMax) : Say(" us, DiskTask step ") : Num(ProbeMaxDisk) : Say(" us")
   CompilerEndIf
   Eol()
 EndProcedure
@@ -268,6 +314,13 @@ EndProcedure
 ;    Q          the report firmware's behaviour: self-test and benchmark
 ;               every 3 s -> "#REPORT"; R leaves it
 ;    S          -> "#STATUS <mode> <instructions> <bells> <pc>"
+;    B d,sw     boot drive d of the RK11 with the switch register reading
+;               sw (BOOT below) -> "#BOOT RK<d>"
+;    D          the disk's counters -> "#DISK ..."; Y asks the flash
+;               pack to write back everything cached -> "#SYNC"
+;  Typed at the port while no program runs (and never inside a frame):
+;    BOOT RKn [octal switches]   the same as the B frame; anything else
+;               typed there is answered with a line saying what it takes.
 ;  Receiving is safe for USB: at most #FEED_MAX bytes are taken per pass
 ;  of the main loop, each costing a few microseconds, then Service() runs.
 ; ======================================================================
@@ -381,6 +434,140 @@ Procedure StartProgram(start.i, switches.i)
   ConOutTail = ConOutHead
   ConInTail = ConInHead
   Mode = #MODE_RUN
+  FromDisk = 0
+  ProgStart = Micros()
+EndProcedure
+
+; ---- THE DISK: the counters, and BOOT ------------------------------------
+Procedure DiskStats()
+  CompilerIf #DISK_BACKEND = 2
+    Say(" | flash ") : Num(DkErases) : Say(" erases ") : Num(DkPages) : Say(" pages ")
+    Num(DkDirtyCount()) : Say(" dirty ") : Num(DkSkipped) : Say(" unchanged")
+    If DkPresent = 0
+      Say(" NO PACK IN FLASH")
+    EndIf
+    If DkVerifyFails | DkFatal
+      Say(" | FLASH WRITE FAILED ") : Num(DkVerifyFails) : Say(" times")
+      If DkFatal
+        Say(", writes stopped")
+      EndIf
+    EndIf
+    CompilerIf #DISK_FLASH_MODEL = 1
+      Say(" | model ") : Num(MdUsed) : Say(" sectors, ") : Num(MdViolations) : Say(" violations")
+      If MdFull
+        Say(", MODEL FULL")
+      EndIf
+    CompilerEndIf
+  CompilerEndIf
+  If RkBadBlock >= 0
+    Say(" | block ") : Num(RkBadBlock) : Say(" refused (") : Num(DkWhy)
+    Say(": 1 no pack, 2 past the stored blocks, 3 flash full, 4 flash failed, 5 RAM disk full)")
+  EndIf
+EndProcedure
+
+; What the RK05 bootstrap ROM does: block 0 of the drive into 000000-
+; 000777 through the controller, then a jump to 000000 with the drive in
+; R0 (as DEC's ROMs leave it); a controller error halts at 157042. It is
+; a real PDP-11 program at 157000 (the top of the 56 KB), so the RK11
+; sees exactly the register writes a ROM would make:
+;   157000 012737 d<<13 177412   MOV #d<<13,@#RKDA
+;   157006 005037 177410         CLR @#RKBA
+;   157012 012737 177400 177406  MOV #-256.,@#RKWC
+;   157020 012737 000005 177404  MOV #5,@#RKCS        read, GO
+;   157026 105737 177404         TSTB @#RKCS          ready?
+;   157032 100375                BPL 157026
+;   157034 005737 177404         TST @#RKCS           error?
+;   157040 100001                BPL 157044
+;   157042 000000                HALT
+;   157044 012700 d              MOV #d,R0
+;   157050 005007                CLR PC               start at 000000
+#BOOT_AT = $DE00                  ; 157000
+Procedure BootRk(d.i, switches.i)
+  Define a.i
+  CpuReset()                              ; the bus INIT: kernel, priority 7
+  SwitchReg = switches & $FFFF
+  a = #BOOT_AT >> 1
+  Mem(a) = $15DF : Mem(a + 1) = (d & 7) << 13 : Mem(a + 2) = $FF0A
+  Mem(a + 3) = $0A1F : Mem(a + 4) = $FF08
+  Mem(a + 5) = $15DF : Mem(a + 6) = $FF00 : Mem(a + 7) = $FF06
+  Mem(a + 8) = $15DF : Mem(a + 9) = 5 : Mem(a + 10) = $FF04
+  Mem(a + 11) = $8BDF : Mem(a + 12) = $FF04
+  Mem(a + 13) = $80FD
+  Mem(a + 14) = $0BDF : Mem(a + 15) = $FF04
+  Mem(a + 16) = $8001
+  Mem(a + 17) = 0
+  Mem(a + 18) = $15C0 : Mem(a + 19) = d & 7
+  Mem(a + 20) = $0A07
+  Reg(6) = #BOOT_AT
+  Reg(7) = #BOOT_AT
+  Total = 0
+  Bells = 0
+  ConOutTail = ConOutHead
+  ConInTail = ConInHead
+  Mode = #MODE_RUN
+  FromDisk = 1
+  ProgStart = Micros()
+EndProcedure
+
+; ---- a command typed while no program runs --------------------------------
+#LINE_MAX = 40
+Global Dim TypedLine.a(#LINE_MAX)
+Global TypedLen.i
+
+Procedure TypedCommand()
+  Define i.i
+  Define c.i
+  Define d.i
+  Define sw.i
+  ; BOOT RKn [octal]
+  If TypedLen >= 8
+    If TypedLine(0) = 66 And TypedLine(1) = 79 And TypedLine(2) = 79 And TypedLine(3) = 84 And TypedLine(4) = 32 And TypedLine(5) = 82 And TypedLine(6) = 75
+      d = TypedLine(7) - 48
+      If d >= 0 And d < #RK_DRIVES And (TypedLen = 8 Or TypedLine(8) = 32)
+        sw = 0
+        For i = 9 To TypedLen - 1
+          c = TypedLine(i)
+          If c >= 48 And c <= 55
+            sw = (sw << 3) | (c - 48)
+          EndIf
+        Next
+        If DiskPresent(d)
+          Say("booting RK") : Num(d) : Say(", switches ") : Oct(sw) : Eol()
+          BootRk(d, sw)
+        Else
+          Say("RK") : Num(d) : Say(" has no pack: nothing is in the disk image area of the flash. Pack one with tools/rk_image.py.") : Eol()
+        EndIf
+        ProcedureReturn
+      EndIf
+    EndIf
+  EndIf
+  If TypedLen > 0
+    Say("? type BOOT RK0 (or BOOT RK0 173030 to set the switch register as well)") : Eol()
+  EndIf
+EndProcedure
+
+Procedure TypedChar(c.i)
+  If c = 13 Or c = 10
+    If Column <> 0 Or TypedLen > 0
+      Eol()
+    EndIf
+    TypedCommand()
+    TypedLen = 0
+  ElseIf c = 8 Or c = 127
+    If TypedLen > 0
+      TypedLen = TypedLen - 1
+      Ch(8) : Ch(32) : Ch(8)
+    EndIf
+  ElseIf c >= 32 And c < 127 And TypedLen < #LINE_MAX
+    If c >= 97 And c <= 122
+      c = c - 32                          ; BOOT rk0 works too
+    EndIf
+    TypedLine(TypedLen) = c
+    TypedLen = TypedLen + 1
+    Ch(c)
+    Column = Column + 1
+  EndIf
+  UsbSerialFlush()
 EndProcedure
 
 Procedure DoFrame()
@@ -441,6 +628,28 @@ Procedure DoFrame()
     SayHost("REPORT") : Eol()
   ElseIf FrameCmd = 83                   ; S
     SayHost("STATUS ") : Num(Mode) : Ch(32) : Num(Total) : Ch(32) : Num(Bells) : Ch(32) : Oct(Reg(7)) : Eol()
+  ElseIf FrameCmd = 66                   ; B
+    a = FrameBuf(0)
+    w = 0
+    If FrameLen >= 3
+      w = FrameBuf(1) | (FrameBuf(2) << 8)
+    EndIf
+    If FrameLen < 1 Or a >= #RK_DRIVES
+      SayHost("ERR boot: no such drive") : Eol()
+    ElseIf DiskPresent(a) = 0
+      SayHost("ERR boot: RK") : Num(a) : Say(" has no pack") : Eol()
+    Else
+      SayHost("BOOT RK") : Num(a) : Eol()
+      BootRk(a, w)
+    EndIf
+  ElseIf FrameCmd = 68                   ; D
+    SayHost("DISK RK ") : Num(RkReads) : Say(" read ") : Num(RkWrites) : Say(" written | clock ") : Num(KwTicks)
+    Say(" ticks ") : Num(KwLost) : Say(" lost")
+    DiskStats()
+    Eol()
+  ElseIf FrameCmd = 89                   ; Y
+    DiskSync()
+    SayHost("SYNC") : Eol()
   Else
     SayHost("ERR unknown command ") : Num(FrameCmd) : Eol()
   EndIf
@@ -457,6 +666,8 @@ Procedure InByte(c.i)
         ConIn(ConInHead & (#CON_SIZE - 1)) = c
         ConInHead = ConInHead + 1
       EndIf
+    Else
+      TypedChar(c)                        ; no program runs: a command (BOOT)
     EndIf
   ElseIf FrameState = 1
     FrameCmd = c
@@ -502,9 +713,10 @@ CompilerIf #DESK_PROBE = 1
 ; port's bytes take, #FEED_MAX at a time. A 256 in the feed means "wait
 ; until the program halts, or rings a bell (and 2.5 s more, for the status
 ; line that shows it), or 3 s pass" - the pause the host spends reading a
-; verdict.
-Global FeedPos.i, FeedWaitFrom.i, FeedBells.i, FeedLoaded.i
-Global Dim FeedBuf.u(#FEED_LEN)
+; verdict. A 257 followed by n means "wait n tenths of a second" - how
+; tools/rk_desk.py's feed lets a booted system reach its next prompt.
+Global FeedPos.i, FeedWaitFrom.i, FeedBells.i, FeedLoaded.i, FeedUntil.i
+Global Dim FeedBuf.u(#FEED_LEN + 1)   ; + 1: an empty feed still declares the array
 Procedure ProbeFeedLoad()                ; the feed into RAM once, before timing starts
   Define k.i
   Define c.i
@@ -524,6 +736,12 @@ Procedure ProbeFeedStep()
   EndIf
   If FeedPos < 0 Or FeedPos >= #FEED_LEN
     ProcedureReturn
+  EndIf
+  If FeedUntil
+    If Micros() - FeedUntil < 0
+      ProcedureReturn
+    EndIf
+    FeedUntil = 0
   EndIf
   If FeedWaitFrom
     If Mode = #MODE_RUN And Bells = FeedBells And (Micros() - FeedWaitFrom) < 3000000
@@ -549,6 +767,14 @@ Procedure ProbeFeedStep()
       FeedBells = Bells
       ProcedureReturn
     EndIf
+    If c = 257 And FeedPos < #FEED_LEN
+      FeedUntil = Micros() + FeedBuf(FeedPos) * 100000
+      FeedPos = FeedPos + 1
+      If FeedUntil = 0
+        FeedUntil = 1
+      EndIf
+      ProcedureReturn
+    EndIf
     InByte(c)
   Next
 EndProcedure
@@ -570,11 +796,13 @@ EndProcedure
 Procedure Main()
   Define t0.i
   Define tlast.i
+  Define tdisk.i
   SafetyBoot()
   ClockInitKhz(#CLOCK_KHZ)
   UsbSerialInit()
   SafetyOk()
   BuildOpcodeTable()
+  DiskInit()
   TapeReset()
   LoadTape()
   If #TAPE_START & 1                     ; no built-in tape: wait for one on the port
@@ -607,16 +835,29 @@ Procedure Main()
   Repeat
     If Mode = #MODE_RUN
       State = 1 + 2 * Waiting            ; 1 running, 3 in a WAIT
+      CompilerIf #DESK_PROBE = 1
+        t0 = Micros()
+      CompilerEndIf
       Total = Total + CpuRun(#SLICE)
+      CompilerIf #DESK_PROBE = 1
+        If Micros() - t0 > ProbeMaxRun
+          ProbeMaxRun = Micros() - t0
+        EndIf
+      CompilerEndIf
       DrainConsole()
       If Halted
         State = 2
         Mode = #MODE_HALT
         HaltReport()
         HaltShown = Micros()
-      ElseIf (Micros() - tlast) >= 2000000
+      ElseIf (Micros() - tlast) >= 2000000 And (FromDisk = 0 Or #DESK_PROBE = 1)
         tlast = Micros()
-        Status()
+        If FromDisk = 0
+          Status()
+        ElseIf (Micros() - tdisk) >= 10000000
+          tdisk = Micros()                 ; the desk: a booted system's counters every 10 s
+          Status()
+        EndIf
       EndIf
     ElseIf Mode = #MODE_HALT
       State = 2
@@ -638,6 +879,15 @@ Procedure Main()
       State = 0
     EndIf
     ReadPort()
+    CompilerIf #DESK_PROBE = 1
+      t0 = Micros()
+    CompilerEndIf
+    DiskTask()                           ; the flash write-back, one short step
+    CompilerIf #DESK_PROBE = 1
+      If Micros() - t0 > ProbeMaxDisk
+        ProbeMaxDisk = Micros() - t0
+      EndIf
+    CompilerEndIf
     Service()
   ForEver
 EndProcedure

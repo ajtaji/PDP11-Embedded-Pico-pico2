@@ -1,0 +1,108 @@
+; ======================================================================
+;  kw11.pico2 - the KW11-L line clock at 177546, vector 100, BR6, for the
+;  J-11 emulator on the Raspberry Pi Pico 2.
+;
+;  Include after cpu.pico2 and instructions.pico2 (the main file lists it).
+;
+;  THE REGISTER (LKS, 177546; the J-11 systems' line clock is the KW11-L's
+;  one register; simh pdp11_stddev.c clk_rd/clk_wr/clk_svc/clk_reset):
+;    bit 7  MONITOR - set by every tick of the line and by the bus INIT;
+;           cleared only by the program writing a 0 there. Writing a 1
+;           does nothing.
+;    bit 6  INTERRUPT ENABLE - read/write. With it set, every tick asks
+;           for an interrupt through 000100 at BR6. Clearing it withdraws
+;           a request not yet taken. Taking the interrupt ends the request
+;           and leaves MONITOR as it is.
+;    the rest reads 0.
+;
+;  60 HZ FROM THE BOARD'S TIMER. The line is Micros() (RP2350/Lib/timer):
+;  a tick is due every 1/60 s of the board's own time - 16,667, 16,667 and
+;  16,666 us in turn, exactly 50,000 us every three ticks. Under arm_run
+;  that is emulated time, so a desk run sees 60 Hz of emulated time.
+;
+;  HOW THE PROCESSOR SEES IT: at an instruction boundary, through the same
+;  road as the console - the tick sets a bit in IntReq and DevService
+;  takes the trap between windows (cpu.pico2). While the interrupt is
+;  enabled DevActive is set, so the run loop's windows are at most
+;  #DEV_WINDOW instructions long and the clock is looked at every window;
+;  with it off nothing is looked at unless the program reads the register,
+;  and then the tick is worked out there. Nothing is added to the path an
+;  instruction takes.
+;
+;  A TICK THAT CANNOT BE DELIVERED (the processor's priority is 6 or 7,
+;  or the firmware was busy for more than a period) is not queued: one
+;  request stands for any number of ticks, as on the real line clock, and
+;  when the board falls more than a period behind the phase is taken up
+;  again from now. KwLost counts the ticks let go that way.
+; ======================================================================
+
+#KW_PERIOD_US = 16667        ; 1/60 s, rounded; KwPhase makes three of them 50,000 us
+
+Global KwIe.i                ; bit 6
+Global KwMon.i               ; bit 7
+Global KwNext.i              ; Micros() when the next tick is due
+Global KwPhase.i             ; 0, 1, 2: which of the three periods comes next
+Global KwTicks.i             ; ticks since power-up (for the desk proof and the status line)
+Global KwLost.i              ; ticks let go because the board fell behind
+
+; The period that follows the tick just taken: 16,667, 16,667, 16,666.
+Procedure KwAdvance()
+  If KwPhase = 2
+    KwNext = KwNext + #KW_PERIOD_US - 1
+    KwPhase = 0
+  Else
+    KwNext = KwNext + #KW_PERIOD_US
+    KwPhase = KwPhase + 1
+  EndIf
+EndProcedure
+
+; Has the line ticked? Micros() is a 32-bit count that wraps every 71
+; minutes; the difference is taken, never the values, so the wrap is safe.
+Procedure KwPoll()
+  Define now.i
+  now = Micros()
+  If now - KwNext >= 0
+    KwMon = 1
+    KwTicks = KwTicks + 1
+    KwAdvance()
+    If now - KwNext >= 0                 ; more than a period behind: resume from now
+      KwLost = KwLost + 1
+      KwNext = now + #KW_PERIOD_US
+      KwPhase = 0
+    EndIf
+    If KwIe
+      IntReq = IntReq | #INT_KW
+      IntCheck()
+    EndIf
+  EndIf
+EndProcedure
+
+Procedure.i KwRead()
+  KwPoll()
+  ProcedureReturn (KwMon << 7) | (KwIe << 6)
+EndProcedure
+
+Procedure KwWrite(v.i)
+  KwPoll()
+  If (v & $80) = 0
+    KwMon = 0
+  EndIf
+  If v & $40
+    KwIe = 1
+  Else
+    KwIe = 0
+    IntReq = IntReq & ~#INT_KW
+  EndIf
+  DevUpdate()
+EndProcedure
+
+; The bus INIT and power-up: interrupt off, MONITOR set (simh clk_reset
+; does the same), the next tick a full period away.
+Procedure KwInit()
+  KwIe = 0
+  KwMon = 1
+  KwNext = Micros() + #KW_PERIOD_US
+  KwPhase = 0
+  IntReq = IntReq & ~#INT_KW
+  DevUpdate()
+EndProcedure
