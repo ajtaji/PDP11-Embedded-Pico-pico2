@@ -156,6 +156,9 @@
 #VEC_KW      = $40          ; 000100 KW11-L
 #RK_BASE     = $FF00        ; 177400-177416, the RK11's eight registers
 #KW_CSR      = $FF66        ; 177546, the KW11-L's one register
+#MSER_ADDR   = $FFE4        ; 177744 memory system error   (the KDJ11-B's cache registers:
+#CCR_ADDR    = $FFE6        ; 177746 cache control          no cache is modelled, see
+#HMR_ADDR    = $FFEA        ; 177752 hit/miss               THE CACHE REGISTERS below)
 #DEV_WINDOW  = 200          ; the longest window while a device needs polling (DevActive)
 
 ; ---- timing placeholders (see CLOCK above) ---------------------------
@@ -232,6 +235,7 @@ Global Dl11RxPolled.i      ; the program has looked at RCSR since the last chara
 Global Dl11TxRdy.i, Dl11TxIe.i, Dl11TxChar.i, Dl11TxDue.i
 Global SwitchReg.i, DisplayReg.i
 Global IntReq.i             ; interrupts asked for: #INT_DL11_RX | #INT_DL11_TX | #INT_RK | #INT_KW
+Global CacheCcr.i           ; the cache control register's bits, kept (THE CACHE REGISTERS)
 Global DevActive.i          ; the disk or the clock needs a look every window (DevPoll, rk11/kw11)
 ; The console's two byte queues - the ONLY things the firmware around the
 ; emulator touches. The emulator writes ConOut at its Head and reads ConIn
@@ -699,6 +703,17 @@ EndProcedure
 ;  boundary after DONE is clear. If ConOut is full the transmitter just
 ;  stays busy until the firmware has drained it - nothing is lost.
 ;
+;  THE CACHE REGISTERS (KDJ11-B, 177744-177752). The J-11 module has a
+;  cache, and every operating system written for it touches these three:
+;    177744 MSER  memory system error - reads 0 (no parity or cache error
+;                 is ever recorded); a write (which clears it) does nothing
+;    177746 CCR   cache control - the bits a program writes are kept and
+;                 read back (bits 13-0); nothing else changes, there being
+;                 no cache to force-miss, flush or disable
+;    177752 HMR   hit/miss - reads 0; writes are ignored
+;  Without them a write to the CCR bus-errors; V7's /boot does it after
+;  finding MMR3's 22-bit bit, and loops in its own vector 4.
+;
 ;  THE SWITCH REGISTER (177570): reads SwitchReg, which the firmware sets
 ;  (a diagnostic's options); a write goes to DisplayReg and is kept, not
 ;  shown. The KDJ11-B has no switches; the diagnostics read them anyway.
@@ -724,6 +739,10 @@ Procedure.i IoRead(a.i)                  ; a is even and past the end of RAM
     ProcedureReturn SwitchReg
   ElseIf (a & $FFF0) = #RK_BASE          ; the RK11 (rk11.pico)
     ProcedureReturn RkRead(a)
+  ElseIf a = #CCR_ADDR                   ; THE CACHE REGISTERS
+    ProcedureReturn CacheCcr
+  ElseIf a = #MSER_ADDR Or a = #HMR_ADDR
+    ProcedureReturn 0
   ElseIf a = #KW_CSR                     ; the KW11-L (kw11.pico)
     ProcedureReturn KwRead()
   ElseIf MmuIsReg(a)
@@ -768,6 +787,10 @@ Procedure IoWrite(a.i, v.i)              ; a is even and past the end of RAM
     DisplayReg = v & $FFFF
   ElseIf (a & $FFF0) = #RK_BASE          ; the RK11 (rk11.pico)
     RkWrite(a, v & $FFFF)
+  ElseIf a = #CCR_ADDR                   ; THE CACHE REGISTERS
+    CacheCcr = v & $3FFF
+  ElseIf a = #MSER_ADDR Or a = #HMR_ADDR
+    ; a write clears the error register and is ignored by hit/miss: nothing is recorded
   ElseIf a = #KW_CSR                     ; the KW11-L (kw11.pico)
     KwWrite(v)
   ElseIf MmuIsReg(a)
@@ -837,6 +860,17 @@ Procedure WriteByte(a.i, v.i)
     Else
       PswWrite((PswGet() & $FF00) | (v & $FF))
     EndIf
+    ProcedureReturn
+  EndIf
+  If (a & $FFFE) = #CCR_ADDR             ; a byte of the cache control register
+    If a & 1
+      CacheCcr = (CacheCcr & $00FF) | ((v & $3F) << 8)
+    Else
+      CacheCcr = (CacheCcr & $3F00) | (v & $FF)
+    EndIf
+    ProcedureReturn
+  EndIf
+  If (a & $FFFE) = #MSER_ADDR Or (a & $FFFE) = #HMR_ADDR
     ProcedureReturn
   EndIf
   If (a & $FFF0) = #RK_BASE Or (a & $FFFE) = #KW_CSR   ; a byte of a full-word device register
@@ -1646,6 +1680,7 @@ Procedure CpuReset()
     Reg(i) = 0
   Next
   DevReset()
+  CacheCcr = 0                           ; power-up only: the RESET instruction leaves it
   Dl11TxRdy = 1
   PswSet($00E0)            ; kernel, priority 7
   TrapVector = 0

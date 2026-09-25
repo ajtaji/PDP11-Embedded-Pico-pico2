@@ -1093,7 +1093,9 @@ InstructionMFPI_0065:         ; 0065SS   entries $01A8-$01AF
     Ea = EaWord(Op & $3F)
     MReadWord(Src, Ea)
   EndIf
-  Push(Src)
+  If TrapVector = 0                      ; a read that failed (bus error, MMU abort) aborts
+    Push(Src)                            ; the instruction: nothing is pushed (the J-11 stops
+  EndIf                                  ; at the fault; V6's fuword relies on it)
   FlagNZ = Src
   FlagV = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE

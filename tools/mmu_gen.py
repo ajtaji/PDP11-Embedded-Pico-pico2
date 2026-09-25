@@ -141,10 +141,10 @@ def generate():
     s = once(s, """    Ea = EaWord(Op & $3F)
     MReadWord(Src, Ea)
   EndIf
-  Push(Src)""", """    Ea = EaWord(Op & $3F)
+  If TrapVector = 0""", """    Ea = EaWord(Op & $3F)
     MMReadWordE(Src, Ea, PrvBase + ((Op >> 12) & 8))
   EndIf
-  Push(Src)""", "MFPI's operand")
+  If TrapVector = 0""", "MFPI's operand")
     s = once(s, """      Reg(Op & 7) = Src
     EndIf
   Else

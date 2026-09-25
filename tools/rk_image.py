@@ -43,6 +43,14 @@ LAYOUTS
 
     The default is dense if the whole image fits, else mapped.
 
+BOOT BLOCK
+    --boot-block FILE puts FILE (at most 512 bytes, a.out header and all)
+    into block 0, which the RK05 bootstrap reads. --boot-block @/PATH takes
+    the file from the image's own V6 file system - the V6 install step
+    "dd if=/usr/mdec/rkuboot of=/dev/rk0 count=1". The TUHS Dennis_v6
+    v6root image has no boot program in block 0: pack it with
+    --boot-block @/usr/mdec/rkuboot.
+
 SWAP
     --swap LO,N names the pack's swap area: the firmware keeps those blocks
     in SRAM and never writes them to flash (disk.pico, THE RAM OVERLAY).
@@ -140,6 +148,33 @@ def unix_fs(img):
     return None
 
 
+def v6_file(img, path):
+    """A small file (direct blocks only) out of a V6 file system."""
+    def inode(n):
+        b = 2 + (n - 1) // 16
+        o = b * 512 + ((n - 1) % 16) * 32
+        mode, = struct.unpack_from("<H", img, o)
+        size = (img[o + 5] << 16) | struct.unpack_from("<H", img, o + 6)[0]
+        return mode, size, struct.unpack_from("<8H", img, o + 8)
+
+    def data(n):
+        mode, size, addr = inode(n)
+        if mode & 0o10000:
+            fail("%s is a large file; a boot block is at most 512 bytes." % path)
+        return b"".join(img[a * 512:(a + 1) * 512] for a in addr if a)[:size]
+    n = 1
+    for part in [p for p in path.split("/") if p]:
+        d = data(n)
+        for k in range(0, len(d), 16):
+            ino, = struct.unpack_from("<H", d, k)
+            if ino and d[k + 2:k + 16].split(b"\0")[0].decode("latin-1") == part:
+                n = ino
+                break
+        else:
+            fail("%s is not in the image's V6 file system." % path)
+    return data(n)
+
+
 def used_blocks(img):
     n = blocks_of(img)
     fs = unix_fs(img)
@@ -232,8 +267,15 @@ def main():
     ap.add_argument("--firmware")
     ap.add_argument("--desk")
     ap.add_argument("--swap", default="auto")
+    ap.add_argument("--boot-block")
     a = ap.parse_args()
     img = open(a.image, "rb").read()
+    if a.boot_block:
+        bb = v6_file(img, a.boot_block[1:]) if a.boot_block.startswith("@") else open(a.boot_block, "rb").read()
+        if len(bb) > 512:
+            fail("the boot block %s is %d bytes; block 0 holds 512." % (a.boot_block, len(bb)))
+        img = bb.ljust(512, b"\0") + img[512:]
+        print("rk_image: block 0 <- %s (%d bytes)" % (a.boot_block, len(bb)))
     if a.cmd == "info":
         n = blocks_of(img)
         used, fs = used_blocks(img)
