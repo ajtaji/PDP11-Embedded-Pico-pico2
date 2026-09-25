@@ -596,6 +596,34 @@ Procedure DiskBanner()
     Define c.i
     If DkPresent = 0
       Say("RK0: no pack in the flash at 0x10040000 - pack one with tools/rk_image.py") : Eol()
+      Say("RK0: the ")                   ; what is there, so a board shows at once whether a UF2 landed
+      If DkInitWhy = 1
+        Say("magic")
+      ElseIf DkInitWhy = 2
+        Say("version")
+      Else
+        Say("size")
+      EndIf
+      Say(" check failed; 0x10040000 reads")
+      For i = 0 To 15
+        c = LlXip16(#DISK_REGION + (i & ~1))
+        If i & 1
+          c = c >> 8
+        EndIf
+        c = c & $FF
+        Ch(32)
+        If (c >> 4) < 10
+          Ch(48 + (c >> 4))
+        Else
+          Ch(55 + (c >> 4))
+        EndIf
+        If (c & 15) < 10
+          Ch(48 + (c & 15))
+        Else
+          Ch(55 + (c & 15))
+        EndIf
+      Next
+      Eol()
       ProcedureReturn
     EndIf
     Say("RK0: ")

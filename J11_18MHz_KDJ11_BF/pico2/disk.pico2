@@ -269,6 +269,7 @@ CompilerIf #DISK_BACKEND = 2
 #DK_BOOT2     = $20030600        ; 256 B: the RAM copy of boot2, called to restore XIP
 ReserveSram #DK_BOOT2, 256, "rk flash boot2 copy"
 
+Global DkInitWhy.i                ; why DiskInit found no pack: 1 magic, 2 version, 3 size
 Global DkPresent.i, DkMapped.i, DkStored.i, DkMapSectors.i, DkData.i, DkSlots.i, DkNext.i
 Global DkFatal.i                 ; the flash failed a write-back three times: no more writes
 #DK_OV_SLOTS  = 104               ; the RAM overlay, 512 bytes a block (see THE RAM OVERLAY)
@@ -567,9 +568,11 @@ Procedure DiskInit()
     Next
   CompilerEndIf
   ; "PDP11RK1"
+  DkInitWhy = 1
   If DkHeader32(0) <> $31504450 Or DkHeader32(4) <> $314B5231
     ProcedureReturn
   EndIf
+  DkInitWhy = 2
   If DkHeader32(8) <> 1
     ProcedureReturn
   EndIf
@@ -583,6 +586,7 @@ Procedure DiskInit()
   DkSwapEnd = DkSwapLo + DkHeader32(68)
   DkData = #DISK_REGION + #DK_SECTOR + DkMapSectors * #DK_SECTOR
   DkSlots = (#FLASH_BYTES - DkData) / 512
+  DkInitWhy = 3
   If DkStored > #DK_BLOCKS Or DkStored > DkSlots
     ProcedureReturn
   EndIf
@@ -596,6 +600,7 @@ Procedure DiskInit()
       EndIf
     Next
   EndIf
+  DkInitWhy = 0
   DkPresent = 1
 EndProcedure
 
