@@ -168,6 +168,13 @@ class Asm:
             if final and not 0 <= off <= 63:
                 raise AsmError("SOB out of range")
             return self.emit(pc, 0o077000 | (r << 6) | off)
+        if mn in ("MUL", "DIV", "ASH", "ASHC"):   # EIS: OP src,Rn
+            r = REGS[ops[1].strip().upper()]
+            code = {"MUL": 0o070000, "DIV": 0o071000, "ASH": 0o072000, "ASHC": 0o073000}[mn]
+            return self.words_for(pc, code | (r << 6), [ops[0]], final, dst_only=True)
+        if mn == "XOR":                                 # XOR Rn,dst
+            r = REGS[ops[0].strip().upper()]
+            return self.words_for(pc, 0o074000 | (r << 6), [ops[1]], final, dst_only=True)
         if mn == "RTS":
             return self.emit(pc, 0o000200 | REGS[ops[0].strip().upper()])
         if mn == "JSR":
