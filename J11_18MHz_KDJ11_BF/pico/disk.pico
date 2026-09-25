@@ -267,7 +267,7 @@ ReserveSram #DK_BOOT2, 256, "rk flash boot2 copy"
 
 Global DkPresent.i, DkMapped.i, DkStored.i, DkMapSectors.i, DkData.i, DkSlots.i, DkNext.i
 Global DkFatal.i                 ; the flash failed a write-back three times: no more writes
-#DK_OV_SLOTS  = 160               ; the RAM overlay, 512 bytes a block (see THE RAM OVERLAY)
+#DK_OV_SLOTS  = 128               ; the RAM overlay, 512 bytes a block (see THE RAM OVERLAY)
 Global Dim DkOvIdx.a(#DK_BLOCKS) ; block -> overlay slot + 1, 0 = not in the overlay
 Global Dim DkOv.u(#DK_OV_SLOTS * 256)
 Global DkOvUsed.i, DkSwapLo.i, DkSwapEnd.i
@@ -293,7 +293,7 @@ Global DkRomConnect.i, DkRomExit.i, DkRomFlush.i
 
 CompilerIf #DISK_FLASH_MODEL = 1
 ; ---- THE DESK FLASH MODEL (see the header) -------------------------------
-#MD_SECTORS  = 8
+#MD_SECTORS  = 6
 Global Dim MdAt.i(#MD_SECTORS)   ; the flash offset each model sector holds, -1 none
 Global Dim MdData.l(#MD_SECTORS * 1024)   ; 32 bits at a time, as XIP reads them
 Global MdUsed.i

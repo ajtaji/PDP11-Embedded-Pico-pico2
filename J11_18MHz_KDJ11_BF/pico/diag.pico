@@ -469,6 +469,42 @@ Procedure DiskStats()
   EndIf
 EndProcedure
 
+; One line at start-up saying what pack the flash holds, so a board says
+; at once whether its pack UF2 landed.
+Procedure DiskBanner()
+  CompilerIf #DISK_BACKEND = 2
+    Define i.i
+    Define c.i
+    If DkPresent = 0
+      Say("RK0: no pack in the flash at 0x10040000 - pack one with tools/rk_image.py") : Eol()
+      ProcedureReturn
+    EndIf
+    Say("RK0: ")
+    For i = 0 To 31
+      c = LlXip16(#DISK_REGION + 32 + (i & ~1))
+      If i & 1
+        c = c >> 8
+      EndIf
+      c = c & $FF
+      If c = 0
+        Break
+      EndIf
+      Ch(c)
+    Next
+    Say(", ") : Num(DkStored) : Say(" blocks")
+    If DkMapped
+      Say(" (mapped)")
+    EndIf
+    If DkSwapEnd > DkSwapLo
+      Say(", swap ") : Num(DkSwapLo) : Say("-") : Num(DkSwapEnd - 1) : Say(" in RAM")
+    EndIf
+    CompilerIf #DISK_READ_ONLY = 1
+      Say(", READ-ONLY: the flash is never written")
+    CompilerEndIf
+    Eol()
+  CompilerEndIf
+EndProcedure
+
 ; What the RK05 bootstrap ROM does: block 0 of the drive into 000000-
 ; 000777 through the controller, then a jump to 000000 with the drive in
 ; R0 (as DEC's ROMs leave it); a controller error halts at 157042. It is
@@ -834,6 +870,7 @@ Procedure Main()
     Say(", switches ") : Oct(#TAPE_SWITCHES) : Eol()
   Else
     Say("PDP-11 J-11 on Pico: serial tape reader ready") : Eol()
+    DiskBanner()
   EndIf
 
   tlast = Micros()
