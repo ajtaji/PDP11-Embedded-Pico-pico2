@@ -6,6 +6,9 @@
 ;      #DISK_BACKEND = 0     no drives (the report firmware)
 ;                    = 1     RAM: two small packs in SRAM, for the desk
 ;                    = 2     FLASH: one pack in the board's flash
+;      #DISK_READ_ONLY = 1   (flash) the flash is never written: erase and
+;                            program are compiled out, and every write goes
+;                            to the RAM overlay (below) and is lost at reset
 ;      #DISK_FLASH_MODEL = 0 the flash is the board's own chip
 ;                        = 1 the DESK FLASH MODEL: the same code above the
 ;                            chip, with the chip modelled in SRAM (below)
@@ -86,6 +89,15 @@
 ;  also drops the override) and a RAM copy of boot2 to come back to the
 ;  exact XIP mode the board booted in (pico-sdk v1.5.1 flash.c:22-45).
 ;
+;  THE RAM OVERLAY. Blocks in the pack's SWAP AREA (from the header, which
+;  rk_image.py fills in: Mini-Unix swaps to blocks 4000-4871, SWPLO and
+;  NSWAP in its /usr/sys/param.h) are kept in SRAM and never written to
+;  flash: swap need not outlive a reset, and it is where a swapping Unix
+;  writes most. #DK_OV_SLOTS blocks fit; a swap block past them goes to
+;  flash as any other (DkSwapSpill counts them). In the READ-ONLY build
+;  every written block goes to the overlay, and one past its room is
+;  refused (DRE, the firmware says so).
+
 ;  POWER. A cached write reaches flash within #DK_IDLE_US of the last
 ;  write to that sector; pulling the power inside that window loses it,
 ;  as a disk with a write cache would. Pulling it DURING a write-back
@@ -113,7 +125,7 @@
 ; ======================================================================
 
 Global Dim DkBuf.u(256)          ; the block being moved (rk11.pico)
-Global DkWhy.i                   ; why the last -1: 1 no pack, 2 past the stored blocks, 3 flash full, 4 flash failed, 5 RAM disk full
+Global DkWhy.i                   ; why the last -1: 1 no pack, 2 past the stored blocks, 3 flash full, 4 flash failed, 5 RAM disk full, 6 RAM overlay full
 
 CompilerIf #DISK_BACKEND = 0
 ; ======================================================================
@@ -250,6 +262,11 @@ ReserveSram #DK_BOOT2, 256, "rk flash boot2 copy"
 
 Global DkPresent.i, DkMapped.i, DkStored.i, DkMapSectors.i, DkData.i, DkSlots.i, DkNext.i
 Global DkFatal.i                 ; the flash failed a write-back three times: no more writes
+#DK_OV_SLOTS  = 96               ; the RAM overlay, 512 bytes a block (see THE RAM OVERLAY)
+Global Dim DkOvIdx.a(#DK_BLOCKS) ; block -> overlay slot + 1, 0 = not in the overlay
+Global Dim DkOv.u(#DK_OV_SLOTS * 256)
+Global DkOvUsed.i, DkSwapLo.i, DkSwapEnd.i
+Global DkOvWrites.i, DkSwapSpill.i
 Global Dim DkMap.u(#DK_BLOCKS)   ; mapped layout: slot + 1, or 0
 Global Dim DkLine.u(#DK_LINES * 2048)   ; the cache, one 4 KB sector a line, as 16-bit words
 Global Dim DkLineAt.i(#DK_LINES)        ; the flash offset of the line's sector, -1 none
@@ -301,6 +318,7 @@ Procedure.i LlXip16(off.i)       ; a 16-bit read of the flash, as XIP would give
   ProcedureReturn LlXip32(off) & $FFFF
 EndProcedure
 
+CompilerIf #DISK_READ_ONLY = 0                 ; the write side: not even compiled when read-only
 Procedure LlOpen()
   DkOut = 1
 EndProcedure
@@ -373,6 +391,7 @@ Procedure.i LlReady()
   ProcedureReturn 1
 EndProcedure
 
+CompilerEndIf
 CompilerElse
 ; ---- THE BOARD'S CHIP (see the header) -----------------------------------
 #SSI_SR      = $18000028         ; RP2040 XIP_SSI: SR (TFNF bit 1, RFNE bit 3)
@@ -386,6 +405,8 @@ EndProcedure
 ProcedureRAM.i LlXip32(off.i)
   ProcedureReturn PeekL(#XIP_BASE + off)
 EndProcedure
+
+CompilerIf #DISK_READ_ONLY = 0                 ; the write side: not even compiled when read-only
 
 ; The ROM lookup, as flashid.pico does it: rom_table_lookup at [$18],
 ; the function table at [$14], both 16-bit; codes are c1 | c2 << 8.
@@ -491,6 +512,7 @@ ProcedureRAM LlProgram(off.i, line.i, page.i)
   LlCs(1)
 EndProcedure
 CompilerEndIf
+CompilerEndIf
 
 ; ---- the header ----------------------------------------------------------
 Procedure.i DkHeader32(k.i)
@@ -523,6 +545,8 @@ Procedure DiskInit()
   If DkMapped = 0
     DkMapSectors = 0
   EndIf
+  DkSwapLo = DkHeader32(64)             ; the swap area (rk_image.py), 0 blocks = none
+  DkSwapEnd = DkSwapLo + DkHeader32(68)
   DkData = #DISK_REGION + #DK_SECTOR + DkMapSectors * #DK_SECTOR
   DkSlots = (#FLASH_BYTES - DkData) / 512
   If DkStored > #DK_BLOCKS Or DkStored > DkSlots
@@ -659,6 +683,13 @@ Procedure.i DiskRead(d.i, blk.i)
     DkWhy = 1
     ProcedureReturn -1
   EndIf
+  If DkOvIdx(blk)                        ; in the RAM overlay
+    b = (DkOvIdx(blk) - 1) * 256
+    For i = 0 To 255
+      DkBuf(i) = DkOv(b + i)
+    Next
+    ProcedureReturn 1
+  EndIf
   If DkMapped = 0 And blk >= DkStored    ; past a truncated dense pack: never written, so zeros
     For i = 0 To 255
       DkBuf(i) = 0
@@ -702,6 +733,29 @@ Procedure.i DiskWrite(d.i, blk.i)
   If d <> 0 Or DkPresent = 0
     DkWhy = 1
     ProcedureReturn -1
+  EndIf
+  k = DkOvIdx(blk) - 1                   ; the RAM overlay: swap, or everything when read-only
+  If k < 0
+    If #DISK_READ_ONLY = 1 Or (blk >= DkSwapLo And blk < DkSwapEnd)
+      If DkOvUsed < #DK_OV_SLOTS
+        k = DkOvUsed
+        DkOvUsed = DkOvUsed + 1
+        DkOvIdx(blk) = k + 1
+      ElseIf #DISK_READ_ONLY = 1
+        DkWhy = 6
+        ProcedureReturn -1
+      Else
+        DkSwapSpill = DkSwapSpill + 1    ; no room: this swap block goes to flash
+      EndIf
+    EndIf
+  EndIf
+  If k >= 0
+    b = k * 256
+    For i = 0 To 255
+      DkOv(b + i) = DkBuf(i)
+    Next
+    DkOvWrites = DkOvWrites + 1
+    ProcedureReturn 1
   EndIf
   If DkFatal
     DkWhy = 4
@@ -810,6 +864,7 @@ Procedure DiskTask()
   If DkPresent = 0 Or DkFatal <> 0     ; failed three times: stop, and never wear it further
     ProcedureReturn
   EndIf
+  CompilerIf #DISK_READ_ONLY = 0
   If DkState = 0
     For k = 0 To #DK_LINES - 1           ; a line being loaded: one part more
       If DkLineAt(k) >= 0 And DkLineFill(k) < 2048
@@ -908,5 +963,6 @@ Procedure DiskTask()
     DkCmp = 0
     DkState = 7
   EndIf
+  CompilerEndIf
 EndProcedure
 CompilerEndIf

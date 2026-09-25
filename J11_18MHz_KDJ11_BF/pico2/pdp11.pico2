@@ -10,6 +10,7 @@
 ; ======================================================================
 #DISK_BACKEND = 0            ; no drives: the RK11 and the KW11-L answer, with no pack (disk.pico2)
 #DISK_FLASH_MODEL = 0
+#DISK_READ_ONLY = 0
 #DESK_PROBE = 0             ; the desk probe's timing (rk11), off here
 EnableExplicit
 XIncludeFile "RP2350/Lib/clocks.pico2"

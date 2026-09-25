@@ -22,7 +22,8 @@ THE FLASH REGION (disk.pico's header says the same)
     firmware bigger than that.
         +0      4 KB header: "PDP11RK1", u32 version 1, u32 layout (0 dense,
                 1 mapped), u32 blocks stored, u32 slots used, u32 map
-                sectors, u32 flags, 32-byte name
+                sectors, u32 flags, 32-byte name, then at +64 u32 swap
+                start and u32 swap blocks (the RAM overlay's area, below)
         +4 KB   mapped layout only: 3 sectors, one u16 per RK05 block,
                 0 = not stored (reads as zeros), n = slot n - 1
         then    512-byte slots
@@ -41,6 +42,14 @@ LAYOUTS
              keeping); otherwise every block that is not all zeros.
 
     The default is dense if the whole image fits, else mapped.
+
+SWAP
+    --swap LO,N names the pack's swap area: the firmware keeps those blocks
+    in SRAM and never writes them to flash (disk.pico, THE RAM OVERLAY).
+    --swap auto (the default) takes, for a V6 or V7 file system smaller
+    than the pack, the rest of the pack after it - the classic layout
+    (Mini-Unix: 4000,872, SWPLO and NSWAP in its /usr/sys/param.h). Check
+    it against the kernel's own configuration; --swap none turns it off.
 """
 import argparse
 import os
@@ -147,12 +156,16 @@ def used_blocks(img):
     return used, fs
 
 
+SWAP = (0, 0)
+
+
 def header(layout, stored, slots, name):
     h = bytearray(SECTOR)
     struct.pack_into("<8sIIIIII", h, 0, b"PDP11RK1", 1, layout, stored, slots,
                      MAP_SECTORS if layout else 0, 1)
     nb = name.encode("ascii", "replace")[:31]
     h[32:32 + len(nb)] = nb
+    struct.pack_into("<II", h, 64, SWAP[0], SWAP[1])
     return bytes(h)
 
 
@@ -175,6 +188,7 @@ def build(img, chip, layout, nblocks, name):
         parts[data] = body
         return parts, "dense, %d blocks (%d bytes) of %d that fit" % (stored, stored * 512, cap)
     used, fs = used_blocks(img)
+    used = [b for b in used if not SWAP[0] <= b < SWAP[0] + SWAP[1]]
     cap, data = capacity(chip, True)
     if len(used) > cap:
         fail("the image uses %d blocks and the %s's mapped region holds %d slots. It does not fit." %
@@ -217,6 +231,7 @@ def main():
     ap.add_argument("-o")
     ap.add_argument("--firmware")
     ap.add_argument("--desk")
+    ap.add_argument("--swap", default="auto")
     a = ap.parse_args()
     img = open(a.image, "rb").read()
     if a.cmd == "info":
@@ -236,6 +251,21 @@ def main():
         fail("pack needs --chip pico or pico2, and -o OUT.uf2.")
     if a.blocks is not None and not 0 < a.blocks <= RK_BLOCKS:
         fail("--blocks must be 1 to %d." % RK_BLOCKS)
+    global SWAP
+    if a.swap == "auto":
+        fs = unix_fs(img)
+        SWAP = (fs[2], RK_BLOCKS - fs[2]) if fs and fs[2] < RK_BLOCKS else (0, 0)
+    elif a.swap != "none":
+        try:
+            lo, n = [int(x) for x in a.swap.split(",")]
+        except ValueError:
+            fail("--swap takes LO,N (decimal blocks), auto or none.")
+        if not (0 <= lo and 0 < n and lo + n <= RK_BLOCKS):
+            fail("--swap %s is not inside the pack's %d blocks." % (a.swap, RK_BLOCKS))
+        SWAP = (lo, n)
+    if SWAP[1]:
+        print("rk_image: swap area blocks %d-%d (%d): kept in the firmware's RAM, never written to flash"
+              % (SWAP[0], SWAP[0] + SWAP[1] - 1, SWAP[1]))
     parts, summary = build(img, a.chip, a.layout, a.blocks, a.name or os.path.basename(a.image))
     open(a.o, "wb").write(uf2(parts, a.chip))
     print("rk_image: %s -> %s for the %s at 0x%08X: %s" % (a.image, a.o, a.chip, XIP + REGION, summary))

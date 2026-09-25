@@ -52,6 +52,7 @@
 ;  through a whole erase - see disk.pico2.
 ; ======================================================================
 #DISK_BACKEND = 2            ; 0 none, 1 RAM (desk), 2 flash (boards)
+#DISK_READ_ONLY = 0          ; 1 = the flash is never written (disk.pico2)
 #DISK_FLASH_MODEL = 0        ; 1 = the desk model of the flash chip (disk.pico2)
 #DESK_PROBE = 0            ; 1 = the desk measurement build (see DESK PROBE)
 CompilerIf #DISK_BACKEND = 2 And #DISK_FLASH_MODEL = 0
@@ -446,6 +447,11 @@ Procedure DiskStats()
     If DkPresent = 0
       Say(" NO PACK IN FLASH")
     EndIf
+    Say(" | RAM overlay ") : Num(DkOvUsed) : Say(" of ") : Num(#DK_OV_SLOTS) : Say(" blocks, ")
+    Num(DkOvWrites) : Say(" writes, ") : Num(DkSwapSpill) : Say(" swap writes to flash")
+    CompilerIf #DISK_READ_ONLY = 1
+      Say(" (READ-ONLY build: flash never written)")
+    CompilerEndIf
     If DkVerifyFails | DkFatal
       Say(" | FLASH WRITE FAILED ") : Num(DkVerifyFails) : Say(" times")
       If DkFatal
@@ -461,7 +467,7 @@ Procedure DiskStats()
   CompilerEndIf
   If RkBadBlock >= 0
     Say(" | block ") : Num(RkBadBlock) : Say(" refused (") : Num(DkWhy)
-    Say(": 1 no pack, 2 past the stored blocks, 3 flash full, 4 flash failed, 5 RAM disk full)")
+    Say(": 1 no pack, 2 past the stored blocks, 3 flash full, 4 flash failed, 5 RAM disk full, 6 RAM overlay full)")
   EndIf
 EndProcedure
 
