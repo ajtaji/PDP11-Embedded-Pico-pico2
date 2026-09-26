@@ -90,6 +90,7 @@ XIncludeFile "tapeload.pico2"
 Global Bells.i
 Global FromDisk.i           ; the running program was booted from the disk (BOOT)
 Global ProgStart.i          ; Micros() when the program was started (the desk's status line)
+Global ProgUpSec.i, ProgUpAcc.i   ; UpSec and UpAcc then: the time since BOOT, for as long as it runs
 Global Total.i
 ; THE TWO CORES (Main, Core0Loop, Core1Main below)
 Global C0CmdSeq.i, C0Op.i, C0A1.i, C0A2.i   ; a command for core 0: core 1 writes
@@ -413,10 +414,21 @@ Procedure SayHost(*s.i)                  ; a reply line: starts '#', on a line o
 EndProcedure
 
 ; ---- the report firmware's behaviour (pdp11.pico), for Q ------------------
+; count per second over us microseconds, to the unit. The long division
+; below works in r * 10 with r < us, so us is kept under 200,000,000 (it
+; overflowed 32 bits past 214 s): both are halved together, which keeps the
+; ratio and loses only the count's lowest bits.
 Procedure.i PerSecond(count.i, us.i)
   Define q.i
   Define r.i
   Define k.i
+  While us > 200000000
+    us = us >> 1
+    count = count >> 1
+  Wend
+  If us <= 0
+    ProcedureReturn 0
+  EndIf
   q = count / us
   r = count % us
   For k = 1 To 6
@@ -520,6 +532,7 @@ Procedure StatsBlock()
   Define nz.i
   Define up.i
   Define t.i
+  Define k.i
   C1Where = 9
   Service()
   khz = ClkKhz                           ; measured with the frequency counter at start-up
@@ -560,11 +573,16 @@ Procedure StatsBlock()
   EndIf
   Service()
   StatLine("speed   ") : Num(StatIps) : Say(" instructions/s over the last second; ")
-  t = Micros() - ProgStart
-  If t > 0
-    Num(PerSecond(Total, t))
+  t = UpSec - ProgUpSec                  ; since BOOT, from the uptime (Micros() wraps at 71 min)
+  k = UpAcc - ProgUpAcc
+  If k < 0
+    k = k + 1000000
+    t = t - 1
+  EndIf
+  If t >= 1000
+    Num(Total / t)                       ; past 1000 s whole seconds are exact enough
   Else
-    Say("0")
+    Num(PerSecond(Total, t * 1000000 + k))
   EndIf
   Say(" average since BOOT (") : Num(Total) : Say(" instructions)")
   StatLine("memory  ") : Num(#RAM_BYTES / 1024) : Say(" KB (000000-") : Oct(#RAM_BYTES - 1) : Say("), ")
@@ -599,7 +617,7 @@ Procedure StatsBlock()
     Say(", interrupts off")
   EndIf
   StatLine("uptime  ") : Num(up / 3600) : Ch(58) : Num((up / 600) % 6) : Num((up / 60) % 10) : Ch(58)
-  Num((up / 10) % 6) : Num(up % 10) : Say(" since power-up, ") : Num((Micros() - ProgStart) / 1000000) : Say(" s since BOOT")
+  Num((up / 10) % 6) : Num(up % 10) : Say(" since power-up, ") : Num(UpSec - ProgUpSec) : Say(" s since BOOT")
   If C1Alone
     StatLine("cores   core 1 did not start: the I/O runs on core 0 and the PDP-11 cannot run")
   Else
@@ -687,6 +705,8 @@ Procedure StartProgram(start.i, switches.i)  ; core 1
   Mode = #MODE_RUN
   FromDisk = 0
   ProgStart = Micros()
+  ProgUpSec = UpSec
+  ProgUpAcc = UpAcc
 EndProcedure
 
 ; ---- THE DISK: the counters, and BOOT ------------------------------------
@@ -847,6 +867,8 @@ Procedure BootRk(d.i, switches.i)        ; core 1
   Mode = #MODE_RUN
   FromDisk = 1
   ProgStart = Micros()
+  ProgUpSec = UpSec
+  ProgUpAcc = UpAcc
 EndProcedure
 
 ; ---- a command typed while no program runs --------------------------------
@@ -1421,6 +1443,8 @@ Procedure Main()
     Mode = #MODE_RUN
     FromDisk = 0
     ProgStart = Micros()
+    ProgUpSec = UpSec
+    ProgUpAcc = UpAcc
   EndIf
   CompilerIf #DESK_PROBE = 1
     ProbeFeedLoad()

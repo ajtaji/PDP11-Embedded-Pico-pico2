@@ -77,10 +77,21 @@ EndProcedure
 ; (The report used to print (count * 1000) / (us / 1000 + 1): the time cut
 ; to whole milliseconds and then one added, so every run between 74.000 and
 ; 74.999 ms printed 800040 - 60003000 / 75 - whatever it really took.)
+; count per second over us microseconds, to the unit. The long division
+; below works in r * 10 with r < us, so us is kept under 200,000,000 (it
+; overflowed 32 bits past 214 s): both are halved together, which keeps the
+; ratio and loses only the count's lowest bits.
 Procedure.i PerSecond(count.i, us.i)
   Define q.i
   Define r.i
   Define k.i
+  While us > 200000000
+    us = us >> 1
+    count = count >> 1
+  Wend
+  If us <= 0
+    ProcedureReturn 0
+  EndIf
   q = count / us
   r = count % us
   For k = 1 To 6
