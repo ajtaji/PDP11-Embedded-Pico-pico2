@@ -3,7 +3,10 @@
 A DEC J-11 (KDJ11-BF) PDP-11 emulated on a Raspberry Pi Pico W (RP2040) or
 Pico 2 W (RP2350), with a console on the USB serial port, an RK11 disk
 controller with an RK05 pack held in the board's flash, a KW11-L line clock
-and, on the J-11, memory management. It boots Unix: **Sixth Edition (V6) on
+and, on the J-11, memory management. The emulated processor runs alone on
+the chip's first core, with its hot run loop in SRAM; the second core does
+USB, the console, the disk's storage and the line clock's 60 Hz. It boots
+Unix: **Sixth Edition (V6) on
 the Pico 2 W and Mini-Unix on the Pico W.** Seventh Edition (V7) is not
 supported (see **Known limits**).
 
@@ -66,8 +69,10 @@ and the board stays in the firmware's own console instead of booting. There
 and the diagnostic tools (`tools/tape_ladder.py`) can load paper tapes.
 
 **Live statistics.** Type Ctrl-] then `s` at any time: the firmware prints a
-block with the measured clock, the emulated instructions per second, memory
-in use, disk reads and writes, RAM overlay use, the line clock, and uptime.
+block with the clock (measured at start-up), the emulated instructions per
+second, memory in use, disk reads and writes, RAM overlay use, the line
+clock, uptime, what each core does, and the longest gap between two USB
+services since the banner (and what core 1 was doing then).
 These two keys never reach Unix (Ctrl-] twice sends one Ctrl-] through).
 
 **Shutting down.** Unplug at any time. The emulator never writes the flash:
@@ -81,19 +86,22 @@ does no harm but saves nothing across a power cycle.
   `mem = 76` at boot; about 15 KB is left for user programs once its kernel
   is in.
 - **Writes live in RAM, in a fixed number of 512-byte blocks** (104 on the
-  Pico 2 W, 128 on the Pico W), shared by the swap area and every file-system
+  Pico 2 W, 124 on the Pico W), shared by the swap area and every file-system
   write. When they are used up, a write is refused: Unix sees a disk error
   and the statistics block shows `REFUSED: block N (RAM overlay full)`.
 - **Pico W swap.** Mini-Unix has no memory management and swaps whole
-  processes (about 37 KB each), so it fills the 128 blocks after a few
+  processes (about 37 KB each), so it fills the 124 blocks after a few
   commands; a refused swap write can restart the shell (the "RESTRICTED
   RIGHTS" notice appears again and the date jumps back). Keep Pico W
   sessions short for now.
 - **V6 on the Pico 2 W:** `ps` says "no swap device" and `df` cannot open
   its disks, because the pack's `/dev` holds only `kmem`, `mem`, `null` and
   `tty8`. `dc` is too large for the 56 KB machine.
-- **Speed:** about 180,000 PDP-11 instructions per second under V6 on the
-  Pico 2 W (the firmware runs from flash through a 16 KB cache).
+- **Speed** (measured on the boards, 2026-09-26): about 460,000 PDP-11
+  instructions per second under V6 on the Pico 2 W (`od /rkunix` in 21 s),
+  and about 800,000 under Mini-Unix on the Pico W. The run loop each Unix
+  lives in executes from SRAM; code left in flash runs through a 16 KB
+  cache the two cores share.
 - **Seventh Edition (V7) is not supported.** Its kernel alone needs about
   74 KB of memory (text 32,704 + data 1,854 + bss 39,812 bytes) and the
   emulated machine has 56 KB. The V7 tape (`media/unix/v7.tap.gz`),
@@ -268,8 +276,12 @@ These exist outside the repository and would be worth adding:
 
 ## Rebuilding the images
 
-You need Python 3 and the PureMetal compiler (`PureMetalForge.exe`). From
-the `PureMetal` folder:
+You need Python 3 and the PureMetal compiler (`PureMetalForge.exe`).
+**The images use a compiler with r4-r7 and r12 reservation** (compiler
+branch `regres-more`, until it is merged): the firmware keeps the lazy N/Z
+flags in r4 (`#RESERVE_MORE = 1` in `cpu.pico(2)`). With a compiler that
+refuses it, set `#RESERVE_MORE = 0`; that builds and runs, but not
+byte-for-byte the committed images. From the `PureMetal` folder:
 
 **Pico 2 W, V6** (`images/pico2w-v6/combined.uf2`):
 

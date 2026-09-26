@@ -6,7 +6,9 @@ itself and Unix's `#` prompt appears with no typing. Press **Esc** within
 How to flash, connect and use them, and how to rebuild them from
 `../media/unix/` with the tools, is in **[../README.md](../README.md)**.
 
-Both builds are **read-only**: the emulator never writes the flash. Swap
+Both run the emulated processor alone on core 0, with its run loop in
+SRAM, and USB, the console and the disk's storage on core 1. Both builds
+are **read-only**: the emulator never writes the flash. Swap
 and every disk write go to RAM and are lost at power-off, so a board can be
 unplugged at any time and always starts again from the pack as flashed.
 
@@ -17,7 +19,7 @@ The UNIX files inside the disk packs are covered by the Caldera licence in
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `pico2w-v6/combined.uf2` | 5,274,112 | `15d5873243af9f555743b2d31991222941f39afe5fdb28faa448b11ae652890e` |
+| `pico2w-v6/combined.uf2` | 5,286,912 | `69fe0affff28228ce6f75a79b9931159e0d3aae301d482205657a9427040eeb6` |
 
 Firmware and disk pack in one UF2: hold BOOTSEL, plug in, copy the file to
 the `RP2350` drive. At the serial console:
@@ -30,8 +32,9 @@ mem = 76
 #
 ```
 
-`#` 4.4 s after the port opened on a Pico 2 W (2 s of the Esc wait, then the
-boot). The pack is the V6 root pack (`../media/unix/v6root.gz`) with V6's
+`#` 3.4 s after the port opened on a Pico 2 W (2 s of the Esc wait, then the
+boot). `time od /rkunix >/dev/null` takes 21 s (about 460,000 PDP-11
+instructions per second). The pack is the V6 root pack (`../media/unix/v6root.gz`) with V6's
 own `rkuboot` installed in block 0.
 
 Known: `ps` and `df` fail because the pack's `/dev` has no disk or swap
@@ -41,16 +44,17 @@ entries; V6's `dc` is too large for the 56 KB machine.
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `picow-mini-unix/firmware.uf2` | 280,576 | `cb7a4b63be90a4338749b98cf5d3b149d3cd94e0f8841cd448d90837f5a3d401` |
+| `picow-mini-unix/firmware.uf2` | 292,352 | `60b595941028587877c2d2fd063c284a47f67d38a9acddadbf1df383bbc7ce14` |
 | `picow-mini-unix/minix.uf2` | 3,167,232 | `de8bb8dc541f17e25b38097f7b0063cdb0f11d7ff28a81eb8a1fb0e75460f55a` |
 
 **Flash these as two separate copies**, firmware first, then the pack, each
 from a fresh BOOTSEL (the `RPI-RP2` drive). On the RP2040 a single combined
 UF2 leaves the pack area unwritten. The pack holds only the used blocks of
 the Mini-Unix pack (`../mini-unix.rk05`, 3,061 blocks, mapped) so it fits
-the Pico W's flash. It boots `rkmx` by itself; `#` 3.5 s after the port
-opened on a Pico W.
+the Pico W's flash. It boots `rkmx` by itself; `#` 3.2 s after the port
+opened on a Pico W, and the processor runs about 800,000 PDP-11
+instructions per second.
 
-Known: the RAM for disk writes (128 blocks, shared with swap) fills after a
+Known: the RAM for disk writes (124 blocks, shared with swap) fills after a
 few commands. Mini-Unix swaps whole processes, and a refused swap write can
 restart the shell, so keep sessions short for now.
