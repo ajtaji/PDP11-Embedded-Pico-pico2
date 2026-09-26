@@ -276,12 +276,10 @@ These exist outside the repository and would be worth adding:
 
 ## Rebuilding the images
 
-You need Python 3 and the PureMetal compiler (`PureMetalForge.exe`).
-**The images use a compiler with r4-r7 and r12 reservation** (compiler
-branch `regres-more`, until it is merged): the firmware keeps the lazy N/Z
-flags in r4 (`#RESERVE_MORE = 1` in `cpu.pico(2)`). With a compiler that
-refuses it, set `#RESERVE_MORE = 0`; that builds and runs, but not
-byte-for-byte the committed images. From the `PureMetal` folder:
+You need Python 3 and the PureMetal compiler (`PureMetalForge.exe`), the
+release build from compiler main `db8608cc` or later: the firmware keeps the
+lazy N/Z flags in r4 (`#RESERVE_MORE = 1` in `cpu.pico(2)`), which needs the
+r4-r7 reservation that release has. From the `PureMetal` folder:
 
 **Pico 2 W, V6** (`images/pico2w-v6/combined.uf2`):
 
