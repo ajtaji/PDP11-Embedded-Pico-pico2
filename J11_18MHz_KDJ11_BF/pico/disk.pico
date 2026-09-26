@@ -406,6 +406,15 @@ CompilerElse
 #SSI_DR0     = $18000060
 #QSPI_SS_CTRL = $4001800C        ; IO_QSPI GPIO_QSPI_SS_CTRL, OUTOVER bits 9:8
 
+CompilerIf #DISK_READ_ONLY = 1                 ; nothing ever takes the flash out of XIP:
+Procedure.i LlXip16(off.i)                     ; plain reads (and no flash/RAM long call
+  ProcedureReturn PeekU(#XIP_BASE + off)       ; for a core that holds r12)
+EndProcedure
+
+Procedure.i LlXip32(off.i)
+  ProcedureReturn PeekL(#XIP_BASE + off)
+EndProcedure
+CompilerElse
 ProcedureRAM.i LlXip16(off.i)
   ProcedureReturn PeekU(#XIP_BASE + off)
 EndProcedure
@@ -413,6 +422,7 @@ EndProcedure
 ProcedureRAM.i LlXip32(off.i)
   ProcedureReturn PeekL(#XIP_BASE + off)
 EndProcedure
+CompilerEndIf
 
 CompilerIf #DISK_READ_ONLY = 0                 ; the write side: not even compiled when read-only
 

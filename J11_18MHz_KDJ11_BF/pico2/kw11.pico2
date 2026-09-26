@@ -58,18 +58,38 @@ EndProcedure
 
 ; Has the line ticked? Micros() is a 32-bit count that wraps every 71
 ; minutes; the difference is taken, never the values, so the wrap is safe.
-Procedure KwPoll()
+; THE TWO CORES: core 1 keeps the 60 Hz time (KwTick, every pass of its
+; loop) and counts the ticks in KwSeq; core 0 looks at KwSeq (KwPoll, from
+; the run loop's device look) and does what the line does to the register:
+; MONITOR set, and the interrupt when it is enabled. Ticks core 0 had no
+; chance to see one at a time are merged, as on a real KW11-L (KwMissed).
+Global KwSeen.i                 ; core 0: the last KwSeq acted on
+Global KwMissed.i               ; core 0: ticks merged because two or more arrived between looks
+
+Procedure KwTick()                       ; core 1
   Define now.i
   now = Micros()
   If now - KwNext >= 0
-    KwMon = 1
-    KwTicks = KwTicks + 1
     KwAdvance()
     If now - KwNext >= 0                 ; more than a period behind: resume from now
       KwLost = KwLost + 1
       KwNext = now + #KW_PERIOD_US
       KwPhase = 0
     EndIf
+    KwSeq = KwSeq + 1
+  EndIf
+EndProcedure
+
+Procedure KwPoll()                       ; core 0
+  Define d.i
+  d = KwSeq - KwSeen
+  If d <> 0
+    If d > 1
+      KwMissed = KwMissed + d - 1
+    EndIf
+    KwSeen = KwSeen + d
+    KwMon = 1
+    KwTicks = KwTicks + 1
     If KwIe
       IntReq = IntReq | #INT_KW
       IntCheck()
@@ -101,8 +121,7 @@ EndProcedure
 Procedure KwInit()
   KwIe = 0
   KwMon = 1
-  KwNext = Micros() + #KW_PERIOD_US
-  KwPhase = 0
+  KwSeen = KwSeq                         ; the 60 Hz time itself is core 1's (KwTick)
   IntReq = IntReq & ~#INT_KW
   DevUpdate()
 EndProcedure

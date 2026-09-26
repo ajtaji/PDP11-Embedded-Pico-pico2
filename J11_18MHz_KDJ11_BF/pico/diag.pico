@@ -90,6 +90,19 @@ Global Bells.i
 Global FromDisk.i           ; the running program was booted from the disk (BOOT)
 Global ProgStart.i          ; Micros() when the program was started (the desk's status line)
 Global Total.i
+; THE TWO CORES (Main, Core0Loop, Core1Main below)
+Global C0CmdSeq.i, C0Op.i, C0A1.i, C0A2.i   ; a command for core 0: core 1 writes
+Global C0DoneSeq.i                         ; core 0 has done it: core 0 writes
+Global PswSnap.i                           ; the PSW after core 0's last slice (core 1 must not call PswGet)
+Global C1Alone.i                           ; core 1 did not start: the I/O loop runs on core 0, no processor
+Global UsbGapMax.i, UsbLastSvc.i           ; core 1: the longest gap between USB services since the banner
+#C0_BOOT = 1
+#C0_START = 2
+#C0_RESET = 3
+#C0_REPORT = 4
+#C0_SYNC = 5
+#CORE0_SLICE = 1000                        ; instructions per CpuRun on core 0 (the window cap still applies)
+#C1_PASS_US = 100                          ; core 1's loop: at most one pass per 100 us (less churn in the shared XIP cache)
 Global Column.i
 Global State.i             ; 0 waiting for the port, 1 running, 2 halted, 3 in a WAIT
 Global Dim MaxGap.i(4)     ; the probe: longest gap between services, per State
@@ -98,6 +111,12 @@ Global ProbeStart.i, ProbeSent.i
 Global ProbeMaxRun.i, ProbeMaxDisk.i ; the probe: the longest CpuRun slice and DiskTask step, us
 
 Procedure Service()
+  Define svc.i
+  svc = Micros()                         ; the longest gap between services, for the stats block
+  If UsbLastSvc <> 0 And svc - UsbLastSvc > UsbGapMax
+    UsbGapMax = svc - UsbLastSvc
+  EndIf
+  UsbLastSvc = svc
   CompilerIf #DESK_PROBE = 1
     Define now.i
     Define gap.i
@@ -234,11 +253,13 @@ Procedure AutoBootType()
   For i = 0 To AutoLen - 1
     If (ConInHead - ConInTail) < #CON_SIZE
       ConIn(ConInHead & (#CON_SIZE - 1)) = AutoName(i)
+      SmpBarrier()
       ConInHead = ConInHead + 1
     EndIf
   Next
   If (ConInHead - ConInTail) < #CON_SIZE
     ConIn(ConInHead & (#CON_SIZE - 1)) = 13
+    SmpBarrier()
     ConInHead = ConInHead + 1
   EndIf
 EndProcedure
@@ -250,6 +271,7 @@ Procedure DrainConsole()
   Define c.i
   Define wrote.i
   While ConOutTail <> ConOutHead
+    SmpBarrier()                         ; core 0's head, then the character
     c = ConOut(ConOutTail & (#CON_SIZE - 1)) & $7F
     ConOutTail = ConOutTail + 1
     If FromDisk                          ; a booted system owns the terminal: as typed
@@ -318,7 +340,7 @@ Procedure HaltReport()
   For i = 0 To 5
     Say(" R") : Num(i) : Say("=") : Oct(Reg(i))
   Next
-  Say(" SP=") : Oct(Reg(6)) : Say(" PSW=") : Oct(PswGet()) : Eol()
+  Say(" SP=") : Oct(Reg(6)) : Say(" PSW=") : Oct(PswSnap) : Eol()
   CompilerIf #DESK_PROBE = 1
     Status()
   CompilerEndIf
@@ -401,7 +423,7 @@ Procedure.i PerSecond(count.i, us.i)
   ProcedureReturn q
 EndProcedure
 
-Procedure ReportOnce()
+Procedure ReportCpu()                    ; core 0: the self-test and the benchmark
   Define t0.i
   Mem($100 >> 1) = $15C1                 ; the self-test: 1..10 into R0, then HALT
   Mem($102 >> 1) = $000A
@@ -418,7 +440,6 @@ Procedure ReportOnce()
   If Halted = 1 And Reg(0) = 55
     SelfTestPassed = 1
   EndIf
-  Service()
   Mem($200 >> 1) = $15C1                 ; the benchmark: 30,000 x (ADD, SOB)
   Mem($202 >> 1) = 30000
   Mem($204 >> 1) = $0A00
@@ -430,11 +451,13 @@ Procedure ReportOnce()
   Reg(7) = $200
   t0 = Micros()
   BenchInstructions = 0
-  While Halted = 0                       ; in slices, so USB is still served
+  While Halted = 0                       ; core 0 serves no USB: core 1 does, meanwhile
     BenchInstructions = BenchInstructions + CpuRun(#SLICE)
-    Service()
   Wend
   BenchMicros = Micros() - t0
+EndProcedure
+
+Procedure ReportPrint()                  ; core 1: what ReportCpu found
   Say("PDP-11 J-11 on Pico, clk_sys kHz ") : Num(ClockSysKhz()) : Eol()
   Say("self-test: R0=") : Num(SelfTestR0) : Say(" steps=") : Num(SelfTestSteps)
   If SelfTestPassed
@@ -526,7 +549,7 @@ Procedure StatsBlock()
   Else
     Say("off (16-bit)")
   EndIf
-  Say(", PSW ") : Oct(PswGet()) : Say(", PC ") : Oct(Reg(7))
+  Say(", PSW ") : Oct(PswSnap) : Say(", PC ") : Oct(Reg(7))
   If Waiting
     Say(" (WAIT)")
   EndIf
@@ -564,7 +587,7 @@ Procedure StatsBlock()
     CompilerEndIf
   CompilerEndIf
   Service()
-  StatLine("clock   KW11-L: ") : Num(KwTicks) : Say(" ticks at 60 Hz, ") : Num(KwLost) : Say(" dropped")
+  StatLine("clock   KW11-L: ") : Num(KwTicks) : Say(" ticks at 60 Hz, ") : Num(KwLost + KwMissed) : Say(" dropped")
   If KwIe
     Say(", interrupts on")
   Else
@@ -572,9 +595,43 @@ Procedure StatsBlock()
   EndIf
   StatLine("uptime  ") : Num(up / 3600) : Ch(58) : Num((up / 600) % 6) : Num((up / 60) % 10) : Ch(58)
   Num((up / 10) % 6) : Num(up % 10) : Say(" since power-up, ") : Num((Micros() - ProgStart) / 1000000) : Say(" s since BOOT")
-  StatLine("cores   core 0: the PDP-11 CPU, its devices, USB and the disk; core 1: not started")
+  If C1Alone
+    StatLine("cores   core 1 did not start: the I/O runs on core 0 and the PDP-11 cannot run")
+  Else
+    StatLine("cores   core 0: the PDP-11 CPU and its device registers; core 1: USB, console, disk storage, 60 Hz, this block")
+  EndIf
+  StatLine("usb     longest gap between USB services since the banner: ") : Num(UsbGapMax) : Say(" us")
   StatLine("===")
   Eol()
+EndProcedure
+
+
+; ---- core 1 asks core 0 ------------------------------------------------------
+; Everything that resets or starts the processor runs ON CORE 0 (the reset
+; reaches the run loop's reserved registers, which only core 0 may touch):
+; core 1 writes the command and its number, and waits - serving USB - until
+; core 0 has done it between two slices. Bounded: 5 s, then it gives up.
+Procedure.i C0Ask(what.i, arg1.i, arg2.i)
+  Define t0.i
+  If C1Alone
+    ProcedureReturn 0
+  EndIf
+  C0Op = what
+  C0A1 = arg1
+  C0A2 = arg2
+  SmpBarrier()
+  C0CmdSeq = C0CmdSeq + 1
+  t0 = Micros()
+  While C0DoneSeq <> C0CmdSeq
+    Service()
+    DkServe()
+    KwTick()
+    If Micros() - t0 > 5000000
+      ProcedureReturn 0
+    EndIf
+  Wend
+  SmpBarrier()
+  ProcedureReturn 1
 EndProcedure
 
 ; ---- the frames ------------------------------------------------------------
@@ -588,16 +645,20 @@ Procedure ClearMemory()                  ; 512 words at a time, with USB served 
   Next
 EndProcedure
 
-Procedure StartProgram(start.i, switches.i)
+Procedure StartCpu(start.i, switches.i)  ; core 0
   CpuReset()
   SwitchReg = switches & $FFFF
   PswSet(0)
   Reg(6) = start
   Reg(7) = start
   Total = 0
+  ConInTail = ConInHead
+EndProcedure
+
+Procedure StartProgram(start.i, switches.i)  ; core 1
+  C0Ask(#C0_START, start, switches)
   Bells = 0
   ConOutTail = ConOutHead
-  ConInTail = ConInHead
   Mode = #MODE_RUN
   FromDisk = 0
   ProgStart = Micros()
@@ -732,7 +793,7 @@ EndProcedure
 ;   157044 012700 d              MOV #d,R0
 ;   157050 005007                CLR PC               start at 000000
 #BOOT_AT = $DE00                  ; 157000
-Procedure BootRk(d.i, switches.i)
+Procedure BootRkCpu(d.i, switches.i)   ; core 0
   Define a.i
   CpuReset()                              ; the bus INIT: kernel, priority 7
   SwitchReg = switches & $FFFF
@@ -751,9 +812,13 @@ Procedure BootRk(d.i, switches.i)
   Reg(6) = #BOOT_AT
   Reg(7) = #BOOT_AT
   Total = 0
+  ConInTail = ConInHead
+EndProcedure
+
+Procedure BootRk(d.i, switches.i)        ; core 1
+  C0Ask(#C0_BOOT, d, switches)
   Bells = 0
   ConOutTail = ConOutHead
-  ConInTail = ConInHead
   Mode = #MODE_RUN
   FromDisk = 1
   ProgStart = Micros()
@@ -825,9 +890,9 @@ Procedure DoFrame()
   Define a.i
   Define w.i
   If FrameCmd = 82                       ; R
+    Mode = #MODE_IDLE                    ; core 0 stops at the end of its slice
+    C0Ask(#C0_RESET, 0, 0)               ; ... and resets the processor there
     ClearMemory()
-    CpuReset()
-    Halted = 1
     TapeReset()
     Mode = #MODE_IDLE
     FromSerial = 1
@@ -871,6 +936,7 @@ Procedure DoFrame()
     If Mode = #MODE_RUN
       Mode = #MODE_HALT
     EndIf
+    C0Ask(#C0_SYNC, 0, 0)                ; core 0 has finished its slice: Reg(7) is settled
     SayHost("STOPPED ") : Oct(Reg(7)) : Eol()
   ElseIf FrameCmd = 81                   ; Q
     Mode = #MODE_REPORT
@@ -894,7 +960,7 @@ Procedure DoFrame()
     EndIf
   ElseIf FrameCmd = 68                   ; D
     SayHost("DISK RK ") : Num(RkReads) : Say(" read ") : Num(RkWrites) : Say(" written | clock ") : Num(KwTicks)
-    Say(" ticks ") : Num(KwLost) : Say(" lost")
+    Say(" ticks ") : Num(KwLost + KwMissed) : Say(" lost")
     DiskStats()
     Eol()
   ElseIf FrameCmd = 89                   ; Y
@@ -946,6 +1012,7 @@ Procedure InByte(c.i)
     ElseIf Mode = #MODE_RUN
       If (ConInHead - ConInTail) < #CON_SIZE
         ConIn(ConInHead & (#CON_SIZE - 1)) = c
+        SmpBarrier()                     ; the character, then the head core 0 reads
         ConInHead = ConInHead + 1
       EndIf
     Else
@@ -1109,36 +1176,98 @@ Procedure AutoBootWait()
 EndProcedure
 
 
-Procedure Main()
+CompilerIf #DESK_PROBE = 1
+; THE DESK'S STATE CHECK (#DESK_PROBE = 1): every #CHK_EVERY instructions
+; core 0 stops exactly there and sums the registers, the PSW and memory;
+; core 1 prints "[check] <instructions> <sum>". Two builds that run the
+; same program must print the same lines - the word-for-word proof that a
+; change to the firmware around the processor left the processor alone.
+#CHK_EVERY = 1000000
+Global ChkNext.i = #CHK_EVERY, ChkSeq.i, ChkShown.i, ChkAt.i, ChkSum.i
+
+Procedure.i ChkState()
+  Define i.i
+  Define s.i
+  s = PswGet()
+  For i = 0 To 7
+    s = (s * 31 + Reg(i)) & $7FFFFFFF
+  Next
+  For i = 0 To #RAM_WORDS - 1
+    s = (s * 31 + Mem(i)) & $7FFFFFFF
+  Next
+  ProcedureReturn s
+EndProcedure
+CompilerEndIf
+
+; ---- core 0: the processor ------------------------------------------------
+; Between slices it answers core 1's commands; otherwise it runs the program
+; while core 1 says RUN and the processor is not halted.
+Procedure C0Do(what.i, arg1.i, arg2.i)
+  If what = #C0_BOOT
+    BootRkCpu(arg1, arg2)
+  ElseIf what = #C0_START
+    StartCpu(arg1, arg2)
+  ElseIf what = #C0_RESET
+    CpuReset()
+    Halted = 1
+  ElseIf what = #C0_REPORT
+    ReportCpu()
+  EndIf
+  PswSnap = PswGet()
+EndProcedure
+
+Procedure Core0Loop()
+  CompilerIf #DESK_PROBE = 1
+    Define t0.i
+  CompilerEndIf
+  Repeat
+    If C0CmdSeq <> C0DoneSeq
+      SmpBarrier()                       ; the command's number, then its words
+      C0Do(C0Op, C0A1, C0A2)
+      SmpBarrier()                       ; everything it did, then the answer
+      C0DoneSeq = C0CmdSeq
+    ElseIf Mode = #MODE_RUN And Halted = 0
+      CompilerIf #DESK_PROBE = 1
+        t0 = Micros()
+        If ChkNext - Total < #CORE0_SLICE
+          Total = Total + CpuRun(ChkNext - Total)
+        Else
+          Total = Total + CpuRun(#CORE0_SLICE)
+        EndIf
+        If Total >= ChkNext
+          ChkAt = Total
+          ChkSum = ChkState()
+          SmpBarrier()
+          ChkSeq = ChkSeq + 1
+          ChkNext = ChkNext + #CHK_EVERY
+        EndIf
+      CompilerElse
+        Total = Total + CpuRun(#CORE0_SLICE)
+      CompilerEndIf
+      PswSnap = PswGet()
+      CompilerIf #DESK_PROBE = 1
+        If Micros() - t0 > ProbeMaxRun
+          ProbeMaxRun = Micros() - t0
+        EndIf
+      CompilerEndIf
+    EndIf
+  ForEver
+EndProcedure
+
+; ---- core 1: everything else -------------------------------------------------
+Procedure Core1Main()
   Define t0.i
   Define tlast.i
   Define tdisk.i
-  SafetyBoot()
-  ClockInitKhz(#CLOCK_KHZ)
-  UsbSerialInit()
-  SafetyOk()
-  BuildOpcodeTable()
-  BuildOpcodeTableM()                    ; the mapped loop's table too, before any timing
-  DiskInit()
-  TapeReset()
-  LoadTape()
-  If #TAPE_START & 1                     ; no built-in tape: wait for one on the port
-    Mode = #MODE_IDLE
-    CpuReset()
-    Halted = 1
-    FromSerial = 1
-  Else
-    StartProgram(#TAPE_START, #TAPE_SWITCHES)
-  EndIf
-
-  CompilerIf #DESK_PROBE = 1
-    ProbeFeedLoad()
-  CompilerEndIf
+  Define tpass.i
   State = 0
   ProbeStart = Micros()
+  KwNext = Micros() + #KW_PERIOD_US       ; the line clock's time is core 1's
   t0 = Micros()                          ; the port opened, or 30 s
   While UsbSerialReady() = 0 And (Micros() - t0) < 30000000
     Service()
+    DkServe()
+    KwTick()
   Wend
   Wait(500000)
   If Mode = #MODE_RUN
@@ -1146,25 +1275,33 @@ Procedure Main()
     Say(", switches ") : Oct(#TAPE_SWITCHES) : Eol()
   Else
     Say("PDP-11 J-11 on Pico: serial tape reader ready") : Eol()
+    If C1Alone
+      Say("core 1 did not start: the PDP-11 cannot run in this boot; the port stays up for a re-flash") : Eol()
+    EndIf
     DiskBanner()
     AutoBootWait()
   EndIf
-
+  UsbGapMax = 0                          ; from here on, the gaps the stats block reports
+  UsbLastSvc = 0
   tlast = Micros()
   Repeat
+    tpass = Micros()
     If Mode = #MODE_RUN
       State = 1 + 2 * Waiting            ; 1 running, 3 in a WAIT
+      DrainConsole()
       CompilerIf #DESK_PROBE = 1
-        t0 = Micros()
-      CompilerEndIf
-      Total = Total + CpuRun(#SLICE)
-      CompilerIf #DESK_PROBE = 1
-        If Micros() - t0 > ProbeMaxRun
-          ProbeMaxRun = Micros() - t0
+        If ChkSeq <> ChkShown
+          ChkShown = ChkSeq
+          SmpBarrier()
+          If Column <> 0
+            Eol()
+          EndIf
+          Say("[check] ") : Num(ChkAt) : Ch(32) : Num(ChkSum) : Eol()
         EndIf
       CompilerEndIf
-      DrainConsole()
       If Halted
+        C0Ask(#C0_SYNC, 0, 0)            ; core 0 is between slices: the registers are settled
+        DrainConsole()
         State = 2
         Mode = #MODE_HALT
         HaltReport()
@@ -1192,17 +1329,21 @@ Procedure Main()
       State = 2
       If (Micros() - HaltShown) >= 3000000
         HaltShown = Micros()
-        ReportOnce()
+        If C0Ask(#C0_REPORT, 0, 0)
+          ReportPrint()
+        EndIf
       EndIf
     Else
       State = 0
     EndIf
     ReadPort()
-    Service()                            ; between the emulator's slice and the disk's
+    Service()
+    DkServe()                            ; the disk's storage for core 0's RK11
+    KwTick()                             ; the line clock's 60 Hz
     CompilerIf #DESK_PROBE = 1
       t0 = Micros()
     CompilerEndIf
-    DiskTask()                           ; the flash write-back, one short step
+    DiskTask()
     StatTick()
     CompilerIf #DESK_PROBE = 1
       If Micros() - t0 > ProbeMaxDisk
@@ -1210,7 +1351,51 @@ Procedure Main()
       EndIf
     CompilerEndIf
     Service()
+    While (Micros() - tpass) < #C1_PASS_US And ConOutHead = ConOutTail And DkReqSeq = DkDoneSeq
+      KwTick()                           ; nothing to do: wait out the pass in a tight loop
+    Wend
   ForEver
+EndProcedure
+
+; The launch in a procedure of its own: the intrinsic works in r4-r7, and
+; r4 holds FlagNZ for the processor - here it is saved and given back.
+Procedure.i LaunchCore1()
+  ProcedureReturn multicore_launch()
+EndProcedure
+
+Procedure Main()
+  SafetyBoot()
+  ClockInitKhz(#CLOCK_KHZ)
+  UsbSerialInit()
+  SafetyOk()
+  BuildOpcodeTable()
+  BuildOpcodeTableM()                    ; the mapped loop's table too, before any timing
+  DiskInit()
+  TapeReset()
+  LoadTape()
+  If #TAPE_START & 1                     ; no built-in tape: wait for one on the port
+    Mode = #MODE_IDLE
+    CpuReset()
+    Halted = 1
+    FromSerial = 1
+  Else
+    StartCpu(#TAPE_START, #TAPE_SWITCHES)
+    Bells = 0
+    ConOutTail = ConOutHead
+    Mode = #MODE_RUN
+    FromDisk = 0
+    ProgStart = Micros()
+  EndIf
+  CompilerIf #DESK_PROBE = 1
+    ProbeFeedLoad()
+  CompilerEndIf
+  PswSnap = PswGet()
+  SmpBarrier()                           ; all of the above, before core 1 starts
+  If LaunchCore1() = 1                   ; core 1 runs Core1Main
+    Core0Loop()                          ; never returns
+  EndIf
+  C1Alone = 1                            ; core 1 did not answer: keep USB alive on core 0
+  Core1Main()
 EndProcedure
 
 ; ======================================================================

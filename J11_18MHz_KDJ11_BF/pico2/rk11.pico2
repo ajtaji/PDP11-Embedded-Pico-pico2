@@ -152,6 +152,57 @@ Global RkBadBlock.i = -1        ; the last block the storage refused (-1 none)
 
 ; ---- the bus: physical memory for the controller's DMA ------------------
 ; Return -1 for nonexistent memory. (18-bit today; see THE BUS above.)
+
+; ---- THE STORAGE, ON CORE 1 ---------------------------------------------
+; The controller, its registers and the copy to and from memory stay on
+; core 0; the storage itself (DiskRead / DiskWrite: the flash through XIP,
+; the RAM overlay) is core 1's. One request at a time: core 0 fills the
+; request and publishes DkReqSeq; core 1 (DkServe) does it and publishes
+; DkDoneSeq. DkBuf belongs to whichever side the two numbers say.
+Global RkIoPosted.i             ; core 0: the request for this sector is out
+Global RkIoN.i, RkIoMa.i                  ; core 0: words a posted WRITE moves (found before posting)
+
+; 1 done, -1 refused, 0 not yet (posted now, or still out).
+Procedure.i RkIo(what.i)
+  If RkIoPosted = 0
+    If DkReqSeq <> DkDoneSeq             ; an abandoned request (a RESET) is still out
+      ProcedureReturn 0
+    EndIf
+    DkReqOp = what
+    DkReqDrive = RkXDrive
+    DkReqBlock = RkXBlock
+    SmpBarrier()                         ; the request, then its number
+    DkReqSeq = DkReqSeq + 1
+    RkIoPosted = 1
+    ProcedureReturn 0
+  EndIf
+  If DkDoneSeq <> DkReqSeq
+    ProcedureReturn 0
+  EndIf
+  SmpBarrier()                           ; the number, then DkBuf and the result
+  RkIoPosted = 0
+  ProcedureReturn DkDoneResult
+EndProcedure
+
+; Core 1: the posted request, if there is one. A storage that is not ready
+; (0) is simply asked again on the next pass; core 0 sees only the answer.
+Procedure DkServe()
+  Define r.i
+  If DkReqSeq <> DkDoneSeq
+    SmpBarrier()                         ; the number, then the request
+    If DkReqOp = 1
+      r = DiskWrite(DkReqDrive, DkReqBlock)
+    Else
+      r = DiskRead(DkReqDrive, DkReqBlock)
+    EndIf
+    If r <> 0
+      DkDoneResult = r
+      SmpBarrier()                       ; DkBuf and the result, then the number
+      DkDoneSeq = DkReqSeq
+    EndIf
+  EndIf
+EndProcedure
+
 Procedure.i RkMemRead(pa.i)
   If pa < #RAM_BYTES
     ProcedureReturn Mem(pa >> 1)
@@ -350,29 +401,37 @@ Procedure.i RkSector()
   EndIf
   ma = RkXMa
   If RkXFunc = 1                         ; WRITE: memory into the buffer, zeros after
-    For i = 0 To n - 1
-      w = RkMemRead(ma)
-      If w < 0
-        RkEr = RkEr | #RKER_NXM
-        n = i                            ; the words before it still go
-        RkXStop = 1
-        Break
+    If RkIoPosted = 0
+      If DkReqSeq <> DkDoneSeq           ; DkBuf is still core 1's (an abandoned request)
+        ProcedureReturn 0
       EndIf
-      DkBuf(i) = w
-      RkDb = w
-      ma = (ma + step) & $3FFFF
-    Next
-    If n = 0                             ; nothing to write: the sector is not touched (simh)
-      ProcedureReturn 1
+      For i = 0 To n - 1
+        w = RkMemRead(ma)
+        If w < 0
+          RkEr = RkEr | #RKER_NXM
+          n = i                          ; the words before it still go
+          RkXStop = 1
+          Break
+        EndIf
+        DkBuf(i) = w
+        RkDb = w
+        ma = (ma + step) & $3FFFF
+      Next
+      If n = 0                           ; nothing to write: the sector is not touched (simh)
+        ProcedureReturn 1
+      EndIf
+      For i = n To 255
+        DkBuf(i) = 0
+      Next
+      RkIoN = n
+      RkIoMa = ma
+    Else
+      n = RkIoN                          ; posted on an earlier look: what it found stands
+      ma = RkIoMa
     EndIf
-    For i = n To 255
-      DkBuf(i) = 0
-    Next
-    r = DiskWrite(RkXDrive, RkXBlock)
+    r = RkIo(1)
     If r = 0
-      RkEr = RkEr & ~#RKER_NXM           ; not ready: as if never begun
-      RkXStop = 0
-      ProcedureReturn 0
+      ProcedureReturn 0                  ; out on core 1: collected at a later look
     EndIf
     If r < 0
       RkEr = RkEr | #RKER_DRE
@@ -386,9 +445,9 @@ Procedure.i RkSector()
       DkBuf(0) = (RkXBlock / 24) << 5    ; FORMAT READ: the header word only
       n = 1
     Else
-      r = DiskRead(RkXDrive, RkXBlock)
+      r = RkIo(2)
       If r = 0
-        ProcedureReturn 0
+        ProcedureReturn 0                ; out on core 1: collected at a later look
       EndIf
       If r < 0
         RkEr = RkEr | #RKER_DRE
@@ -457,9 +516,7 @@ Procedure RkStep()
       Break
     EndIf
     If RkSector() = 0
-      RkLastUs = Micros()
-      RkLastAt = CpuNow()
-      ProcedureReturn                    ; the storage is busy: try again at the next look
+      ProcedureReturn                    ; the storage (core 1) has not answered: look again next window
     EndIf
     k = k + 1
   Wend
@@ -576,6 +633,7 @@ Procedure RkInit()
   RkIntDrive = 0
   RkSeekMask = 0
   RkSeekDone = 0
+  RkIoPosted = 0                         ; a request still out is abandoned (RkIo waits it out)
   For d = 0 To #RK_DRIVES - 1
     RkLock(d) = 0
   Next

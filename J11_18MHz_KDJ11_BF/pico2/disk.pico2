@@ -411,6 +411,15 @@ CompilerElse
 #QMI_RX      = $400D0008
 #BOOTRAM     = $400E0000         ; the boot ROM's copy of the XIP setup function
 
+CompilerIf #DISK_READ_ONLY = 1                 ; nothing ever takes the flash out of XIP:
+Procedure.i LlXip16(off.i)                     ; plain reads (and no flash/RAM long call
+  ProcedureReturn PeekU(#XIP_BASE + off)       ; for a core that holds r12)
+EndProcedure
+
+Procedure.i LlXip32(off.i)
+  ProcedureReturn PeekL(#XIP_BASE + off)
+EndProcedure
+CompilerElse
 ProcedureRAM.i LlXip16(off.i)
   ProcedureReturn PeekU(#XIP_BASE + off)
 EndProcedure
@@ -418,6 +427,7 @@ EndProcedure
 ProcedureRAM.i LlXip32(off.i)
   ProcedureReturn PeekL(#XIP_BASE + off)
 EndProcedure
+CompilerEndIf
 
 CompilerIf #DISK_READ_ONLY = 0                 ; the write side: not even compiled when read-only
 

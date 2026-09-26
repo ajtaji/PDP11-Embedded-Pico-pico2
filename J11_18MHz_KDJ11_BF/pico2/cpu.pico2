@@ -250,6 +250,26 @@ Global ConOutHead.i, ConOutTail.i
 Global Dim ConIn.u(#CON_SIZE)       ; characters typed, for the DL11 to receive
 Global ConInHead.i, ConInTail.i
 
+; ---- THE TWO CORES --------------------------------------------------------
+; Core 0 runs the processor and nothing else; core 1 runs USB, the console,
+; the disk's storage and the clock's 60 Hz source (diag, Core1Main). What
+; crosses between them is single-writer words and single-producer rings
+; (ConOut: core 0 -> 1; ConIn: core 1 -> 0), each published with a barrier
+; between the data and the index that announces it.
+Global KwSeq.i                   ; line-clock ticks: written by core 1 only (kw11, KwTick)
+Global DkReqSeq.i, DkReqOp.i, DkReqDrive.i, DkReqBlock.i   ; a storage request: core 0 writes (rk11, RkIo)
+Global DkDoneSeq.i, DkDoneResult.i                        ; its answer: core 1 writes (rk11, DkServe)
+
+; A data memory barrier: every store before it is visible to the other core
+; before any store after it (and the same for loads). The language has no
+; expression for it, so it is one instruction, named. The Cortex-M33 needs
+; it; on the RP2040's Cortex-M0+ it costs a few cycles and changes nothing.
+Procedure SmpBarrier()
+  ASM
+    dmb
+  EndASM
+EndProcedure
+
 ; ---- Globals held in registers for the whole program (see SPEED) -----
 ; The A/B switch: 0 puts these four back in RAM and changes nothing else.
 ; Chosen by measurement, 2026-09-23, on the desk (arm_run; the report's
@@ -263,8 +283,18 @@ Global ConInHead.i, ConInTail.i
 ; and LOST: 1,395,256 against 1,492,426 at the time, the half reads and
 ; writes costing more than the fifth register saves.
 #RESERVE_REGISTERS = 1
+; #RESERVE_MORE = 1 adds Src in r12 and FlagNZ in r4 (+5.0% / +6.5% on the
+; desk bench, 2026-09-24). It needs a compiler with r12 and r4-r7 (branch
+; regres-more, 6c9bfed6): that compiler proves, on the emitted code, that
+; nothing core 0 runs writes r12 or uses r4 without saving it. Core 1 (diag,
+; Core1Main) never names any of these Globals.
+#RESERVE_MORE = 1
 CompilerIf #RESERVE_REGISTERS = 1
-  ReserveRegister Op = r8, PC = r9, Res = r10, RunLeft = r11
+  CompilerIf #RESERVE_MORE = 1
+    ReserveRegister Op = r8, PC = r9, Res = r10, RunLeft = r11, Src = r12, FlagNZ = r4
+  CompilerElse
+    ReserveRegister Op = r8, PC = r9, Res = r10, RunLeft = r11
+  CompilerEndIf
 CompilerEndIf
 
 ; ======================================================================
@@ -1552,6 +1582,7 @@ Procedure DevService()
     If InstrCount - Dl11TxDue >= 0
       If ConOutHead - ConOutTail < #CON_SIZE
         ConOut(ConOutHead & (#CON_SIZE - 1)) = Dl11TxChar
+        SmpBarrier()                     ; the character, then the head core 1 reads
         ConOutHead = ConOutHead + 1
         Dl11TxRdy = 1
         If Dl11TxIe
@@ -1565,7 +1596,9 @@ Procedure DevService()
   ; the receiver taking a typed character
   If Dl11RxDone = 0
     If ConInHead <> ConInTail
+      SmpBarrier()                       ; core 1's head, then the character it announces
       Dl11RxBuf = ConIn(ConInTail & (#CON_SIZE - 1)) & $FF
+      SmpBarrier()                       ; the character read, then the slot given back
       ConInTail = ConInTail + 1
       Dl11RxDone = 1
       Dl11RxPolled = 0
