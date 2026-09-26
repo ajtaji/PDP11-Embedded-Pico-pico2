@@ -1,30 +1,38 @@
 # Ready-to-flash Unix images
 
-These are the exact files flashed to real boards on 2026-09-25, when Unix ran
-on the emulator on silicon. Each contains the PDP-11 emulator firmware
-(diagnostic build, with the live statistics block on `Ctrl-]` then `s`) and
-an RK05 disk pack stored in flash. Both builds are **read-only**: the flash is
-never written. Swap and every disk write go to RAM and are lost at power-off.
+Each board **powers up into Unix**: the firmware boots the disk pack by
+itself and Unix's `#` prompt appears with no typing. Press **Esc** within
+2 s of the `auto-boot:` line to stay in the diagnostic console instead.
+How to flash, connect and use them, and how to rebuild them from
+`../media/unix/` with the tools, is in **[../README.md](../README.md)**.
+
+Both builds are **read-only**: the emulator never writes the flash. Swap
+and every disk write go to RAM and are lost at power-off, so a board can be
+unplugged at any time and always starts again from the pack as flashed.
 
 The UNIX files inside the disk packs are covered by the Caldera licence in
 `../../UNIX-LICENSE.txt`.
 
-## Pico 2 W (RP2350): Sixth Edition Unix, MMU on
+## Pico 2 W (RP2350): Sixth Edition Unix, memory management on
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `pico2w-v6/combined.uf2` | 5,270,528 | `93a8cc86d992d9f68842e6d95d025a7e2b632fc3bbcd470987d90d8d2dd1ac31` |
+| `pico2w-v6/combined.uf2` | 5,274,112 | `15d5873243af9f555743b2d31991222941f39afe5fdb28faa448b11ae652890e` |
 
-Firmware and disk pack in one UF2. Hold BOOTSEL, plug in, copy the file to the
-drive. At the serial console (115200):
+Firmware and disk pack in one UF2: hold BOOTSEL, plug in, copy the file to
+the `RP2350` drive. At the serial console:
 
 ```
-BOOT RK0 173030
+auto-boot: RK0, switches 173030, then "rkunix" at the @ prompt. Press Esc within 2 s for the diagnostic console.
+booting RK0, switches 173030
 @rkunix
+mem = 76
+#
 ```
 
-Boot to `#` takes about 3 s. The pack is the V6 root pack with V6's own
-`rkuboot` installed in block 0 (`tools/rk_image.py --boot-block`).
+`#` 4.4 s after the port opened on a Pico 2 W (2 s of the Esc wait, then the
+boot). The pack is the V6 root pack (`../media/unix/v6root.gz`) with V6's
+own `rkuboot` installed in block 0.
 
 Known: `ps` and `df` fail because the pack's `/dev` has no disk or swap
 entries; V6's `dc` is too large for the 56 KB machine.
@@ -33,22 +41,16 @@ entries; V6's `dc` is too large for the 56 KB machine.
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `picow-mini-unix/firmware.uf2` | 277,504 | `9c627c9b22a000a9e506c7686761a183efb3efac9c6ffa5831413c3e8cd8ff0d` |
-| `picow-mini-unix/minix.uf2` | 3,159,040 | `0b6de55d5117c08ff066031a53e4b044df852684037a36a7339a3c38316eb0eb` |
+| `picow-mini-unix/firmware.uf2` | 280,576 | `cb7a4b63be90a4338749b98cf5d3b149d3cd94e0f8841cd448d90837f5a3d401` |
+| `picow-mini-unix/minix.uf2` | 3,167,232 | `de8bb8dc541f17e25b38097f7b0063cdb0f11d7ff28a81eb8a1fb0e75460f55a` |
 
 **Flash these as two separate copies**, firmware first, then the pack, each
-from a fresh BOOTSEL. On the RP2040 a single combined UF2 leaves the pack
-area unwritten. The pack holds only the used blocks of the Mini-Unix pack
-(3,053 blocks, mapped) so it fits the Pico W's flash. At the console:
+from a fresh BOOTSEL (the `RPI-RP2` drive). On the RP2040 a single combined
+UF2 leaves the pack area unwritten. The pack holds only the used blocks of
+the Mini-Unix pack (`../mini-unix.rk05`, 3,061 blocks, mapped) so it fits
+the Pico W's flash. It boots `rkmx` by itself; `#` 3.5 s after the port
+opened on a Pico W.
 
-```
-BOOT RK0 173030
-@rkmx
-```
-
-Boot to `#` takes about 2 s.
-
-Known: the RAM swap area (128 blocks) fills after a few commands. Mini-Unix
-swaps whole processes, and a refused swap write can restart a process, so
-keep sessions short for now. `df` reports "BAD FREE COUNT" on this pack; the
-image tool now keeps the free-list blocks, and the next pack will not.
+Known: the RAM for disk writes (128 blocks, shared with swap) fills after a
+few commands. Mini-Unix swaps whole processes, and a refused swap write can
+restart the shell, so keep sessions short for now.

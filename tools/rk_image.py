@@ -8,12 +8,18 @@ USE
         and which blocks are in use
     python rk_image.py pack IMAGE --chip pico|pico2 -o OUT.uf2
                        [--layout dense|mapped] [--blocks N] [--name TEXT]
-                       [--firmware FW.bin --desk OUT.bin]
+                       [--swap auto|LO,N|none] [--boot-block FILE|@/PATH]
+                       [--autoboot KERNEL[,SWITCHES]]
+                       [--firmware FW.bin [--desk OUT.bin] [--combined OUT.uf2]
+                                          [--firmware-uf2 OUT.uf2]]
         a UF2 that the board's BOOTSEL drive writes to the disk region of
         the flash, leaving the firmware alone. Flash the firmware's UF2
         and this one, in either order. --firmware with --desk also writes
         a flat image of the firmware with the disk behind it, for arm_run
-        (the desk emulator loads one .bin into the flash).
+        (the desk emulator loads one .bin into the flash). --combined
+        writes the firmware and the pack as ONE UF2 (fine on the Pico 2 W;
+        on the Pico W flash the two separately - see the README), and
+        --firmware-uf2 the firmware alone as a UF2 (for the Pico W).
 
 THE FLASH REGION (disk.pico's header says the same)
     Pico W   (RP2040, 2 MB flash):  0x10040000 - 0x101FFFFF
@@ -23,7 +29,9 @@ THE FLASH REGION (disk.pico's header says the same)
         +0      4 KB header: "PDP11RK1", u32 version 1, u32 layout (0 dense,
                 1 mapped), u32 blocks stored, u32 slots used, u32 map
                 sectors, u32 flags, 32-byte name, then at +64 u32 swap
-                start and u32 swap blocks (the RAM overlay's area, below)
+                start and u32 swap blocks (the RAM overlay's area, below),
+                at +72 u32 auto-boot (bit 16 on, bits 15-0 the switch
+                register) and at +80 the kernel's name, NUL-terminated
         +4 KB   mapped layout only: 3 sectors, one u16 per RK05 block,
                 0 = not stored (reads as zeros), n = slot n - 1
         then    512-byte slots
@@ -58,6 +66,13 @@ SWAP
     than the pack, the rest of the pack after it - the classic layout
     (Mini-Unix: 4000,872, SWPLO and NSWAP in its /usr/sys/param.h). Check
     it against the kernel's own configuration; --swap none turns it off.
+
+AUTO-BOOT
+    --autoboot rkunix (or rkunix,173030) asks the firmware to boot this
+    pack at power-up: BOOT RK0 with the switch register at SWITCHES (octal,
+    default 173030), then the kernel's name typed at the boot block's '@'.
+    Esc within 2 s of the banner leaves the board at the diagnostic
+    console instead.
 """
 import argparse
 import os
@@ -196,6 +211,9 @@ def used_blocks(img):
 SWAP = (0, 0)
 
 
+AUTOBOOT = (0, b"")      # (switches | 1 << 16, kernel name) or (0, "") for none
+
+
 def header(layout, stored, slots, name):
     h = bytearray(SECTOR)
     struct.pack_into("<8sIIIIII", h, 0, b"PDP11RK1", 1, layout, stored, slots,
@@ -203,6 +221,8 @@ def header(layout, stored, slots, name):
     nb = name.encode("ascii", "replace")[:31]
     h[32:32 + len(nb)] = nb
     struct.pack_into("<II", h, 64, SWAP[0], SWAP[1])
+    struct.pack_into("<I", h, 72, AUTOBOOT[0])
+    h[80:80 + len(AUTOBOOT[1])] = AUTOBOOT[1]
     return bytes(h)
 
 
@@ -270,6 +290,9 @@ def main():
     ap.add_argument("--desk")
     ap.add_argument("--swap", default="auto")
     ap.add_argument("--boot-block")
+    ap.add_argument("--autoboot")
+    ap.add_argument("--combined")
+    ap.add_argument("--firmware-uf2")
     a = ap.parse_args()
     img = open(a.image, "rb").read()
     if a.boot_block:
@@ -310,9 +333,22 @@ def main():
     if SWAP[1]:
         print("rk_image: swap area blocks %d-%d (%d): kept in the firmware's RAM, never written to flash"
               % (SWAP[0], SWAP[0] + SWAP[1] - 1, SWAP[1]))
+    global AUTOBOOT
+    if a.autoboot:
+        kern, _, sw = a.autoboot.partition(",")
+        try:
+            sw = int(sw or "173030", 8)
+        except ValueError:
+            fail("--autoboot takes KERNEL[,SWITCHES] with SWITCHES in octal.")
+        if not kern or len(kern) > 15 or not kern.isascii() or not kern.isprintable() or not 0 <= sw <= 0o177777:
+            fail("--autoboot: the kernel's name is 1 to 15 printable characters, the switches 0-177777.")
+        AUTOBOOT = (sw | 1 << 16, kern.encode("ascii"))
+        print("rk_image: auto-boot: RK0, switches %06o, then %s at the @ prompt" % (sw, kern))
     parts, summary = build(img, a.chip, a.layout, a.blocks, a.name or os.path.basename(a.image))
     open(a.o, "wb").write(uf2(parts, a.chip))
     print("rk_image: %s -> %s for the %s at 0x%08X: %s" % (a.image, a.o, a.chip, XIP + REGION, summary))
+    if (a.desk or a.combined or a.firmware_uf2) and not a.firmware:
+        fail("--desk, --combined and --firmware-uf2 need --firmware FW.bin.")
     if a.firmware:
         fw = open(a.firmware, "rb").read()
         if len(fw) > REGION:
@@ -326,6 +362,14 @@ def main():
                 flat[off:off + len(d)] = d
             open(a.desk, "wb").write(flat)
             print("rk_image: firmware (%d bytes) and pack -> %s, %d bytes, for arm_run" % (len(fw), a.desk, len(flat)))
+        if a.combined:
+            both = dict(parts)
+            both[0] = fw
+            open(a.combined, "wb").write(uf2(both, a.chip))
+            print("rk_image: firmware and pack -> %s, one UF2" % a.combined)
+        if a.firmware_uf2:
+            open(a.firmware_uf2, "wb").write(uf2({0: fw}, a.chip))
+            print("rk_image: firmware -> %s" % a.firmware_uf2)
 
 
 if __name__ == "__main__":

@@ -52,7 +52,7 @@
 ;  keeps running from flash and serving USB - see disk.pico2.
 ; ======================================================================
 #DISK_BACKEND = 2            ; 0 none, 1 RAM (desk), 2 flash (boards)
-#DISK_READ_ONLY = 0          ; 1 = the flash is never written (disk.pico2)
+#DISK_READ_ONLY = 1          ; 1 = the flash is never written (disk.pico2; the default: the emulator never writes flash)
 #DISK_FLASH_MODEL = 0        ; 1 = the desk model of the flash chip (disk.pico2)
 #DESK_PROBE = 0            ; 1 = the desk measurement build (see DESK PROBE)
 #STAT_CHIP = 2350            ; for the stats block's title
@@ -208,6 +208,41 @@ Procedure LoadTape()
   Wend
 EndProcedure
 
+
+; ======================================================================
+;  AUTO-BOOT. A pack can ask to be booted at power-up (rk_image.py
+;  --autoboot KERNEL[,SWITCHES]: header +72 u32, bit 16 on and the switch
+;  register in bits 15-0; +80 the kernel's name, NUL-terminated). After the
+;  banner the firmware says so and waits #AUTO_WAIT_US; Esc (or a loader
+;  frame) in that time leaves it at the diagnostic console. Otherwise it
+;  boots RK0 with those switches and, when the boot block prints its '@',
+;  types the kernel's name and a CR into the console receiver - the same
+;  path a typed character takes.
+; ======================================================================
+#AUTO_WAIT_US = 2000000
+#AUTO_NAME_MAX = 15
+Global AutoSw.i = -1                     ; -1: the pack does not ask
+Global AutoWindow.i, AutoCancel.i, AutoPending.i
+Global Dim AutoName.a(#AUTO_NAME_MAX + 1)
+Global AutoLen.i
+Global LastCr.i                          ; the last console byte was a CR (a CR LF counts once)
+
+; The boot block has printed its '@': type the kernel's name.
+Procedure AutoBootType()
+  Define i.i
+  AutoPending = 0
+  For i = 0 To AutoLen - 1
+    If (ConInHead - ConInTail) < #CON_SIZE
+      ConIn(ConInHead & (#CON_SIZE - 1)) = AutoName(i)
+      ConInHead = ConInHead + 1
+    EndIf
+  Next
+  If (ConInHead - ConInTail) < #CON_SIZE
+    ConIn(ConInHead & (#CON_SIZE - 1)) = 13
+    ConInHead = ConInHead + 1
+  EndIf
+EndProcedure
+
 ; The console's output, from the DL11's queue to the serial port. (Input
 ; goes the other way in Main: the serial port into ConIn.) UsbSerialFlush
 ; is called only after something was written, as the report firmware does.
@@ -218,6 +253,9 @@ Procedure DrainConsole()
     c = ConOut(ConOutTail & (#CON_SIZE - 1)) & $7F
     ConOutTail = ConOutTail + 1
     If FromDisk                          ; a booted system owns the terminal: as typed
+      If AutoPending <> 0 And c = 64          ; the boot block's '@': auto-boot types the kernel
+        AutoBootType()
+      EndIf
       If c <> 0 And c <> 127
         Ch(c)
         wrote = 1
@@ -647,6 +685,22 @@ Procedure DiskBanner()
       EndIf
       Ch(c)
     Next
+    If (DkHeader32(72) >> 16) & 1        ; the pack asks to be booted at power-up
+      AutoSw = DkHeader32(72) & $FFFF
+      AutoLen = 0
+      For i = 0 To #AUTO_NAME_MAX - 1
+        c = LlXip16(#DISK_REGION + 80 + (i & ~1))
+        If i & 1
+          c = c >> 8
+        EndIf
+        c = c & $FF
+        If c = 0
+          Break
+        EndIf
+        AutoName(AutoLen) = c
+        AutoLen = AutoLen + 1
+      Next
+    EndIf
     Say(", ") : Num(DkStored) : Say(" blocks")
     If DkMapped
       Say(" (mapped)")
@@ -854,6 +908,25 @@ EndProcedure
 ; One byte from the port: part of a frame, or a character for the console.
 Procedure InByte(c.i)
   c = c & $FF
+  If AutoWindow <> 0 And FrameState = 0       ; the auto-boot's 2 s: Esc or a frame stops it
+    If c = 27
+      AutoCancel = 1
+      ProcedureReturn
+    ElseIf c <> #FRAME_START
+      ProcedureReturn                    ; anything else typed then is dropped
+    EndIf
+    AutoCancel = 1
+  EndIf
+  If FrameState = 0 And EscPending = 0     ; (a frame's start clears it too)
+    If c = 10 And LastCr <> 0               ; CR LF from a terminal or a paste: one line end
+      LastCr = 0
+      ProcedureReturn
+    EndIf
+    LastCr = 0
+    If c = 13
+      LastCr = 1
+    EndIf
+  EndIf
   If FrameState = 0 And EscPending <> 0   ; Ctrl-] then a key: the firmware's, not Unix's
     EscPending = 0
     If c = 115 Or c = 83                 ; s: the stats block
@@ -994,6 +1067,9 @@ Procedure ReadPort()
   Define k.i
   k = 0
   While k < #FEED_MAX And UsbSerialAvailable() > 0
+    If Mode = #MODE_RUN And FrameState = 0 And (ConInHead - ConInTail) >= #CON_SIZE
+      Break                              ; a long paste: the rest waits in the port until there is room
+    EndIf
     InByte(UsbSerialRead())
     k = k + 1
   Wend
@@ -1001,6 +1077,37 @@ Procedure ReadPort()
     ProbeFeedStep()
   CompilerEndIf
 EndProcedure
+
+
+Procedure AutoBootWait()
+  Define t0.i
+  If AutoSw < 0 Or Mode <> #MODE_IDLE
+    ProcedureReturn
+  EndIf
+  Say("auto-boot: RK0, switches ") : Oct(AutoSw) : Say(", then ")
+  Ch(34)
+  For t0 = 0 To AutoLen - 1
+    Ch(AutoName(t0))
+  Next
+  Ch(34) : Say(" at the @ prompt. Press Esc within 2 s for the diagnostic console.") : Eol()
+  UsbSerialFlush()
+  AutoWindow = 1
+  AutoCancel = 0
+  t0 = Micros()
+  While (Micros() - t0) < #AUTO_WAIT_US And AutoCancel = 0
+    ReadPort()
+    Service()
+  Wend
+  AutoWindow = 0
+  If AutoCancel
+    Say("auto-boot cancelled: the diagnostic console. Type BOOT RK0 173030 to boot by hand.") : Eol()
+    ProcedureReturn
+  EndIf
+  Say("booting RK0, switches ") : Oct(AutoSw) : Eol()
+  BootRk(0, AutoSw)
+  AutoPending = 1
+EndProcedure
+
 
 Procedure Main()
   Define t0.i
@@ -1040,6 +1147,7 @@ Procedure Main()
   Else
     Say("PDP-11 J-11 on Pico 2: serial tape reader ready") : Eol()
     DiskBanner()
+    AutoBootWait()
   EndIf
 
   tlast = Micros()

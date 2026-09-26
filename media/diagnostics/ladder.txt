@@ -1,0 +1,37 @@
+# ladder.txt - the diagnostic ladder: every tape in this folder that the J-11
+# emulator runs, in order, with the options each needs (tools/tape_ladder.py).
+#
+#   python PureMetal/tools/tape_ladder.py --port COMnn --plan PureMetal/media/diagnostics/ladder.txt
+#
+# Each line:  name | tape (relative to this folder) | tape2pico options | seconds
+# Verdicts are tape_ladder's own: PASS = a bell, or "END PASS"/"END OF" typed;
+# FAIL = "HALT at"; otherwise NO VERDICT.
+#
+# EXPECTED: 17 PASS, and two HALTs that are right for a J-11:
+#   18_DZQKC  HALT at 014304 - it refuses to run on a large CPU, and a J-11 is one.
+#   19_DEQKC  HALT at 000006 after 22 instructions - it reads 177760, which a KDJ11 does not have.
+#
+# THE PATCHES. 14 needs switch 200. 16_DFKAB's patches change subtests written
+# for an 11/34 where the J-11 behaves differently by design (the listing expects
+# the 11/34); 15646=7 is MFPT (000007), which traps on an 11/34 and is an
+# instruction on the J-11. With them DFKAB types "END OF DFKAB" with no HALT.
+#
+01_T1-D0AA | pcjs/tapes-diag/MAINDEC-11-D0AA-PB.json |  | 180
+02_T2-D0BA | pcjs/tapes-diag/MAINDEC-11-D0BA-PB.json |  | 120
+03_T3-D0CA | pcjs/tapes-diag/MAINDEC-11-D0CA-PB.json |  | 120
+04_T4-D0DA | pcjs/tapes-diag/MAINDEC-11-D0DA-PB.json |  | 180
+05_T5-D0EA | pcjs/tapes-diag/MAINDEC-11-D0EA-PB.json |  | 180
+06_T6-D0FA | pcjs/tapes-diag/MAINDEC-11-D0FA-PB.json |  | 180
+07_T7-D0GA | pcjs/tapes-diag/MAINDEC-11-D0GA-PB.json |  | 120
+08_T8-D0HA | pcjs/tapes-diag/MAINDEC-11-D0HA-PB.json |  | 180
+09_T9-D0IA | pcjs/tapes-diag/MAINDEC-11-D0IA-PB.json |  | 120
+10_T10-D0JA | pcjs/tapes-diag/MAINDEC-11-D0JA-PB.json |  | 120
+11_T11-D0KA | pcjs/tapes-diag/MAINDEC-11-D0KA-PB.json |  | 120
+12_T12-D0LA | pcjs/tapes-diag/MAINDEC-11-D0LA-PB.json |  | 120
+13_T13-D0MA | pcjs/tapes-diag/MAINDEC-11-D0MA-PB.json |  | 120
+14_T15-D0OA | pcjs/tapes-diag/MAINDEC-11-D0OA-PB.json | --switches 200 | 120
+15_DFKAA | papertape/maindec-11-dfkaa-b1-pb.bin | --start 200 | 120
+16_DFKAB | papertape/maindec-11-dfkab-c-pb.bin | --start 200 --patch 2236=210,2300=210,2350=210,2430=210,2476=210,2554=210,2700=210,10770=210,12350=3,12420=12407,12470=12455,12550=25257,13122=426,15646=7 | 120
+17_DFKAC | papertape/maindec-11-dfkac-a-pb.bin | --start 200 | 120
+18_DZQKC | papertape/maindec-11-dzqkc-e-pb.bin | --start 200 | 120
+19_DEQKC | pcjs/tapes-diag/MAINDEC-11-DEQKC-B1-PB.json |  | 120
