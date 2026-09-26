@@ -19,7 +19,7 @@ The UNIX files inside the disk packs are covered by the Caldera licence in
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `pico2w-v6/combined.uf2` | 5,286,912 | `69fe0affff28228ce6f75a79b9931159e0d3aae301d482205657a9427040eeb6` |
+| `pico2w-v6/combined.uf2` | 5,286,912 | `c5247a8f4fc4d1068967bf303e7bd6e957b4b07d6f0b9a7ee52c4599b11730b7` |
 
 Firmware and disk pack in one UF2: hold BOOTSEL, plug in, copy the file to
 the `RP2350` drive. At the serial console:
@@ -44,7 +44,7 @@ entries; V6's `dc` is too large for the 56 KB machine.
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `picow-mini-unix/firmware.uf2` | 292,352 | `60b595941028587877c2d2fd063c284a47f67d38a9acddadbf1df383bbc7ce14` |
+| `picow-mini-unix/firmware.uf2` | 292,864 | `7db478cc28da839809294f3c23f0d6e0d7f340c1bc7206140533956120a638cf` |
 | `picow-mini-unix/minix.uf2` | 3,167,232 | `de8bb8dc541f17e25b38097f7b0063cdb0f11d7ff28a81eb8a1fb0e75460f55a` |
 
 **Flash these as two separate copies**, firmware first, then the pack, each
