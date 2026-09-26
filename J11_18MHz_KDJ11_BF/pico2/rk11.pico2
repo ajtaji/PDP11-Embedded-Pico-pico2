@@ -163,7 +163,7 @@ Global RkIoPosted.i             ; core 0: the request for this sector is out
 Global RkIoN.i, RkIoMa.i                  ; core 0: words a posted WRITE moves (found before posting)
 
 ; 1 done, -1 refused, 0 not yet (posted now, or still out).
-Procedure.i RkIo(what.i)
+ProcedureRAM.i RkIo(what.i)
   If RkIoPosted = 0
     If DkReqSeq <> DkDoneSeq             ; an abandoned request (a RESET) is still out
       ProcedureReturn 0
@@ -186,7 +186,7 @@ EndProcedure
 
 ; Core 1: the posted request, if there is one. A storage that is not ready
 ; (0) is simply asked again on the next pass; core 0 sees only the answer.
-Procedure DkServe()
+ProcedureRAM DkServe()
   Define r.i
   If DkReqSeq <> DkDoneSeq
     SmpBarrier()                         ; the number, then the request
@@ -203,14 +203,14 @@ Procedure DkServe()
   EndIf
 EndProcedure
 
-Procedure.i RkMemRead(pa.i)
+ProcedureRAM.i RkMemRead(pa.i)
   If pa < #RAM_BYTES
     ProcedureReturn Mem(pa >> 1)
   EndIf
   ProcedureReturn -1
 EndProcedure
 
-Procedure.i RkMemWrite(pa.i, v.i)
+ProcedureRAM.i RkMemWrite(pa.i, v.i)
   If pa < #RAM_BYTES
     Mem(pa >> 1) = v
     ProcedureReturn 1
@@ -219,7 +219,7 @@ Procedure.i RkMemWrite(pa.i, v.i)
 EndProcedure
 
 ; ---- status ------------------------------------------------------------
-Procedure.i RkCsRead()
+ProcedureRAM.i RkCsRead()
   Define v.i
   v = RkCs
   If RkEr
@@ -231,7 +231,7 @@ Procedure.i RkCsRead()
   ProcedureReturn v
 EndProcedure
 
-Procedure.i RkDsRead()
+ProcedureRAM.i RkDsRead()
   Define d.i
   Define v.i
   d = (RkDa >> 13) & 7
@@ -254,40 +254,40 @@ Procedure.i RkDsRead()
 EndProcedure
 
 ; ---- the end of a function, and the interrupt --------------------------
-Procedure RkAsk()                       ; an interrupt, if IDE
+ProcedureRAM RkAsk()                       ; an interrupt, if IDE
   If RkCs & #RKCS_IDE
     IntReq = IntReq | #INT_RK
     IntCheck()
   EndIf
 EndProcedure
 
-Procedure RkDone()
+ProcedureRAM RkDone()
   RkCs = RkCs | #RKCS_RDY
   RkBusy = 0
   RkAsk()
   DevUpdate()
 EndProcedure
 
-Procedure RkFail(bits.i)                ; an error found at GO
+ProcedureRAM RkFail(bits.i)                ; an error found at GO
   RkEr = RkEr | bits
   RkDone()
 EndProcedure
 
 ; DevService takes the interrupt: the request is over. A drive that
 ; arrived meanwhile gets its own poll interrupt next (RkPoll).
-Procedure RkIntTaken()
+ProcedureRAM RkIntTaken()
   If RkSeekDone
     DevUpdate()
   EndIf
 EndProcedure
 
 ; The block's disk address back into RKDA, keeping the drive bits.
-Procedure RkSetDa(blk.i)
+ProcedureRAM RkSetDa(blk.i)
   RkDa = (RkDa & $E000) | ((blk / 24) << 5) | (((blk / 12) & 1) << 4) | (blk % 12)
 EndProcedure
 
 ; ---- GO ----------------------------------------------------------------
-Procedure RkGo()
+ProcedureRAM RkGo()
   Define f.i
   Define d.i
   Define cyl.i
@@ -374,7 +374,7 @@ EndProcedure
 ; ---- the transfer ------------------------------------------------------
 ; Registers after the transfer: RKWC counts the words moved, RKBA and MEX
 ; hold the next bus address, RKDA the next sector (simh rk_svc).
-Procedure RkFinish()
+ProcedureRAM RkFinish()
   RkWc = (RkWc + RkXDone) & $FFFF
   RkBa = RkXMa & $FFFF
   RkCs = (RkCs & ~$30) | ((RkXMa >> 12) & $30)
@@ -384,7 +384,7 @@ EndProcedure
 
 ; One sector. Returns 1 when it was done, 0 when the storage is not ready
 ; yet (nothing has moved, the sector is tried again at the next look).
-Procedure.i RkSector()
+ProcedureRAM.i RkSector()
   Define n.i
   Define i.i
   Define w.i
@@ -500,7 +500,7 @@ Procedure.i RkSector()
   ProcedureReturn 1
 EndProcedure
 
-Procedure RkStep()
+ProcedureRAM RkStep()
   Define k.i
   If Micros() - RkLastUs < #RK_SECTOR_US   ; a sector at most every #RK_SECTOR_US of board time,
     ProcedureReturn                        ; and every #RK_SECTOR_INSTRUCTIONS of the processor's
@@ -528,7 +528,7 @@ Procedure RkStep()
 EndProcedure
 
 ; ---- the run loop's look (DevPoll) -------------------------------------
-Procedure RkPoll()
+ProcedureRAM RkPoll()
   Define d.i
   Define now.i
   now = CpuNow()
@@ -568,7 +568,7 @@ Procedure RkPoll()
 EndProcedure
 
 ; ---- the registers from the bus ----------------------------------------
-Procedure.i RkRead(a.i)
+ProcedureRAM.i RkRead(a.i)
   Define r.i
   r = (a >> 1) & 7
   If r = 0
@@ -589,7 +589,7 @@ Procedure.i RkRead(a.i)
   ProcedureReturn 0                      ; 177414, unused
 EndProcedure
 
-Procedure RkWrite(a.i, v.i)
+ProcedureRAM RkWrite(a.i, v.i)
   Define r.i
   Define oldie.i
   r = (a >> 1) & 7
@@ -621,7 +621,7 @@ EndProcedure
 
 ; The bus INIT (and power-up): every register clear but RDY; drives
 ; stop seeking, write locks come off; a transfer in progress is dropped.
-Procedure RkInit()
+ProcedureRAM RkInit()
   Define d.i
   RkCs = #RKCS_RDY
   RkEr = 0
@@ -646,14 +646,14 @@ EndProcedure
 ; ======================================================================
 ; DevActive says whether the run loop must look at the devices every
 ; window: only while the clock may interrupt or the disk is busy.
-Procedure DevUpdate()
+ProcedureRAM DevUpdate()
   DevActive = KwIe | RkBusy | RkSeekMask | RkSeekDone
 EndProcedure
 
 ; Called by DevService at the end of a window while DevActive is set.
 ; The desk probe build (#DESK_PROBE = 1) times it: DevPollMax, in us.
 Global DevPollMax.i
-Procedure DevPoll()
+ProcedureRAM DevPoll()
   CompilerIf #DESK_PROBE = 1
     Define t.i
     t = Micros()
@@ -674,7 +674,7 @@ EndProcedure
 
 ; A byte written into one of these full-word registers (MOVB, BISB ...):
 ; the other byte keeps what the register reads, and the word goes in.
-Procedure DevWriteByte(a.i, v.i)
+ProcedureRAM DevWriteByte(a.i, v.i)
   Define w.i
   If (a & $FFFE) = #KW_CSR
     w = KwRead()

@@ -201,6 +201,10 @@ def main():
     bad = []
     for path, name, src_name in OUTS:
         text = header(name, src_name) + body
+        if name.endswith(".pico2"):          # the Pico 2: V6 runs here - SRAM (55 KB fits beside its tables)
+            text = text.replace("\nProcedure.i CpuRunM(n.i)\n", "\nProcedureRAM.i CpuRunM(n.i)\n", 1)
+        else:                                 # the Pico: its SRAM holds CpuRun (Mini-Unix); CpuRunM stays in flash
+            text = text.replace("\nProcedureRAM.i CpuRunM(n.i)", "\nProcedure.i CpuRunM(n.i)", 1)
         if "--check" in sys.argv:
             try:
                 have = open(path, "rb").read().decode("ascii").replace("\r\n", "\n")

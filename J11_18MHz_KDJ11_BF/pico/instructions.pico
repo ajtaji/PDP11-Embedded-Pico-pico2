@@ -114,7 +114,7 @@ Procedure Ops(from.i, count.i, target.Label)
 EndProcedure
 
 ; Execute up to n instructions. Returns how many ran.
-Procedure.i CpuRun(n.i)
+ProcedureRAM.i CpuRun(n.i)
 ; ---- THE EMULATED PC (see PC in cpu) ----------------------------------
 ; Between instructions the emulated PC lives in PC, a register; Reg(7)
 ; is a stale copy. A handler that reaches Reg(7) through a variable

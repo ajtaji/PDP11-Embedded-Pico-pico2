@@ -264,7 +264,7 @@ Global DkDoneSeq.i, DkDoneResult.i                        ; its answer: core 1 w
 ; before any store after it (and the same for loads). The language has no
 ; expression for it, so it is one instruction, named. The Cortex-M33 needs
 ; it; on the RP2040's Cortex-M0+ it costs a few cycles and changes nothing.
-Procedure SmpBarrier()
+ProcedureRAM SmpBarrier()
   ASM
     dmb
   EndASM
@@ -283,15 +283,17 @@ EndProcedure
 ; and LOST: 1,395,256 against 1,492,426 at the time, the half reads and
 ; writes costing more than the fifth register saves.
 #RESERVE_REGISTERS = 1
-; #RESERVE_MORE = 1 adds Src in r12 and FlagNZ in r4 (+5.0% / +6.5% on the
-; desk bench, 2026-09-24). It needs a compiler with r12 and r4-r7 (branch
+; #RESERVE_MORE = 1 adds FlagNZ in r4. (Src in r12 was worth a little more on
+; the desk, but a core holding r12 may make no call between flash and SRAM,
+; and the run loops now live in SRAM with some callees in flash - Micros(),
+; the disk's procedures - so r12 stays free.) It needs a compiler with r12 and r4-r7 (branch
 ; regres-more, 6c9bfed6): that compiler proves, on the emitted code, that
 ; nothing core 0 runs writes r12 or uses r4 without saving it. Core 1 (diag,
 ; Core1Main) never names any of these Globals.
 #RESERVE_MORE = 1
 CompilerIf #RESERVE_REGISTERS = 1
   CompilerIf #RESERVE_MORE = 1
-    ReserveRegister Op = r8, PC = r9, Res = r10, RunLeft = r11, Src = r12, FlagNZ = r4
+    ReserveRegister Op = r8, PC = r9, Res = r10, RunLeft = r11, FlagNZ = r4   ; Src stays out of r12: see below
   CompilerElse
     ReserveRegister Op = r8, PC = r9, Res = r10, RunLeft = r11
   CompilerEndIf
@@ -314,7 +316,7 @@ CompilerEndIf
 ;  InstrCount + RunWindow - RunLeft is the number of instructions finished
 ;  so far (CpuNow), and it is the devices' clock.
 ; ======================================================================
-Procedure CpuEventIn(k.i)
+ProcedureRAM CpuEventIn(k.i)
   If k < RunLeft
     RunBank = RunBank + RunLeft - k
     RunWindow = RunWindow - (RunLeft - k)
@@ -322,14 +324,14 @@ Procedure CpuEventIn(k.i)
   EndIf
 EndProcedure
 
-Procedure.i CpuNow()
+ProcedureRAM.i CpuNow()
   ProcedureReturn InstrCount + RunWindow - RunLeft
 EndProcedure
 
 ; The bus request level of the highest interrupt asked for, as a PSW
 ; priority field: the line clock at BR6, the disk at BR5, the console at
 ; BR4. A request gets in when the PSW priority is BELOW it.
-Procedure.i IntLevel()
+ProcedureRAM.i IntLevel()
   If IntReq & #INT_KW
     ProcedureReturn $C0
   EndIf
@@ -342,7 +344,7 @@ EndProcedure
 ; An interrupt is asked for and the priority would let it in. Called
 ; whenever the PSW changes, so a lowered priority lets a waiting request in
 ; at once.
-Procedure IntCheck()
+ProcedureRAM IntCheck()
   If IntReq
     If (PswHigh & $E0) < IntLevel()
       CpuEventIn(1)
@@ -353,14 +355,14 @@ EndProcedure
 ; ======================================================================
 ;  PSW - assembled only when read
 ; ======================================================================
-Procedure.i FlagN()
+ProcedureRAM.i FlagN()
   If FlagNZ & $18000
     ProcedureReturn 1
   EndIf
   ProcedureReturn 0
 EndProcedure
 
-Procedure.i FlagZ()
+ProcedureRAM.i FlagZ()
   If (FlagNZ & $FFFF) = 0
     ProcedureReturn 1
   EndIf
@@ -370,7 +372,7 @@ EndProcedure
 ; Encode an explicit N and Z (from the PSW, MTPS, a condition-code op) in
 ; the lazy form. N=1 with Z=1 cannot come from a result, so it is $10000:
 ; low 16 bits zero (Z) and bit 16 set (N).
-Procedure SetNZ(n.i, z.i)
+ProcedureRAM SetNZ(n.i, z.i)
   If z
     FlagNZ = n << 16
   ElseIf n
@@ -380,7 +382,7 @@ Procedure SetNZ(n.i, z.i)
   EndIf
 EndProcedure
 
-Procedure.i PswGet()
+ProcedureRAM.i PswGet()
   ProcedureReturn (PswHigh & $FFF0) | (FlagN() << 3) | (FlagZ() << 2) | ((FlagV >> 14) & 2) | ((FlagC >> 16) & 1)
 EndProcedure
 
@@ -392,7 +394,7 @@ EndProcedure
 ; here and are swapped whenever the PSW changes mode or register set, so
 ; this costs nothing unless it happens. MAINDEC-11-DFKAA test 605 sets SP
 ; in user mode and expects the kernel's back on return.
-Procedure PswBanks(v.i)
+ProcedureRAM PswBanks(v.i)
   Protected i.i, t.i
   If (v ! PswHigh) & $C000
     StackBank((PswHigh >> 14) & 3) = Reg(6)
@@ -414,14 +416,14 @@ EndProcedure
 
 ; The stack pointer of mode m (0 kernel, 1 supervisor, 3 user), wherever
 ; it is kept - MFPI SP and MTPI SP name the PREVIOUS mode's.
-Procedure.i ModeSp(m.i)
+ProcedureRAM.i ModeSp(m.i)
   If m = (PswHigh >> 14) & 3
     ProcedureReturn Reg(6)
   EndIf
   ProcedureReturn StackBank(m)
 EndProcedure
 
-Procedure SetModeSp(m.i, v.i)
+ProcedureRAM SetModeSp(m.i, v.i)
   If m = (PswHigh >> 14) & 3
     Reg(6) = v & $FFFF
   Else
@@ -429,7 +431,7 @@ Procedure SetModeSp(m.i, v.i)
   EndIf
 EndProcedure
 
-Procedure PswSet(v.i)
+ProcedureRAM PswSet(v.i)
   If (v ! PswHigh) & $F800
     PswBanks(v)
   EndIf
@@ -456,7 +458,7 @@ EndProcedure
 ; #TRAP_PSW_LATE sends the instruction through SlowTail (every handler that
 ; can write memory ends with NextSynced, which tests TrapVector), so the
 ; path an instruction normally takes is untouched.
-Procedure PswWrite(v.i)
+ProcedureRAM PswWrite(v.i)
   v = (v & $FFEF) | (PswHigh & $10)
   PswSet(v)
   PswLate = v | $10000
@@ -474,7 +476,7 @@ EndProcedure
 ; saved here, at the first failing access - every handler sets its
 ; condition codes after its memory accesses - and SlowTail puts it back
 ; before taking the trap.
-Procedure BusError()
+ProcedureRAM BusError()
   If TrapVector <> #VEC_BUS
     AbortPsw = PswGet() | $10000
   EndIf
@@ -512,7 +514,7 @@ EndProcedure
 ; ======================================================================
 ; One entry of the map, from its registers (a D entry uses the I
 ; registers while its mode's D space is off).
-Procedure MmuMapEntry(e.i)
+ProcedureRAM MmuMapEntry(e.i)
   Protected m.i, s.i, p.i, r.i, dv.i, plf.i, pb.i, lo.i, hi.i, bs.i, acf.i, dm.i
   m = e >> 4
   s = (e >> 3) & 1
@@ -577,13 +579,13 @@ EndProcedure
 ; worth from the caller's budget: CpuRun returns sooner, having run fewer
 ; instructions. Nothing the program can see changes - the emulated clock
 ; (InstrCount) counts only the instructions run.
-Procedure MmuCharge(k.i)
+ProcedureRAM MmuCharge(k.i)
   CpuEventIn(1)
   RunBank = RunBank - k
 EndProcedure
 
 ; The whole map: after MMR3 changes (D space, 22-bit mapping) and at reset.
-Procedure MmuRecompute()
+ProcedureRAM MmuRecompute()
   Protected e.i
   If Mmr3 & $10
     MapMask = $3FFFFF
@@ -605,7 +607,7 @@ EndProcedure
 ; its entry, and the D entry that borrows it, are worked out again. (A
 ; program that rewrites its PARs in a loop must not pay for the whole map
 ; each time: that starved USB for 17 ms in MAINDEC-11-DFKAB.)
-Procedure MmuRegChanged(r.i)
+ProcedureRAM MmuRegChanged(r.i)
   MmuCharge(#MAP_COST_ENTRY)
   MmuMapEntry(r)
   If (r & 8) = 0
@@ -617,7 +619,7 @@ Procedure MmuRegChanged(r.i)
   FetchHi = 0
 EndProcedure
 
-Procedure MmuReset()                     ; power-up and the bus INIT: MMR0 and MMR3 cleared
+ProcedureRAM MmuReset()                     ; power-up and the bus INIT: MMR0 and MMR3 cleared
   Mmr0 = 0
   Mmr3 = 0
   If MmuOn
@@ -629,7 +631,7 @@ EndProcedure
 
 ; The register an I/O page address names: entry | $100 for a PAR, the
 ; entry for a PDR, or -1 if it is not a PAR or PDR.
-Procedure.i MmuRegIndex(a.i)
+ProcedureRAM.i MmuRegIndex(a.i)
   Protected b.i, m.i, o.i
   If a >= $FF80 And a < $FFC0
     m = 3
@@ -647,7 +649,7 @@ Procedure.i MmuRegIndex(a.i)
   ProcedureReturn (m << 4) | (o & 15) | ((o >> 4) << 8)
 EndProcedure
 
-Procedure.i MmuIsReg(a.i)
+ProcedureRAM.i MmuIsReg(a.i)
   If a = #MMR0_ADDR Or a = #MMR1_ADDR Or a = #MMR2_ADDR Or a = #MMR3_ADDR
     ProcedureReturn 1
   EndIf
@@ -657,7 +659,7 @@ Procedure.i MmuIsReg(a.i)
   ProcedureReturn 0
 EndProcedure
 
-Procedure.i MmuRegRead(a.i)
+ProcedureRAM.i MmuRegRead(a.i)
   Protected r.i
   MmuTouches = MmuTouches + 1
   If a = #MMR0_ADDR
@@ -682,7 +684,7 @@ Procedure.i MmuRegRead(a.i)
   ProcedureReturn Pdr(r)
 EndProcedure
 
-Procedure MmuRegWrite(a.i, v.i)
+ProcedureRAM MmuRegWrite(a.i, v.i)
   Protected r.i
   MmuTouches = MmuTouches + 1
   If a = #MMR0_ADDR                      ; 15-13, 8 and 0 are writable
@@ -752,7 +754,7 @@ EndProcedure
 ;  (a diagnostic's options); a write goes to DisplayReg and is kept, not
 ;  shown. The KDJ11-B has no switches; the diagnostics read them anyway.
 ; ======================================================================
-Procedure.i IoRead(a.i)                  ; a is even and past the end of RAM
+ProcedureRAM.i IoRead(a.i)                  ; a is even and past the end of RAM
   If a = #PSW_ADDR
     ProcedureReturn PswGet()
   ElseIf a = #DL11_RCSR
@@ -788,7 +790,7 @@ EndProcedure
 
 ; v's low byte is the new value of the register's low byte; the DL11 has
 ; nothing in its high bytes. The PSW is not handled here (see WriteWord).
-Procedure IoWrite(a.i, v.i)              ; a is even and past the end of RAM
+ProcedureRAM IoWrite(a.i, v.i)              ; a is even and past the end of RAM
   If a = #DL11_RCSR
     If v & $40
       If Dl11RxIe = 0 And Dl11RxDone = 1
@@ -837,7 +839,7 @@ EndProcedure
 ; ======================================================================
 ;  MEMORY - the fast path is RAM; the I/O page and missing memory are slow
 ; ======================================================================
-Procedure.i ReadWord(a.i)
+ProcedureRAM.i ReadWord(a.i)
   If a & 1
     BusError()
     ProcedureReturn 0
@@ -848,7 +850,7 @@ Procedure.i ReadWord(a.i)
   ProcedureReturn IoRead(a)
 EndProcedure
 
-Procedure WriteWord(a.i, v.i)
+ProcedureRAM WriteWord(a.i, v.i)
   If a & 1
     BusError()
     ProcedureReturn
@@ -866,7 +868,7 @@ EndProcedure
 
 ; A byte read of a device register is a word read (the bus has no other
 ; kind), so reading either half of RBUF clears DONE, as on the real bus.
-Procedure.i ReadByte(a.i)
+ProcedureRAM.i ReadByte(a.i)
   If a < #RAM_BYTES
     If a & 1
       ProcedureReturn (Mem(a >> 1) >> 8) & $FF
@@ -879,7 +881,7 @@ Procedure.i ReadByte(a.i)
   ProcedureReturn IoRead(a) & $FF
 EndProcedure
 
-Procedure WriteByte(a.i, v.i)
+ProcedureRAM WriteByte(a.i, v.i)
   If a < #RAM_BYTES
     If a & 1
       Mem(a >> 1) = (Mem(a >> 1) & $00FF) | ((v & $FF) << 8)
@@ -995,7 +997,7 @@ EndMacro
 ; simh pdp11_cpu.c set_stack_trap, the fixed-limit case). MAINDEC-11-DFKAB
 ; test 57 does TST -(SP) with SP = 000150 and expects the trap. The red
 ; zone (a push that itself fails) is not modelled.
-Procedure StackCheck()
+ProcedureRAM StackCheck()
   If Reg(6) < #STACK_LIMIT
     If (PswHigh & $C000) = 0                 ; kernel mode only
       StackYellow = 1
@@ -1006,14 +1008,14 @@ Procedure StackCheck()
   EndIf
 EndProcedure
 
-Procedure Push(v.i)
+ProcedureRAM Push(v.i)
   Adr = (Reg(6) - 2) & $FFFF
   Reg(6) = Adr
   StackCheck()
   MWriteWord(Adr, v)
 EndProcedure
 
-Procedure.i Pop()
+ProcedureRAM.i Pop()
   Adr = Reg(6)
   MReadWord(Tmp, Adr)
   Reg(6) = (Adr + 2) & $FFFF
@@ -1021,7 +1023,7 @@ Procedure.i Pop()
 EndProcedure
 
 ; ---- instruction stream ----------------------------------------------
-Procedure.i FetchWord()
+ProcedureRAM.i FetchWord()
   Adr = Reg(7)
   MReadWord(Tmp, Adr)
   Reg(7) = (Adr + 2) & $FFFF
@@ -1033,7 +1035,7 @@ EndProcedure
 ;  handler does register mode inline, because a call costs ~13 cycles.
 ;  spec = the six-bit mode/register field. Returns the operand's address.
 ; ======================================================================
-Procedure.i EaWord(spec.i)
+ProcedureRAM.i EaWord(spec.i)
   EaReg = spec & 7
   Tmp = (spec >> 3) & 7
   If Tmp = 1                                 ; (R)
@@ -1079,7 +1081,7 @@ EndProcedure
 
 ; Byte operands step (R)+ and -(R) by one, except through SP and PC, which
 ; always step by two so they stay even.
-Procedure.i EaByte(spec.i)
+ProcedureRAM.i EaByte(spec.i)
   EaReg = spec & 7
   EaStep = 1
   If EaReg >= 6
@@ -1128,7 +1130,7 @@ EndMacro
 ; instruction traps through 250 with the PSW it started with (BusError).
 ; The space recorded is the register set the reference used: a D-space
 ; reference with D space off reports I (MAINDEC-11-DFKAB test 113).
-Procedure MmuAbort(bits.i, e.i)
+ProcedureRAM MmuAbort(bits.i, e.i)
   Protected r.i
   r = MapReg(e)
   If (Mmr0 & $E000) = 0
@@ -1145,7 +1147,7 @@ Procedure MmuAbort(bits.i, e.i)
 EndProcedure
 
 ; The physical address of va in entry e, or -1 after an abort.
-Procedure.i MmuPhys(va.i, e.i, write.i)
+ProcedureRAM.i MmuPhys(va.i, e.i, write.i)
   Protected bits.i, r.i
   bits = 0
   If MapAcf(e) = 0
@@ -1173,7 +1175,7 @@ EndProcedure
 
 ; A physical address past RAM: the I/O page (the top 8 KB of the 18- or
 ; 22-bit space), or nothing there - a bus error.
-Procedure.i MmuIoAddr(pa.i)
+ProcedureRAM.i MmuIoAddr(pa.i)
   If pa >= MapMask - $1FFF
     ProcedureReturn $E000 | (pa & $1FFF)
   EndIf
@@ -1181,7 +1183,7 @@ Procedure.i MmuIoAddr(pa.i)
   ProcedureReturn -1
 EndProcedure
 
-Procedure.i MmuReadWord(va.i, e.i)
+ProcedureRAM.i MmuReadWord(va.i, e.i)
   Protected pa.i
   If va & 1
     BusError()
@@ -1201,7 +1203,7 @@ Procedure.i MmuReadWord(va.i, e.i)
   ProcedureReturn ReadWord(pa)
 EndProcedure
 
-Procedure MmuWriteWord(va.i, e.i, v.i)
+ProcedureRAM MmuWriteWord(va.i, e.i, v.i)
   Protected pa.i
   If va & 1
     BusError()
@@ -1221,7 +1223,7 @@ Procedure MmuWriteWord(va.i, e.i, v.i)
   EndIf
 EndProcedure
 
-Procedure.i MmuReadByte(va.i, e.i)
+ProcedureRAM.i MmuReadByte(va.i, e.i)
   Protected pa.i
   pa = MmuPhys(va, e, 0)
   If pa < 0
@@ -1237,7 +1239,7 @@ Procedure.i MmuReadByte(va.i, e.i)
   ProcedureReturn ReadByte(pa)
 EndProcedure
 
-Procedure MmuWriteByte(va.i, e.i, v.i)
+ProcedureRAM MmuWriteByte(va.i, e.i, v.i)
   Protected pa.i
   pa = MmuPhys(va, e, 1)
   If pa < 0
@@ -1342,7 +1344,7 @@ EndMacro
 
 ; MMR1: a register change an abort would leave behind (not while frozen).
 ; It is cleared lazily: the first change an instruction makes starts afresh.
-Procedure MmrRecord(r.i, amount.i)
+ProcedureRAM MmrRecord(r.i, amount.i)
   If (Mmr0 & $E000) = 0
     If MmuPcRec <> MmuPc
       MmuPcRec = MmuPc
@@ -1367,7 +1369,7 @@ EndMacro
 ; EaWord mapped: the index word and an immediate come from I space, every
 ; operand and pointer from D space, of the current mode. EaBase says where
 ; the operand itself lies.
-Procedure.i EaWordM(spec.i)
+ProcedureRAM.i EaWordM(spec.i)
   EaReg = spec & 7
   EaBase = CurD
   Tmp = (spec >> 3) & 7
@@ -1424,7 +1426,7 @@ Procedure.i EaWordM(spec.i)
   ProcedureReturn Reg(EaReg)
 EndProcedure
 
-Procedure.i EaByteM(spec.i)
+ProcedureRAM.i EaByteM(spec.i)
   EaReg = spec & 7
   EaStep = 1
   If EaReg >= 6
@@ -1453,14 +1455,14 @@ Procedure.i EaByteM(spec.i)
   ProcedureReturn EaWordM(spec)
 EndProcedure
 
-Procedure PushM(v.i)
+ProcedureRAM PushM(v.i)
   Adr = (Reg(6) - 2) & $FFFF
   Reg(6) = Adr
   StackCheck()
   MMWriteWordE(Adr, v, CurD)
 EndProcedure
 
-Procedure.i PopM()
+ProcedureRAM.i PopM()
   Adr = Reg(6)
   MMReadWordE(Tmp, Adr, CurD)
   Reg(6) = (Adr + 2) & $FFFF
@@ -1474,7 +1476,7 @@ EndProcedure
 ; fetches from all of RAM through one window. It is found again after a
 ; fetch outside it (FetchWordM) and emptied whenever the map or the mode
 ; changes.
-Procedure MmuFetchWindow(va.i)
+ProcedureRAM MmuFetchWindow(va.i)
   Protected e.i, lo.i, hi.i, bs.i
   FetchLo = #MAP_NONE
   FetchHi = 0
@@ -1499,7 +1501,7 @@ Procedure MmuFetchWindow(va.i)
   FetchBase = bs
 EndProcedure
 
-Procedure.i FetchWordM()
+ProcedureRAM.i FetchWordM()
   Adr = Reg(7)
   MMReadWordE(Tmp, Adr, CurI)
   Reg(7) = (Adr + 2) & $FFFF
@@ -1533,7 +1535,7 @@ EndMacro
 ; on the NEW mode's stack (normally the kernel's).
 ; With the memory management unit on, the vector is read from kernel D
 ; space and the pushes go through the new mode's mapping.
-Procedure TakeTrap(vector.i)
+ProcedureRAM TakeTrap(vector.i)
   TrapPsw = PswGet()
   TrapPc = Reg(7)
   If MmuOn
@@ -1561,7 +1563,7 @@ EndProcedure
 ; limit). The yellow trap's own pushes never trap again - simh does the
 ; same - or a handler run with a low SP would trap for ever. Works on
 ; Reg(7), as TakeTrap does.
-Procedure TakeStackTrap()
+ProcedureRAM TakeStackTrap()
   If StackYellow
     StackYellow = 0
     TakeTrap(#VEC_BUS)
@@ -1576,7 +1578,7 @@ EndProcedure
 ;  THE DEVICES' TURN - called by the run loop between windows (RunEnd in
 ;  instructions.pico2), when RunLeft is zero and CpuNow() = InstrCount.
 ; ======================================================================
-Procedure DevService()
+ProcedureRAM DevService()
   ; the transmitter finishing its character
   If Dl11TxRdy = 0
     If InstrCount - Dl11TxDue >= 0
@@ -1642,7 +1644,7 @@ EndProcedure
 ; Open the next window: everything CpuRun still owes, but no further than
 ; the transmitter's next moment, and one instruction at a time while an
 ; interrupt that could be taken is still waiting (the one behind another).
-Procedure StartWindow()
+ProcedureRAM StartWindow()
   RunLeft = RunBank
   If Dl11TxRdy = 0
     Tmp = Dl11TxDue - InstrCount
@@ -1685,7 +1687,7 @@ EndProcedure
 ; The receiver is empty and the program is waiting for a character: it
 ; has the receiver interrupt enabled, or has looked at RCSR since the
 ; last character arrived. The firmware reads its serial port only then.
-Procedure.i Dl11RxWanted()
+ProcedureRAM.i Dl11RxWanted()
   If Dl11RxDone = 0 And ConInHead = ConInTail
     If (Dl11RxIe | Dl11RxPolled) <> 0
       ProcedureReturn 1
@@ -1698,7 +1700,7 @@ EndProcedure
 ; and requests off, the receiver empty. A character already on its way
 ; out still finishes. The disk controller and the line clock take their
 ; own INIT (rk11.pico2, kw11.pico2).
-Procedure DevReset()
+ProcedureRAM DevReset()
   Dl11RxIe = 0
   Dl11RxDone = 0
   Dl11TxIe = 0
@@ -1711,7 +1713,7 @@ EndProcedure
 ; ======================================================================
 ;  RESET. The run loop, CpuRun(n), is in instructions.pico2.
 ; ======================================================================
-Procedure CpuReset()
+ProcedureRAM CpuReset()
   Protected i.i
   For i = 0 To 7
     Reg(i) = 0

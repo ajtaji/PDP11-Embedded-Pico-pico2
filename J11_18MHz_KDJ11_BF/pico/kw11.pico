@@ -46,7 +46,7 @@ Global KwTicks.i             ; ticks since power-up (for the desk proof and the 
 Global KwLost.i              ; ticks let go because the board fell behind
 
 ; The period that follows the tick just taken: 16,667, 16,667, 16,666.
-Procedure KwAdvance()
+ProcedureRAM KwAdvance()
   If KwPhase = 2
     KwNext = KwNext + #KW_PERIOD_US - 1
     KwPhase = 0
@@ -66,7 +66,7 @@ EndProcedure
 Global KwSeen.i                 ; core 0: the last KwSeq acted on
 Global KwMissed.i               ; core 0: ticks merged because two or more arrived between looks
 
-Procedure KwTick()                       ; core 1
+ProcedureRAM KwTick()                       ; core 1
   Define now.i
   now = Micros()
   If now - KwNext >= 0
@@ -80,11 +80,11 @@ Procedure KwTick()                       ; core 1
   EndIf
 EndProcedure
 
-Procedure KwPoll()                       ; core 0
+ProcedureRAM KwPoll()                       ; core 0
   Define d.i
   d = KwSeq - KwSeen
   If d <> 0
-    If d > 1
+    If d > 1 And KwIe <> 0               ; while interrupts are off MONITOR just stays set
       KwMissed = KwMissed + d - 1
     EndIf
     KwSeen = KwSeen + d
@@ -97,12 +97,12 @@ Procedure KwPoll()                       ; core 0
   EndIf
 EndProcedure
 
-Procedure.i KwRead()
+ProcedureRAM.i KwRead()
   KwPoll()
   ProcedureReturn (KwMon << 7) | (KwIe << 6)
 EndProcedure
 
-Procedure KwWrite(v.i)
+ProcedureRAM KwWrite(v.i)
   KwPoll()
   If (v & $80) = 0
     KwMon = 0
@@ -118,7 +118,7 @@ EndProcedure
 
 ; The bus INIT and power-up: interrupt off, MONITOR set (simh clk_reset
 ; does the same), the next tick a full period away.
-Procedure KwInit()
+ProcedureRAM KwInit()
   KwIe = 0
   KwMon = 1
   KwSeen = KwSeq                         ; the 60 Hz time itself is core 1's (KwTick)

@@ -278,8 +278,13 @@ Global Dim DkOv.u(#DK_OV_SLOTS * 256)
 Global DkOvUsed.i, DkSwapLo.i, DkSwapEnd.i
 Global DkOvWrites.i, DkSwapSpill.i
 Global DkHits.i, DkMisses.i      ; block reads served from RAM (cache line, overlay) and from flash
+CompilerIf #DISK_READ_ONLY = 1                 ; nothing is ever written back: no write cache,
+Global Dim DkMap.u(1)                          ; and the block map is read from the flash itself
+Global Dim DkLine.u(1)                         ; (26 KB of SRAM given to the processor instead)
+CompilerElse
 Global Dim DkMap.u(#DK_BLOCKS)   ; mapped layout: slot + 1, or 0
 Global Dim DkLine.u(#DK_LINES * 2048)   ; the cache, one 4 KB sector a line, as 16-bit words
+CompilerEndIf
 Global Dim DkLineAt.i(#DK_LINES)        ; the flash offset of the line's sector, -1 none
 Global Dim DkLineDirty.i(#DK_LINES)
 Global Dim DkLineUsed.i(#DK_LINES)      ; LRU stamp
@@ -601,7 +606,7 @@ Procedure DiskInit()
     ProcedureReturn
   EndIf
   DkNext = 0
-  If DkMapped
+  If DkMapped <> 0 And #DISK_READ_ONLY = 0
     For k = 0 To #DK_BLOCKS - 1
       m = LlXip16(#DISK_REGION + #DK_SECTOR + k * 2)
       DkMap(k) = m
@@ -715,10 +720,19 @@ EndProcedure
 ; The flash offset of block blk, or -1 if it has no slot (mapped, never stored).
 Procedure.i DkWhere(blk.i)
   If DkMapped
-    If DkMap(blk) = 0
-      ProcedureReturn -1
-    EndIf
-    ProcedureReturn DkData + (DkMap(blk) - 1) * 512
+    CompilerIf #DISK_READ_ONLY = 1
+      Define m.i
+      m = LlXip16(#DISK_REGION + #DK_SECTOR + blk * 2)   ; the map in the flash
+      If m = 0
+        ProcedureReturn -1
+      EndIf
+      ProcedureReturn DkData + (m - 1) * 512
+    CompilerElse
+      If DkMap(blk) = 0
+        ProcedureReturn -1
+      EndIf
+      ProcedureReturn DkData + (DkMap(blk) - 1) * 512
+    CompilerEndIf
   EndIf
   ProcedureReturn DkData + blk * 512
 EndProcedure
