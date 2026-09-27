@@ -85,18 +85,26 @@ does no harm but saves nothing across a power cycle.
 - **56 KB of PDP-11 memory** (000000-157777) plus the I/O page. V6 reports
   `mem = 76` at boot; about 15 KB is left for user programs once its kernel
   is in.
-- **Writes live in RAM, in a fixed number of 512-byte blocks** (104 on the
-  Pico 2 W, 124 on the Pico W), shared by the swap area and every file-system
-  write. When they are used up, a write is refused: Unix sees a disk error
-  and the statistics block shows `REFUSED: block N (RAM overlay full)`.
-- **Pico W swap.** Mini-Unix has no memory management and swaps whole
-  processes (about 37 KB each), so it fills the 124 blocks after a few
-  commands; a refused swap write can restart the shell (the "RESTRICTED
-  RIGHTS" notice appears again and the date jumps back). Keep Pico W
-  sessions short for now.
-- **V6 on the Pico 2 W:** `ps` says "no swap device" and `df` cannot open
-  its disks, because the pack's `/dev` holds only `kmem`, `mem`, `null` and
-  `tty8`. `dc` is too large for the 56 KB machine.
+- **Writes live in RAM (RAM disks), in 512-byte blocks.**
+  - Pico 2 W: a **swap RAM disk of 112 blocks** (56 KB, blocks 4000-4111 of
+    the pack) and **48 blocks for file-system writes**. The V6 kernel in the
+    image is patched to swap only there (`_nswap` = 112), so swap can never
+    be refused. 112 blocks hold about three of V6's largest processes
+    (about 33 blocks each) or many small ones; if a session ever needs more,
+    V6 stops with its own "panic: out of swap space".
+  - Pico W: **124 blocks shared** by swap and file writes. Mini-Unix gives
+    each of its 13 process slots a fixed 66-block swap area (858 blocks by
+    design) and has no swap size to patch, so this cannot be bounded in the
+    Pico W's SRAM. Mini-Unix swaps whole processes, and after enough
+    commands the blocks run out; keep Pico W sessions short.
+  - When the file-write blocks are used up, a write to a new block fails:
+    Unix sees a disk error, the console prints once
+    `[RK0: the RAM overlay for file writes is full ...]`, and the statistics
+    block shows `FULL: n writes refused`. Nothing already written changes
+    and nothing reaches the flash; power off to start clean.
+- **V6 on the Pico 2 W:** `ps` works; `df` with no argument looks for V6's
+  built-in `/dev/rk2` and `/dev/rp0`, which this machine does not have, so
+  type **`df /dev/rk0`**. `dc` is too large for the 56 KB machine.
 - **Speed** (measured on the boards, 2026-09-26): about 460,000 PDP-11
   instructions per second under V6 on the Pico 2 W (`od /rkunix` in 21 s),
   and about 800,000 under Mini-Unix on the Pico W. The run loop each Unix
@@ -117,8 +125,8 @@ and is covered by the same licence.
 
 All tools are Python 3 scripts in `tools/`, run from the `PureMetal`
 folder as shown. Under Git Bash on Windows, put `MSYS_NO_PATHCONV=1` in front
-of any command with an argument that starts with `@/` (Git Bash would turn
-`@/usr/...` into a Windows path).
+of any command with an argument that starts with `/` or `@/` (Git Bash would
+turn `/dev/rk0` or `@/usr/...` into a Windows path).
 
 ### `rk_image.py` - an RK05 pack into the board's flash
 
@@ -185,6 +193,33 @@ tape paths relative to the plan's folder (or `--tapes`). The ladder's plan
 is `media/diagnostics/ladder.txt`. `--dump` writes the bytes it would send
 into a tape image instead, for the desk emulator (see **Diagnostic
 ladder**). The whole port session is one open of the port.
+
+### `v6fs.py` - read and change a V6 file system in a disk image
+
+Works on the Sixth Edition file system inside an RK05 image, on the host.
+Each changing command writes the whole image to `-o` (which may be the
+input).
+
+```
+python tools/v6fs.py ls    IMAGE /dev
+python tools/v6fs.py cat   IMAGE /etc/passwd
+python tools/v6fs.py mknod IMAGE /dev/rk0 b 0 0 [--mode 640] -o OUT
+python tools/v6fs.py ln    IMAGE /rkunix /unix -o OUT
+python tools/v6fs.py rm    IMAGE /unix -o OUT
+python tools/v6fs.py patch IMAGE /rkunix _nswap 112 -o OUT
+python tools/v6fs.py check IMAGE
+```
+
+- `mknod` makes a block (`b`) or character (`c`) device with a major and
+  minor number; `ln` adds a name for an existing file; `rm` removes a name
+  and, with the last one, frees the inode and its blocks onto the free list
+  the way V6 does.
+- `patch` writes a word into the data of an a.out file at the address of a
+  symbol from its symbol table (the kernel's `_nswap`, say).
+- `check` walks the file system as `icheck` would: every block free or in
+  exactly one file, every link count matching the directory entries.
+- Limits: V6 only (not V7), files up to 8 indirect blocks, directories grow
+  by one block at most.
 
 ### `rk_desk.py` - typing for the desk emulator
 
@@ -288,8 +323,19 @@ python tools/tape2pico.py --empty
 cd J11_18MHz_KDJ11_BF/pico2
 PureMetalForge.exe --compile diag.pico2 -t rp2350 -o diag.bin
 python -c "import gzip,shutil; shutil.copyfileobj(gzip.open('../../media/unix/v6root.gz'), open('v6root.rk','wb'))"
-python ../../tools/rk_image.py pack v6root.rk --chip pico2 --blocks 4872 --boot-block @/usr/mdec/rkuboot --name v6root --autoboot rkunix --firmware diag.bin --combined combined.uf2 -o v6root.uf2
+python ../../tools/v6fs.py mknod v6root.rk /dev/rk0 b 0 0 -o v6root.rk
+python ../../tools/v6fs.py mknod v6root.rk /dev/rrk0 c 9 0 -o v6root.rk
+python ../../tools/v6fs.py mknod v6root.rk /dev/swap b 0 0 -o v6root.rk
+python ../../tools/v6fs.py rm v6root.rk /unix -o v6root.rk
+python ../../tools/v6fs.py ln v6root.rk /rkunix /unix -o v6root.rk
+python ../../tools/v6fs.py patch v6root.rk /rkunix _nswap 112 -o v6root.rk
+python ../../tools/v6fs.py check v6root.rk
+python ../../tools/rk_image.py pack v6root.rk --chip pico2 --blocks 4872 --boot-block @/usr/mdec/rkuboot --swap 4000,112 --name v6root --autoboot rkunix --firmware diag.bin --combined combined.uf2 -o v6root.uf2
 ```
+
+The `v6fs.py` lines give V6 the device nodes `ps` and `df` need, make
+`/unix` the kernel that actually runs (`ps` reads its symbols from
+`/unix`), and size the kernel's swap to the firmware's swap RAM disk.
 
 **Pico W, Mini-Unix** (`images/picow-mini-unix/firmware.uf2`, `minix.uf2`):
 

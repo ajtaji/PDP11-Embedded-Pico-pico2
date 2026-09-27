@@ -282,15 +282,15 @@ Global DkInitWhy.i                ; why DiskInit found no pack: 1 magic, 2 versi
 Global DkPresent.i, DkMapped.i, DkStored.i, DkMapSectors.i, DkData.i, DkSlots.i, DkNext.i
 Global DkFatal.i                 ; the flash failed a write-back three times: no more writes
 CompilerIf #DESK_PROBE = 1                ; the desk's measurement build carries its feed and checks:
-#DK_OV_SLOTS  = 32                         ; it gives 8 overlay blocks for them
+#DK_OV_SLOTS  = 40                         ; it gives 8 overlay blocks for them
 CompilerElse
-#DK_OV_SLOTS  = 40                         ; the file-write overlay, 512 bytes a block (see THE SWAP RAM DISK)
+#DK_OV_SLOTS  = 48                         ; the file-write overlay, 512 bytes a block (see THE SWAP RAM DISK)
 CompilerEndIf
 Global Dim DkOvIdx.a(#DK_BLOCKS) ; block -> overlay slot + 1, 0 = not in the overlay
 Global Dim DkOv.u(#DK_OV_SLOTS * 256)
 Global DkOvUsed.i, DkSwapLo.i, DkSwapEnd.i
 Global DkOvWrites.i, DkSwapSpill.i
-#DK_SWAP_BLOCKS = 48              ; the swap RAM disk (see THE SWAP RAM DISK); 0 = none, swap uses the overlay
+#DK_SWAP_BLOCKS = 112             ; the swap RAM disk (see THE SWAP RAM DISK); 0 = none, swap uses the overlay
 Global Dim DkSwapRam.u(#DK_SWAP_BLOCKS * 256 + 1)
 Global DkSwapN.i                 ; blocks of the swap area the RAM disk holds (the header's, at most #DK_SWAP_BLOCKS)
 Global DkSwapTop.i               ; the highest swap block written + 1 (relative): what Unix has used

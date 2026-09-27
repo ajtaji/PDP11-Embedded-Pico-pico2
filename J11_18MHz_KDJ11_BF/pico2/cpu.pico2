@@ -619,7 +619,7 @@ ProcedureRAM MmuRegChanged(r.i)
   FetchHi = 0
 EndProcedure
 
-Procedure MmuReset()                     ; power-up and the bus INIT: MMR0 and MMR3 cleared
+ProcedureRAM MmuReset()                     ; power-up and the bus INIT: MMR0 and MMR3 cleared
   Mmr0 = 0
   Mmr3 = 0
   If MmuOn
@@ -1700,7 +1700,7 @@ EndProcedure
 ; and requests off, the receiver empty. A character already on its way
 ; out still finishes. The disk controller and the line clock take their
 ; own INIT (rk11.pico2, kw11.pico2).
-Procedure DevReset()
+ProcedureRAM DevReset()
   Dl11RxIe = 0
   Dl11RxDone = 0
   Dl11TxIe = 0
@@ -1713,7 +1713,7 @@ EndProcedure
 ; ======================================================================
 ;  RESET. The run loop, CpuRun(n), is in instructions.pico2.
 ; ======================================================================
-Procedure CpuReset()
+ProcedureRAM CpuReset()
   Protected i.i
   For i = 0 To 7
     Reg(i) = 0

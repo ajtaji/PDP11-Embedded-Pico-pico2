@@ -186,7 +186,7 @@ EndProcedure
 
 ; Core 1: the posted request, if there is one. A storage that is not ready
 ; (0) is simply asked again on the next pass; core 0 sees only the answer.
-Procedure DkServe()
+ProcedureRAM DkServe()
   Define r.i
   If DkReqSeq <> DkDoneSeq
     SmpBarrier()                         ; the number, then the request
@@ -268,7 +268,7 @@ ProcedureRAM RkDone()
   DevUpdate()
 EndProcedure
 
-Procedure RkFail(bits.i)                ; an error found at GO
+ProcedureRAM RkFail(bits.i)                ; an error found at GO
   RkEr = RkEr | bits
   RkDone()
 EndProcedure
@@ -621,7 +621,7 @@ EndProcedure
 
 ; The bus INIT (and power-up): every register clear but RDY; drives
 ; stop seeking, write locks come off; a transfer in progress is dropped.
-Procedure RkInit()
+ProcedureRAM RkInit()
   Define d.i
   RkCs = #RKCS_RDY
   RkEr = 0
@@ -674,7 +674,7 @@ EndProcedure
 
 ; A byte written into one of these full-word registers (MOVB, BISB ...):
 ; the other byte keeps what the register reads, and the word goes in.
-Procedure DevWriteByte(a.i, v.i)
+ProcedureRAM DevWriteByte(a.i, v.i)
   Define w.i
   If (a & $FFFE) = #KW_CSR
     w = KwRead()
