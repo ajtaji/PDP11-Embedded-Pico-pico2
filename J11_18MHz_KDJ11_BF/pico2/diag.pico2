@@ -98,6 +98,7 @@ Global C0DoneSeq.i                         ; core 0 has done it: core 0 writes
 Global PswSnap.i                           ; the PSW after core 0's last slice (core 1 must not call PswGet)
 Global C1Alone.i                           ; core 1 did not start: the I/O loop runs on core 0, no processor
 Global UsbGapMax.i, UsbLastSvc.i           ; core 1: the longest gap between USB services since the banner
+Global DkOvFullShown.i                    ; core 1 has said the overlay is full
 Global C1Where.i, GapWhere.i               ; what core 1 was doing, and what it was doing in the longest gap
 #C0_BOOT = 1
 #C0_START = 2
@@ -591,9 +592,18 @@ Procedure StatsBlock()
   StatLine("disk    RK11: ") : Num(RkReads) : Say(" blocks read, ") : Num(RkWrites) : Say(" written")
   CompilerIf #DISK_BACKEND = 2
     StatLine("        cache: ") : Num(DkHits) : Say(" reads from RAM, ") : Num(DkMisses) : Say(" from flash (XIP)")
-    StatLine("        RAM overlay: ") : Num(DkOvUsed) : Say(" of ") : Num(#DK_OV_SLOTS) : Say(" blocks")
-    If DkSwapEnd > DkSwapLo
-      Say(" (swap ") : Num(DkSwapLo) : Say("-") : Num(DkSwapEnd - 1) : Say(")")
+    If DkSwapN > 0
+      StatLine("        swap RAM disk: blocks ") : Num(DkSwapLo) : Say("-") : Num(DkSwapLo + DkSwapN - 1)
+      Say(", ") : Num(DkSwapTop) : Say(" of ") : Num(DkSwapN) : Say(" used so far")
+      StatLine("        file-write overlay: ") : Num(DkOvUsed) : Say(" of ") : Num(#DK_OV_SLOTS) : Say(" blocks")
+    Else
+      StatLine("        RAM overlay: ") : Num(DkOvUsed) : Say(" of ") : Num(#DK_OV_SLOTS) : Say(" blocks")
+      If DkSwapEnd > DkSwapLo
+        Say(" (swap ") : Num(DkSwapLo) : Say("-") : Num(DkSwapEnd - 1) : Say(")")
+      EndIf
+    EndIf
+    If DkOvFull
+      Say(", FULL: ") : Num(DkOvFull) : Say(" writes refused")
     EndIf
     If RkBadBlock >= 0                   ; the storage refused a transfer: Unix saw a drive error
       StatLine("        REFUSED: block ") : Num(RkBadBlock) : Say(" (")
@@ -811,7 +821,12 @@ Procedure DiskBanner()
     If DkMapped
       Say(" (mapped)")
     EndIf
-    If DkSwapEnd > DkSwapLo
+    If DkSwapN > 0
+      Say(", swap ") : Num(DkSwapLo) : Say("-") : Num(DkSwapLo + DkSwapN - 1) : Say(" on a RAM disk")
+      If DkSwapEnd - DkSwapLo > DkSwapN
+        Say(" (the pack says ") : Num(DkSwapEnd - DkSwapLo) : Say(" - a kernel not patched to match?)")
+      EndIf
+    ElseIf DkSwapEnd > DkSwapLo
       Say(", swap ") : Num(DkSwapLo) : Say("-") : Num(DkSwapEnd - 1) : Say(" in RAM")
     EndIf
     CompilerIf #DISK_READ_ONLY = 1
@@ -1345,6 +1360,17 @@ Procedure Core1Main()
     If Mode = #MODE_RUN
       State = 1 + 2 * Waiting            ; 1 running, 3 in a WAIT
       DrainConsole()
+      CompilerIf #DISK_BACKEND = 2
+        If DkOvFull <> 0 And DkOvFullShown = 0   ; once: the overlay for file writes is full
+          DkOvFullShown = 1
+          If Column <> 0
+            Eol()
+          EndIf
+          Say("[RK0: the RAM overlay for file writes is full (") : Num(#DK_OV_SLOTS)
+          Say(" blocks): a write to a new block now fails, Unix sees a disk error. Nothing reaches the flash;")
+          Say(" power off to start clean]") : Eol()
+        EndIf
+      CompilerEndIf
       CompilerIf #DESK_PROBE = 1
         If ChkSeq <> ChkShown
           ChkShown = ChkSeq

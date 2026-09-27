@@ -103,6 +103,15 @@
 ;  flash as any other (DkSwapSpill counts them). In the READ-ONLY build
 ;  every written block goes to the overlay, and one past its room is
 ;  refused (DRE, the firmware says so).
+;
+;  THE SWAP RAM DISK (read-only builds, #DK_SWAP_BLOCKS > 0). The first
+;  #DK_SWAP_BLOCKS blocks of the swap area are a RAM disk of their own,
+;  block n of the area in slot n - no index, never refused. The disk
+;  image's kernel is patched to match (tools/v6fs.py: V6's _nswap), so
+;  Unix can never ask for a swap block the RAM disk does not have. The
+;  overlay then holds only the file system's writes; when it is full a
+;  write to a block not already in it is refused - Unix sees a disk error,
+;  the console says so once, and nothing already written is touched.
 
 ;  POWER. A cached write reaches flash within #DK_IDLE_US of the last
 ;  write to that sector; pulling the power inside that window loses it,
@@ -272,11 +281,20 @@ ReserveSram #DK_BOOT2, 256, "rk flash boot2 copy"
 Global DkInitWhy.i                ; why DiskInit found no pack: 1 magic, 2 version, 3 size
 Global DkPresent.i, DkMapped.i, DkStored.i, DkMapSectors.i, DkData.i, DkSlots.i, DkNext.i
 Global DkFatal.i                 ; the flash failed a write-back three times: no more writes
-#DK_OV_SLOTS  = 104               ; the RAM overlay, 512 bytes a block (see THE RAM OVERLAY)
+CompilerIf #DESK_PROBE = 1                ; the desk's measurement build carries its feed and checks:
+#DK_OV_SLOTS  = 32                         ; it gives 8 overlay blocks for them
+CompilerElse
+#DK_OV_SLOTS  = 40                         ; the file-write overlay, 512 bytes a block (see THE SWAP RAM DISK)
+CompilerEndIf
 Global Dim DkOvIdx.a(#DK_BLOCKS) ; block -> overlay slot + 1, 0 = not in the overlay
 Global Dim DkOv.u(#DK_OV_SLOTS * 256)
 Global DkOvUsed.i, DkSwapLo.i, DkSwapEnd.i
 Global DkOvWrites.i, DkSwapSpill.i
+#DK_SWAP_BLOCKS = 48              ; the swap RAM disk (see THE SWAP RAM DISK); 0 = none, swap uses the overlay
+Global Dim DkSwapRam.u(#DK_SWAP_BLOCKS * 256 + 1)
+Global DkSwapN.i                 ; blocks of the swap area the RAM disk holds (the header's, at most #DK_SWAP_BLOCKS)
+Global DkSwapTop.i               ; the highest swap block written + 1 (relative): what Unix has used
+Global DkSwapWrites.i, DkOvFull.i ; writes to the swap RAM disk; writes refused because the overlay was full
 Global DkHits.i, DkMisses.i      ; block reads served from RAM (cache line, overlay) and from flash
 CompilerIf #DISK_READ_ONLY = 1                 ; nothing is ever written back: no write cache,
 Global Dim DkMap.u(1)                          ; and the block map is read from the flash itself
@@ -599,6 +617,13 @@ Procedure DiskInit()
   EndIf
   DkSwapLo = DkHeader32(64)             ; the swap area (rk_image.py), 0 blocks = none
   DkSwapEnd = DkSwapLo + DkHeader32(68)
+  DkSwapN = 0
+  CompilerIf #DISK_READ_ONLY = 1 And #DK_SWAP_BLOCKS > 0
+    DkSwapN = DkSwapEnd - DkSwapLo
+    If DkSwapN > #DK_SWAP_BLOCKS         ; a pack with more swap than the RAM disk: the rest
+      DkSwapN = #DK_SWAP_BLOCKS          ; goes to the overlay (DiskBanner warns)
+    EndIf
+  CompilerEndIf
   DkData = #DISK_REGION + #DK_SECTOR + DkMapSectors * #DK_SECTOR
   DkSlots = (#FLASH_BYTES - DkData) / 512
   DkInitWhy = 3
@@ -746,6 +771,16 @@ Procedure.i DiskRead(d.i, blk.i)
     DkWhy = 1
     ProcedureReturn -1
   EndIf
+  CompilerIf #DISK_READ_ONLY = 1 And #DK_SWAP_BLOCKS > 0
+    If blk >= DkSwapLo And blk < DkSwapLo + DkSwapN   ; the swap RAM disk
+      DkHits = DkHits + 1
+      b = (blk - DkSwapLo) * 256
+      For i = 0 To 255
+        DkBuf(i) = DkSwapRam(b + i)
+      Next
+      ProcedureReturn 1
+    EndIf
+  CompilerEndIf
   If DkOvIdx(blk)                        ; in the RAM overlay
     DkHits = DkHits + 1
     b = (DkOvIdx(blk) - 1) * 256
@@ -800,6 +835,19 @@ Procedure.i DiskWrite(d.i, blk.i)
     DkWhy = 1
     ProcedureReturn -1
   EndIf
+  CompilerIf #DISK_READ_ONLY = 1 And #DK_SWAP_BLOCKS > 0
+    If blk >= DkSwapLo And blk < DkSwapLo + DkSwapN   ; the swap RAM disk: never refused
+      b = (blk - DkSwapLo) * 256
+      For i = 0 To 255
+        DkSwapRam(b + i) = DkBuf(i)
+      Next
+      If blk - DkSwapLo + 1 > DkSwapTop
+        DkSwapTop = blk - DkSwapLo + 1
+      EndIf
+      DkSwapWrites = DkSwapWrites + 1
+      ProcedureReturn 1
+    EndIf
+  CompilerEndIf
   k = DkOvIdx(blk) - 1                   ; the RAM overlay: swap, or everything when read-only
   If k < 0
     If #DISK_READ_ONLY = 1 Or (blk >= DkSwapLo And blk < DkSwapEnd)
@@ -809,6 +857,7 @@ Procedure.i DiskWrite(d.i, blk.i)
         DkOvIdx(blk) = k + 1
       ElseIf #DISK_READ_ONLY = 1
         DkWhy = 6
+        DkOvFull = DkOvFull + 1          ; core 1 says so on the console (diag, Core1Main)
         ProcedureReturn -1
       Else
         DkSwapSpill = DkSwapSpill + 1    ; no room: this swap block goes to flash
