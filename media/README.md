@@ -53,10 +53,12 @@ Source http://iamvirtual.ca/PDP-11/Basic-11/
 
 Both paper tape images validated with SIM-H.
 
-Intended as an alternative boot and test option for PureMetal Forge's PDP/11 Emulator
+Intended here as an alternative boot and test option for PureMetal Forge's PDP/11 Emulator
+Note that BASIC boots and runs directly on the PDP/11, no underlying Unix or RT11 is required
 | File | What it is |
 |---|---|
 | `DEC-11-L2PC-PO.ptap` | DEC Absolute Loader (native/SIM-H papertape format) 183 bytes|
 | `DEC-11-AJPB-PB.ptap` | DEC Single User BASIC (native/SIM-H papertape format) 10180 bytes|
+| `PDP11_basic_simh.ini` | SIM-H configuration file, used to start SIM-H and test BASIC
 
 
