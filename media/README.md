@@ -57,6 +57,6 @@ Intended as an alternative boot and test option for PureMetal Forge's PDP/11 Emu
 | File | What it is |
 |---|---|
 | `DEC-11-L2PC-PO.ptap` | DEC Absolute Loader (native/SIM-H papertape format) 183 bytes|
-| `DEC-11-AJPB-PB.ptap` | DEC BASIC (native/SIM-H papertape format) 10180 |
+| `DEC-11-AJPB-PB.ptap` | DEC BASIC (native/SIM-H papertape format) 10180 bytes|
 
 
