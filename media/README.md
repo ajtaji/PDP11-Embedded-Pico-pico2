@@ -48,7 +48,7 @@ design). The ladder's plan, with the options each tape needs, is
 The DEC listings and manuals that `INDEX.md` mentions are not included; they
 are documentation, available from bitsavers.
 
-## `papertape/`: DEC Absolute Loader and BASIC
+## `papertape/`: DEC Absolute Loader and Single-User BASIC
 Source http://iamvirtual.ca/PDP-11/Basic-11/
 
 Both paper tape images validated with SIM-H.
