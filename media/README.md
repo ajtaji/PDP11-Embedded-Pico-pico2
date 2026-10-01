@@ -47,3 +47,16 @@ design). The ladder's plan, with the options each tape needs, is
 
 The DEC listings and manuals that `INDEX.md` mentions are not included; they
 are documentation, available from bitsavers.
+
+## `papertape/`: DEC Absolute Loader and BASIC
+Source http://iamvirtual.ca/PDP-11/Basic-11/
+
+Both paper tape images validated with SIM-H.
+
+Intended as an alternative boot and test option for PureMetal Forge's PDP/11 Emulator
+| File | What it is |
+|---|---|
+| `DEC-11-L2PC-PO.ptap` | DEC Absolute Loader (native/SIM-H papertape format) 183 bytes|
+| `DEC-11-AJPB-PB.ptap` | DEC BASIC (native/SIM-H papertape format) 10180 |
+
+
