@@ -196,9 +196,12 @@ Under Git Bash on Windows, put `MSYS_NO_PATHCONV=1` in front of any command with
 ## 8. Build the firmware and images with PureMetal Forge
 
 You need Python 3 and the PureMetal compiler (`PureMetalForge.exe`), the
-release build from compiler main `dbaab248` or later: the firmware keeps the
-lazy N/Z flags in r4 (`#RESERVE_MORE = 1` in `cpu.pico(2)`), which needs the
-r4-r7 reservation that release has. From the repository root:
+release build from compiler main `f408822d` or later: the firmware keeps the
+lazy N/Z flags in r4 (`#RESERVE_MORE = 1` in `cpu.pico(2)`), and the Pico W's
+dispatch tails are assembly blocks that name the reserved registers
+(`ASM Uses`, `#ASM_TAILS = 1` in `pico/instructions.pico`), which that
+release has. With `#ASM_TAILS = 0` the Pico W source also builds with
+`dbaab248`. From the repository root:
 
 **Pico 2 W, V6** (`images/pico2w-v6/combined.uf2`):
 
@@ -230,9 +233,13 @@ PureMetalForge.exe --compile diag.pico -t rp2040 -o diag.bin
 python ../../tools/rk_image.py pack ../../mini-unix.rk05 --chip pico --name mini-unix --autoboot rkmx --firmware diag.bin --firmware-uf2 firmware.uf2 -o minix.uf2
 ```
 
-The compiler's output is the same byte for byte from the same source, so
-these reproduce the committed files; compare with the SHA-256 values in
-`images/README.md`. The firmware's defaults (`#DISK_BACKEND = 2`,
+The compiler's output is the same byte for byte from the same source and
+the same compiler. With main `f408822d` the Pico W lines reproduce
+`images/picow-mini-unix/firmware.uf2`; compare with the SHA-256 values in
+`images/README.md`. The Pico 2 W lines give
+`images/untested/pico2w-v6-newcompiler/combined.uf2`, which has run only in
+the emulator: `images/pico2w-v6/combined.uf2` is still the build made with
+compiler main `dbaab248`, the last one run on a Pico 2 W. The firmware's defaults (`#DISK_BACKEND = 2`,
 `#DISK_READ_ONLY = 1`, `#DESK_PROBE = 0` at the top of `diag.pico(2)`) are
 the ones the images use.
 

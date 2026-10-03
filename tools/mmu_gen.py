@@ -112,6 +112,12 @@ def generate():
     while b0 in raw:
         i = raw.index(b0)
         raw = raw[:i] + raw[raw.index(b1, i) + len(b1):]
+    # the unmapped loop's tails in assembly (#ASM_TAILS) stay out too: the
+    # mapped loop's tails are written from the macros in the Else branch
+    b0 = "; ---- UNMAPPED ONLY: the tails in assembly (tools/mmu_gen.py leaves this block out) ----\n"
+    while b0 in raw:
+        i = raw.index(b0)
+        raw = raw[:i] + raw[raw.index(b1, i) + len(b1):]
     start = raw.index("Global Dim OpTable.Label(8192)")
     s = raw[start:]
 

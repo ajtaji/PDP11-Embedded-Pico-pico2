@@ -52,7 +52,7 @@ The PSRAM boards' images, not yet run on a board, are in
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `picow-mini-unix/firmware.uf2` | 307,712 | `443bed0862a851d1f1013a16a604fb258f4d306b237c98f615d3a71e83bbce0c` |
+| `picow-mini-unix/firmware.uf2` | 270,848 | `479f3db8145e457f4297d588e59c9a0243bafcbd8fbb9fe55ded203e19914f3d` |
 | `picow-mini-unix/minix.uf2` | 3,167,232 | `de8bb8dc541f17e25b38097f7b0063cdb0f11d7ff28a81eb8a1fb0e75460f55a` |
 
 **Flash these as two separate copies**, firmware first, then the pack, each
@@ -61,9 +61,15 @@ UF2 leaves the pack area unwritten. The pack holds only the used blocks of
 the Mini-Unix pack (`../mini-unix.rk05`, 3,061 blocks, mapped) so it fits
 the Pico W's flash. It boots `rkmx` by itself; `#` 3.2 s after the port
 opened on a Pico W. Mini-Unix runs with memory management off (the stats
-block says `MMU off (16-bit)`). `time od /rkmx >/dev/null` takes real 7.0 s,
-user 6.5 s on a Pico W, timed from the host 7.09 s a run (8.09 s before the
-MOV handlers by addressing mode, 8.64 s before the speed pass of 2026-10-03).
+block says `MMU off (16-bit)`). `time od /rkmx >/dev/null` takes real 6.0 s,
+user 5.5 s on a Pico W, timed from the host 5.94 s a run (7.09 s before the
+compiler's code generation pass of 2026-10-03 and the dispatch tails in
+assembly, 8.09 s before the MOV handlers by addressing mode, 8.64 s before
+the speed pass of 2026-10-03). The memory-management-off bench loop runs at
+2,587,000 instructions/s (2,048,000 before). No clock ticks are dropped and
+the longest gap between USB services is 332 us. Built with PureMetal Forge
+main `f408822d`, with `#ASM_TAILS = 1` in `pico/instructions.pico`; the DEC
+diagnostics DFKAA, DFKAB and DFKAC pass on the board with this file.
 
 Known: the RAM for disk writes (124 blocks, shared with swap) fills after a
 few commands; when it does, the console says so once and Unix sees a disk
