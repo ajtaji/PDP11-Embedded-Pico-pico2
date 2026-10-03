@@ -2406,6 +2406,114 @@ RunEnd:
   RunBank = 0
   ProcedureReturn InstrCount - RunFrom
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; The table is indexed by Op >> 3, which holds the source mode, the source
+; register and the destination mode. Each MOV form Unix uses most has a
+; handler of its own here, with the lines EaWord would run for those two
+; modes written in place: no call and no test of the mode. Everything else
+; is InstructionMOV_01's, line for line. The mapped loop gets its own from
+; the generator (the Pico 2 only), which is why this block is left out there.
+InstructionMOV_01_M04:            ; MOV, source mode 0, destination mode 4
+  PcOut()
+  Src = Reg((Op >> 6) & 7)
+  EaReg = Op & 7
+  Ea = (Reg(EaReg) - 2) & $FFFF
+  Reg(EaReg) = Ea
+  If EaReg = 6
+    StackCheckFast()
+  EndIf
+  MWriteWord(Ea, Src)
+  FlagNZ = Src
+  FlagV = 0
+  NextSynced()
+
+InstructionMOV_01_M40:            ; MOV, source mode 4, destination mode 0
+  PcOut()
+  EaReg = (Op >> 6) & 7
+  Ea = (Reg(EaReg) - 2) & $FFFF
+  Reg(EaReg) = Ea
+  If EaReg = 6
+    StackCheckFast()
+  EndIf
+  MReadWord(Src, Ea)
+  Reg(Op & 7) = Src
+  FlagNZ = Src
+  FlagV = 0
+  NextSynced()
+
+InstructionMOV_01_M60:            ; MOV, source mode 6, destination mode 0
+  PcOut()
+  EaReg = (Op >> 6) & 7
+  Adr = Reg(7)
+  Reg(7) = (Adr + 2) & $FFFF
+  MReadWord(Tmp, Adr)
+  Ea = (Tmp + Reg(EaReg)) & $FFFF
+  MReadWord(Src, Ea)
+  Reg(Op & 7) = Src
+  FlagNZ = Src
+  FlagV = 0
+  NextSynced()
+
+InstructionMOV_01_M64:            ; MOV, source mode 6, destination mode 4
+  PcOut()
+  EaReg = (Op >> 6) & 7
+  Adr = Reg(7)
+  Reg(7) = (Adr + 2) & $FFFF
+  MReadWord(Tmp, Adr)
+  Ea = (Tmp + Reg(EaReg)) & $FFFF
+  MReadWord(Src, Ea)
+  EaReg = Op & 7
+  Ea = (Reg(EaReg) - 2) & $FFFF
+  Reg(EaReg) = Ea
+  If EaReg = 6
+    StackCheckFast()
+  EndIf
+  MWriteWord(Ea, Src)
+  FlagNZ = Src
+  FlagV = 0
+  NextSynced()
+
+InstructionMOV_01_M20:            ; MOV, source mode 2, destination mode 0
+  PcOut()
+  EaReg = (Op >> 6) & 7
+  Ea = Reg(EaReg)
+  Reg(EaReg) = (Ea + 2) & $FFFF
+  MReadWord(Src, Ea)
+  Reg(Op & 7) = Src
+  FlagNZ = Src
+  FlagV = 0
+  NextSynced()
+
+InstructionMOV_01_M61:            ; MOV, source mode 6, destination mode 1
+  PcOut()
+  EaReg = (Op >> 6) & 7
+  Adr = Reg(7)
+  Reg(7) = (Adr + 2) & $FFFF
+  MReadWord(Tmp, Adr)
+  Ea = (Tmp + Reg(EaReg)) & $FFFF
+  MReadWord(Src, Ea)
+  EaReg = Op & 7
+  Ea = Reg(EaReg)
+  MWriteWord(Ea, Src)
+  FlagNZ = Src
+  FlagV = 0
+  NextSynced()
+
+InstructionMOV_01_M06:            ; MOV, source mode 0, destination mode 6
+  PcOut()
+  Src = Reg((Op >> 6) & 7)
+  EaReg = Op & 7
+  Adr = Reg(7)
+  Reg(7) = (Adr + 2) & $FFFF
+  MReadWord(Tmp, Adr)
+  Ea = (Tmp + Reg(EaReg)) & $FFFF
+  MWriteWord(Ea, Src)
+  FlagNZ = Src
+  FlagV = 0
+  NextSynced()
+
+; ---- END UNMAPPED ONLY ----
+
 ; ======================================================================
 ;  THE TABLE - filled the first time CpuRun runs. A '.Label' is taken
 ;  with ?Name only inside the procedure that owns the label, so this is
@@ -2545,6 +2653,63 @@ BuildTable:
   OpTable($12B8) = ?InstructionMOVB_11_IR
   OpTable($14B8) = ?InstructionCMPB_12_IR
   OpTable($16B8) = ?InstructionBITB_13_IR
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+  OpTable($0204) = ?InstructionMOV_01_M04
+  OpTable($020C) = ?InstructionMOV_01_M04
+  OpTable($0214) = ?InstructionMOV_01_M04
+  OpTable($021C) = ?InstructionMOV_01_M04
+  OpTable($0224) = ?InstructionMOV_01_M04
+  OpTable($022C) = ?InstructionMOV_01_M04
+  OpTable($0234) = ?InstructionMOV_01_M04
+  OpTable($023C) = ?InstructionMOV_01_M04
+  OpTable($0300) = ?InstructionMOV_01_M40
+  OpTable($0308) = ?InstructionMOV_01_M40
+  OpTable($0310) = ?InstructionMOV_01_M40
+  OpTable($0318) = ?InstructionMOV_01_M40
+  OpTable($0320) = ?InstructionMOV_01_M40
+  OpTable($0328) = ?InstructionMOV_01_M40
+  OpTable($0330) = ?InstructionMOV_01_M40
+  OpTable($0338) = ?InstructionMOV_01_M40
+  OpTable($0380) = ?InstructionMOV_01_M60
+  OpTable($0388) = ?InstructionMOV_01_M60
+  OpTable($0390) = ?InstructionMOV_01_M60
+  OpTable($0398) = ?InstructionMOV_01_M60
+  OpTable($03A0) = ?InstructionMOV_01_M60
+  OpTable($03A8) = ?InstructionMOV_01_M60
+  OpTable($03B0) = ?InstructionMOV_01_M60
+  OpTable($03B8) = ?InstructionMOV_01_M60
+  OpTable($0384) = ?InstructionMOV_01_M64
+  OpTable($038C) = ?InstructionMOV_01_M64
+  OpTable($0394) = ?InstructionMOV_01_M64
+  OpTable($039C) = ?InstructionMOV_01_M64
+  OpTable($03A4) = ?InstructionMOV_01_M64
+  OpTable($03AC) = ?InstructionMOV_01_M64
+  OpTable($03B4) = ?InstructionMOV_01_M64
+  OpTable($03BC) = ?InstructionMOV_01_M64
+  OpTable($0280) = ?InstructionMOV_01_M20
+  OpTable($0288) = ?InstructionMOV_01_M20
+  OpTable($0290) = ?InstructionMOV_01_M20
+  OpTable($0298) = ?InstructionMOV_01_M20
+  OpTable($02A0) = ?InstructionMOV_01_M20
+  OpTable($02A8) = ?InstructionMOV_01_M20
+  OpTable($02B0) = ?InstructionMOV_01_M20
+  OpTable($0381) = ?InstructionMOV_01_M61
+  OpTable($0389) = ?InstructionMOV_01_M61
+  OpTable($0391) = ?InstructionMOV_01_M61
+  OpTable($0399) = ?InstructionMOV_01_M61
+  OpTable($03A1) = ?InstructionMOV_01_M61
+  OpTable($03A9) = ?InstructionMOV_01_M61
+  OpTable($03B1) = ?InstructionMOV_01_M61
+  OpTable($03B9) = ?InstructionMOV_01_M61
+  OpTable($0206) = ?InstructionMOV_01_M06
+  OpTable($020E) = ?InstructionMOV_01_M06
+  OpTable($0216) = ?InstructionMOV_01_M06
+  OpTable($021E) = ?InstructionMOV_01_M06
+  OpTable($0226) = ?InstructionMOV_01_M06
+  OpTable($022E) = ?InstructionMOV_01_M06
+  OpTable($0236) = ?InstructionMOV_01_M06
+  OpTable($023E) = ?InstructionMOV_01_M06
+; ---- END UNMAPPED ONLY ----
   OpTableReady = 1
   Goto RunStart
 EndProcedure

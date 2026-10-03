@@ -6,8 +6,8 @@ Do not treat them as ready to flash until one has run on the board it names.
 
 | Board | File | Size | SHA-256 |
 |---|---|---|---|
-| Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM ([6130](https://www.adafruit.com/product/6130)) | `feather/combined.uf2` | 9,418,752 | `5ff97c344979dbadf0ebe701c351e20cb8e38795a797f83bf01495fb55f12d37` |
-| Pimoroni Pico Plus 2 ([PIM724](https://shop.pimoroni.com/products/pimoroni-pico-plus-2)) and Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w), Adafruit [6243](https://www.adafruit.com/product/6243)) | `picoplus2/combined.uf2` | 9,418,752 | `fab2df5d6483b09ce5cb32303813f83364adcc97c011a7d150b2f68d58cb72f3` |
+| Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM ([6130](https://www.adafruit.com/product/6130)) | `feather/combined.uf2` | 9,419,264 | `38a62390615de2577bcbed7cb8d5014f50597fe5151e8a1b7b4ea1bb2cddfc42` |
+| Pimoroni Pico Plus 2 ([PIM724](https://shop.pimoroni.com/products/pimoroni-pico-plus-2)) and Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w), Adafruit [6243](https://www.adafruit.com/product/6243)) | `picoplus2/combined.uf2` | 9,419,264 | `1f3902ec566f79754446fa78381858fbf4f97a5df5ccc103ad04f2e3ba91ae68` |
 
 | | Feather RP2350 | Pico Plus 2 / Plus 2 W |
 |---|---|---|

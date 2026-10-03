@@ -104,6 +104,14 @@ HANDOVER_M = """  ; ---- MMU HANDOVER: the unit is off - back to the unmapped lo
 
 def generate():
     raw = open(SRC, "rb").read().decode("ascii").replace("\r\n", "\n")
+    # the unmapped loop's own MOV handlers (and their table lines) stay out:
+    # they use the unmapped operand code directly, and the Pico 2's mapped
+    # loop gets handlers written here instead (specialise, below)
+    b0 = "; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----\n"
+    b1 = "; ---- END UNMAPPED ONLY ----\n"
+    while b0 in raw:
+        i = raw.index(b0)
+        raw = raw[:i] + raw[raw.index(b1, i) + len(b1):]
     start = raw.index("Global Dim OpTable.Label(8192)")
     s = raw[start:]
 

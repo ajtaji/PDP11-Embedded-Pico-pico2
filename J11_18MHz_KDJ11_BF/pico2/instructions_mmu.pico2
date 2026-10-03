@@ -2330,6 +2330,7 @@ RunEndM:
   RunBank = 0
   ProcedureReturn InstrCount - RunFrom
 
+
 InstructionMOV_01_M04M:            ; MOV, source mode 0, destination mode 4
   PcOutM()
   Src = Reg((Op >> 6) & 7)

@@ -279,10 +279,28 @@ EndProcedure
 ; The console's output, from the DL11's queue to the serial port. (Input
 ; goes the other way in Main: the serial port into ConIn.) UsbSerialFlush
 ; is called only after something was written, as the report firmware does.
+; Core 0's console output, to the port - and NEVER WAITING for it. The USB
+; library's UsbSerialWrite and UsbSerialFlush wait for the host to take the
+; packet before (up to a whole 1 ms USB frame, twice when output keeps
+; coming), and for that long core 1 served nothing else: it was the longest
+; gap the stats block reported, and it grew as the processor got faster.
+; So this writes only what the library takes without waiting
+; (UsbSerialWriteRoom), pushes it (UsbSerialPush), and leaves the rest in
+; ConOut for the next pass. If nobody has taken anything for #CON_STALL_US
+; the port is not being read: the waiting characters are dropped, as the
+; library's own bounded wait dropped them before.
+#CON_STALL_US = 250000
+Global ConStallAt.i                      ; when the port last took a character
 Procedure DrainConsole()
   Define c.i
-  Define wrote.i
-  While ConOutTail <> ConOutHead
+  Define room.i
+  room = UsbSerialWriteRoom()
+  If ConOutTail = ConOutHead Or room >= 3
+    ConStallAt = Micros()
+  ElseIf Micros() - ConStallAt > #CON_STALL_US
+    ConOutTail = ConOutHead              ; nobody is reading: drop what waits
+  EndIf
+  While ConOutTail <> ConOutHead And room >= 3
     SmpBarrier()                         ; core 0's head, then the character
     c = ConOut(ConOutTail & (#CON_SIZE - 1)) & $7F
     ConOutTail = ConOutTail + 1
@@ -292,7 +310,7 @@ Procedure DrainConsole()
       EndIf
       If c <> 0 And c <> 127
         Ch(c)
-        wrote = 1
+        room = room - 1
         If c = 7
           Bells = Bells + 1
         EndIf
@@ -303,18 +321,17 @@ Procedure DrainConsole()
       If Column = 0 And c <> 13 And c <> 10
         Say("| ")                        ; marks the emulated console's lines
         Column = 2
+        room = room - 2
       EndIf
       Ch(c)
-      wrote = 1
+      room = room - 1
       Column = Column + 1
       If c = 10
         Column = 0
       EndIf
     EndIf
   Wend
-  If wrote                               ; flush only what was written, as the
-    UsbSerialFlush()                     ; report firmware does
-  EndIf
+  UsbSerialPush()                        ; hand over what is staged, if the controller is free
 EndProcedure
 
 Procedure Status()

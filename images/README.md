@@ -19,7 +19,7 @@ The UNIX files inside the disk packs are covered by the Caldera licence in
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `pico2w-v6/combined.uf2` | 5,305,344 | `54586ace6e6f1bc1e075d8a4b99d98ec87b5fc453427419e31f04c1ee437065c` |
+| `pico2w-v6/combined.uf2` | 5,305,344 | `6b59055917ec9dbec165088bd87c4df3637d27ef8e9096a8e9a21294155e309d` |
 
 Firmware and disk pack in one UF2: hold BOOTSEL, plug in, copy the file to
 the `RP2350` drive. At the serial console:
@@ -52,7 +52,7 @@ The PSRAM boards' images, not yet run on a board, are in
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `picow-mini-unix/firmware.uf2` | 300,544 | `1f7ba676f40e522a12295d82488043f1793551004ee7a035d4e2ed45539fb706` |
+| `picow-mini-unix/firmware.uf2` | 307,712 | `443bed0862a851d1f1013a16a604fb258f4d306b237c98f615d3a71e83bbce0c` |
 | `picow-mini-unix/minix.uf2` | 3,167,232 | `de8bb8dc541f17e25b38097f7b0063cdb0f11d7ff28a81eb8a1fb0e75460f55a` |
 
 **Flash these as two separate copies**, firmware first, then the pack, each
@@ -61,9 +61,9 @@ UF2 leaves the pack area unwritten. The pack holds only the used blocks of
 the Mini-Unix pack (`../mini-unix.rk05`, 3,061 blocks, mapped) so it fits
 the Pico W's flash. It boots `rkmx` by itself; `#` 3.2 s after the port
 opened on a Pico W. Mini-Unix runs with memory management off (the stats
-block says `MMU off (16-bit)`). `time od /rkmx >/dev/null` takes real 8.0 s,
-user 7.5 s on a Pico W, timed from the host 8.09 s a run (8.64 s before the
-speed pass of 2026-10-03: about 6% faster).
+block says `MMU off (16-bit)`). `time od /rkmx >/dev/null` takes real 7.0 s,
+user 6.5 s on a Pico W, timed from the host 7.09 s a run (8.09 s before the
+MOV handlers by addressing mode, 8.64 s before the speed pass of 2026-10-03).
 
 Known: the RAM for disk writes (124 blocks, shared with swap) fills after a
 few commands; when it does, the console says so once and Unix sees a disk
