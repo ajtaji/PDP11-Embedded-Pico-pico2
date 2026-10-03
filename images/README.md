@@ -13,7 +13,7 @@ and every disk write go to RAM and are lost at power-off, so a board can be
 unplugged at any time and always starts again from the pack as flashed.
 
 The UNIX files inside the disk packs are covered by the Caldera licence in
-`../../UNIX-LICENSE.txt`.
+`../Caldera-license.pdf`.
 
 ## Pico 2 W (RP2350): Sixth Edition Unix, memory management on
 

@@ -1,7 +1,7 @@
 # ladder.txt - the diagnostic ladder: every tape in this folder that the J-11
 # emulator runs, in order, with the options each needs (tools/tape_ladder.py).
 #
-#   python PureMetal/tools/tape_ladder.py --port COMnn --plan PureMetal/media/diagnostics/ladder.txt
+#   python tools/tape_ladder.py --port COMnn --plan media/diagnostics/ladder.txt
 #
 # Each line:  name | tape (relative to this folder) | tape2pico options | seconds
 # Verdicts are tape_ladder's own: PASS = a bell, or "END PASS"/"END OF" typed;

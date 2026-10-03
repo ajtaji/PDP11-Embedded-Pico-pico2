@@ -9,7 +9,7 @@ Files are stored exactly as downloaded (gzipped where the source gzipped them).
 ## `unix/`: UNIX distributions
 
 Source: The Unix Heritage Society archive (tuhs.org), downloaded 2026-09-24.
-Covered by the Caldera licence in `../../UNIX-LICENSE.txt`. The two Berkeley
+Covered by the Caldera licence in `../Caldera-license.pdf`. The two Berkeley
 archives (1978 and 1979) predate the BSD licence text and carry no separate
 licence file; they are kept exactly as TUHS distributes them, with the
 University of California, Berkeley credits in their own READ_ME files.
