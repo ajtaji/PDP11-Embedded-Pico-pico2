@@ -20,7 +20,7 @@ The emulated machine has a console on the USB serial port, an RK11 disk controll
 | Kernel booted | `rkunix` | `rkmx` |
 | Memory management | on | not stated in the notes in this repository |
 | PDP-11 memory | 56 KB (000000-157777) plus the I/O page | 56 KB (000000-157777) plus the I/O page |
-| Speed, measured 2026-09-26 | about 460,000 PDP-11 instructions per second under V6 (`od /rkunix` in 21 s) | about 800,000 under Mini-Unix |
+| Speed, measured 2026-10-02 (Pico 2 W) and 2026-09-26 (Pico W) | about 495,000 PDP-11 instructions per second under V6 (`od /rkunix` in 19.8 s); about 1,728,000 with memory management off | about 800,000 under Mini-Unix |
 | Console ready after port open | `#` after 3.4 s | `#` after 3.2 s |
 | RAM for writes | 112-block swap RAM disk plus 48 blocks for file-system writes | 124 blocks shared by swap and file writes |
 | Flash images | `combined.uf2` (one file) | `firmware.uf2` then `minix.uf2` (two files) |
@@ -71,6 +71,10 @@ The full walk-through, with the console boot commands, setting the date and re-f
 ![Setting the date in Mini-Unix](mini-unix-set-date.png)
 
 *`date 0922100098` sets Tue Sep 22 10:00:00 1998 (month, day, hour, minute, two-digit year).*
+
+## PSRAM boards (untested on hardware)
+
+Images for the Adafruit Feather RP2350 (8 MB PSRAM) and the Pimoroni Pico Plus 2 and Pico Plus 2 W are in [images/untested/](images/untested/README.md). They have run only in the PureMetal ARM emulator and are not yet tested on hardware; do not treat them as ready to flash until one has run on the board it names. With the PSRAM found, V6 reports `mem = 1036` instead of 76 and gets its whole swap area. Without it, they run as the Pico 2 W build does.
 
 ## Known limits
 

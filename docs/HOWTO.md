@@ -196,7 +196,7 @@ Under Git Bash on Windows, put `MSYS_NO_PATHCONV=1` in front of any command with
 ## 8. Build the firmware and images with PureMetal Forge
 
 You need Python 3 and the PureMetal compiler (`PureMetalForge.exe`), the
-release build from compiler main `db8608cc` or later: the firmware keeps the
+release build from compiler main `dbaab248` or later: the firmware keeps the
 lazy N/Z flags in r4 (`#RESERVE_MORE = 1` in `cpu.pico(2)`), which needs the
 r4-r7 reservation that release has. From the repository root:
 
