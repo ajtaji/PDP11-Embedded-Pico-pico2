@@ -1438,9 +1438,9 @@ Procedure Core1Main()
     Service()
     C1Where = 8
     While (Micros() - tpass) < #C1_PASS_US And ConOutHead = ConOutTail And DkReqSeq = DkDoneSeq
-      KwTick()                           ; nothing to do: wait out the pass in a tight loop
-      If Micros() - UsbLastSvc > 250     ; but USB at least every 250 us
+      If Micros() - UsbLastSvc > 250     ; nothing to do: USB and the clock every 250 us
         Service()
+        KwTick()
       EndIf
     Wend
   ForEver

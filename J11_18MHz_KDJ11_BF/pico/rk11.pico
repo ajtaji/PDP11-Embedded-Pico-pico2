@@ -658,13 +658,15 @@ ProcedureRAM DevPoll()
     Define t.i
     t = Micros()
   CompilerEndIf
-  If KwIe
-    KwPoll()
+  If KwIe                                ; KwPoll acts only on a new tick
+    If KwSeq <> KwSeen
+      KwPoll()
+    EndIf
   EndIf
   If RkBusy | RkSeekMask | RkSeekDone
     RkPoll()
   EndIf
-  DevUpdate()
+  DevActive = KwIe | RkBusy | RkSeekMask | RkSeekDone   ; DevUpdate, inline: once a window
   CompilerIf #DESK_PROBE = 1
     If Micros() - t > DevPollMax
       DevPollMax = Micros() - t

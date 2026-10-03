@@ -272,7 +272,9 @@ CompilerIf #DISK_BACKEND = 2
 #DK_IDLE_US   = 2000000          ; a line untouched this long goes back to flash
 #DK_BLOCKS    = 4872
 #DK_BOOT2     = $20030600        ; 256 B: the RAM copy of boot2, called to restore XIP
-ReserveSram #DK_BOOT2, 256, "rk flash boot2 copy"
+CompilerIf #DISK_READ_ONLY = 0                 ; only the write side restores XIP from it:
+ReserveSram #DK_BOOT2, 256, "rk flash boot2 copy"   ; a read-only build leaves the SRAM to the rest
+CompilerEndIf
 
 Global DkInitWhy.i                ; why DiskInit found no pack: 1 magic, 2 version, 3 size
 Global DkPresent.i, DkMapped.i, DkStored.i, DkMapSectors.i, DkData.i, DkSlots.i, DkNext.i

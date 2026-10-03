@@ -50,7 +50,7 @@ The PSRAM boards' images, not yet run on a board, are in
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `picow-mini-unix/firmware.uf2` | 294,912 | `99613d7f838ab71b88c244f549f73f7a2df9dc79bec52430533e613ffdf8cb28` |
+| `picow-mini-unix/firmware.uf2` | 300,544 | `1f7ba676f40e522a12295d82488043f1793551004ee7a035d4e2ed45539fb706` |
 | `picow-mini-unix/minix.uf2` | 3,167,232 | `de8bb8dc541f17e25b38097f7b0063cdb0f11d7ff28a81eb8a1fb0e75460f55a` |
 
 **Flash these as two separate copies**, firmware first, then the pack, each
@@ -58,8 +58,10 @@ from a fresh BOOTSEL (the `RPI-RP2` drive). On the RP2040 a single combined
 UF2 leaves the pack area unwritten. The pack holds only the used blocks of
 the Mini-Unix pack (`../mini-unix.rk05`, 3,061 blocks, mapped) so it fits
 the Pico W's flash. It boots `rkmx` by itself; `#` 3.2 s after the port
-opened on a Pico W, and the processor runs about 800,000 PDP-11
-instructions per second.
+opened on a Pico W. Mini-Unix runs with memory management off (the stats
+block says `MMU off (16-bit)`). `time od /rkmx >/dev/null` takes real 8.0 s,
+user 7.5 s on a Pico W, timed from the host 8.09 s a run (8.64 s before the
+speed pass of 2026-10-03: about 6% faster).
 
 Known: the RAM for disk writes (124 blocks, shared with swap) fills after a
 few commands; when it does, the console says so once and Unix sees a disk
