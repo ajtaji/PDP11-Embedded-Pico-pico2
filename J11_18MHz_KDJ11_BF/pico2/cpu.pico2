@@ -177,6 +177,12 @@
 ; ---- machine state ---------------------------------------------------
 Global Dim Reg.i(8)         ; R0-R7, R6 = SP, R7 = PC. 16-bit values.
 Global Dim Mem.u(#RAM_WORDS)
+CompilerIf #PSRAM = 1                ; a board with PSRAM (psram.pico2) - UNTESTED ON HARDWARE
+#PS_MEM = $11500000                  ; physical byte pa >= #RAM_BYTES is at #PS_MEM + pa (cached M1)
+Global MemTop.i = #RAM_BYTES         ; the end of physical memory: #RAM_BYTES, or 248 KB with the PSRAM
+Global PsramOk.i                     ; the PSRAM is found, tested and in use (psram.pico2)
+Global PsDrives.i                    ; bit d: RK drive d lives in the PSRAM
+CompilerEndIf
 
 Global Op.i                 ; the instruction being executed
 Global Src.i, Dst.i, Res.i, Ea.i, Tmp.i   ; handler scratch - see SPEED
@@ -1008,10 +1014,19 @@ ProcedureRAM StackCheck()
   EndIf
 EndProcedure
 
+; The test above, inline where the stack moves: almost every push leaves the
+; stack above its limit, and the call cost more than the test (the speed pass
+; of 2026-10-02). StackCheck itself runs only when the stack is below it.
+Macro StackCheckFast()
+  If Reg(6) < #STACK_LIMIT
+    StackCheck()
+  EndIf
+EndMacro
+
 ProcedureRAM Push(v.i)
   Adr = (Reg(6) - 2) & $FFFF
   Reg(6) = Adr
-  StackCheck()
+  StackCheckFast()
   MWriteWord(Adr, v)
 EndProcedure
 
@@ -1052,14 +1067,14 @@ ProcedureRAM.i EaWord(spec.i)
   ElseIf Tmp = 4                             ; -(R)
     Reg(EaReg) = (Reg(EaReg) - 2) & $FFFF
     If EaReg = 6
-      StackCheck()
+      StackCheckFast()
     EndIf
     ProcedureReturn Reg(EaReg)
   ElseIf Tmp = 5                             ; @-(R)
     Adr = (Reg(EaReg) - 2) & $FFFF
     Reg(EaReg) = Adr
     If EaReg = 6
-      StackCheck()
+      StackCheckFast()
     EndIf
     MReadWord(Tmp, Adr)
     ProcedureReturn Tmp
@@ -1095,7 +1110,7 @@ ProcedureRAM.i EaByte(spec.i)
   ElseIf Tmp = 4
     Reg(EaReg) = (Reg(EaReg) - EaStep) & $FFFF
     If EaReg = 6
-      StackCheck()
+      StackCheckFast()
     EndIf
     ProcedureReturn Reg(EaReg)
   EndIf
@@ -1196,6 +1211,11 @@ ProcedureRAM.i MmuReadWord(va.i, e.i)
   If pa < #RAM_BYTES
     ProcedureReturn Mem(pa >> 1)
   EndIf
+  CompilerIf #PSRAM = 1
+    If pa < MemTop                       ; the memory past 56 KB, in the PSRAM
+      ProcedureReturn PeekU(#PS_MEM + pa)
+    EndIf
+  CompilerEndIf
   pa = MmuIoAddr(pa)
   If pa < 0
     ProcedureReturn 0
@@ -1217,6 +1237,12 @@ ProcedureRAM MmuWriteWord(va.i, e.i, v.i)
     Mem(pa >> 1) = v & $FFFF
     ProcedureReturn
   EndIf
+  CompilerIf #PSRAM = 1
+    If pa < MemTop
+      PokeU(#PS_MEM + pa, v & $FFFF)
+      ProcedureReturn
+    EndIf
+  CompilerEndIf
   pa = MmuIoAddr(pa)
   If pa >= 0
     WriteWord(pa, v)
@@ -1232,6 +1258,11 @@ ProcedureRAM.i MmuReadByte(va.i, e.i)
   If pa < #RAM_BYTES
     ProcedureReturn ReadByte(pa)
   EndIf
+  CompilerIf #PSRAM = 1
+    If pa < MemTop
+      ProcedureReturn PeekA(#PS_MEM + pa)
+    EndIf
+  CompilerEndIf
   pa = MmuIoAddr(pa)
   If pa < 0
     ProcedureReturn 0
@@ -1246,6 +1277,12 @@ ProcedureRAM MmuWriteByte(va.i, e.i, v.i)
     ProcedureReturn
   EndIf
   If pa >= #RAM_BYTES
+    CompilerIf #PSRAM = 1
+      If pa < MemTop
+        PokeA(#PS_MEM + pa, v & $FF)
+        ProcedureReturn
+      EndIf
+    CompilerEndIf
     pa = MmuIoAddr(pa)
     If pa < 0
       ProcedureReturn
@@ -1344,19 +1381,22 @@ EndMacro
 
 ; MMR1: a register change an abort would leave behind (not while frozen).
 ; It is cleared lazily: the first change an instruction makes starts afresh.
-ProcedureRAM MmrRecord(r.i, amount.i)
+; MMR1: the register changes of this instruction, for an abort to undo.
+; A macro, expanded where the register changes - it runs on every autoincrement
+; and autodecrement in the mapped loop, and a call cost more than the work
+; (the speed pass of 2026-10-02: 5% of V6's cycles on the desk).
+Macro MmrRecord(mR, mAmt)
   If (Mmr0 & $E000) = 0
     If MmuPcRec <> MmuPc
       MmuPcRec = MmuPc
-      Mmr1 = 0
-    EndIf
-    If (Mmr1 & $FF) = 0
-      Mmr1 = ((amount & $1F) << 3) | r
+      Mmr1 = (((mAmt) & $1F) << 3) | (mR)
+    ElseIf (Mmr1 & $FF) = 0
+      Mmr1 = (((mAmt) & $1F) << 3) | (mR)
     Else
-      Mmr1 = (Mmr1 & $FF) | ((((amount & $1F) << 3) | r) << 8)
+      Mmr1 = (Mmr1 & $FF) | (((((mAmt) & $1F) << 3) | (mR)) << 8)
     EndIf
   EndIf
-EndProcedure
+EndMacro
 
 ; The start of each mapped instruction: one store. MMR2 reads it while the
 ; unit is not frozen, an abort freezes it into Mmr2, and MMR1 starts afresh
@@ -1373,7 +1413,19 @@ ProcedureRAM.i EaWordM(spec.i)
   EaReg = spec & 7
   EaBase = CurD
   Tmp = (spec >> 3) & 7
-  If Tmp = 1                                 ; (R)
+  ; The modes in the order V6 uses them (the desk profile of 2026-10-02):
+  ; X(R) 44%, -(R) 28%, (R)+ 14%, (R) 10%, @(R)+ 4%, the rest under 1%.
+  If Tmp = 6                             ; X(R)   a when R = PC
+    Adr = Reg(7)
+    Reg(7) = (Adr + 2) & $FFFF
+    MMReadWordE(Tmp, Adr, CurI)
+    ProcedureReturn (Tmp + Reg(EaReg)) & $FFFF
+  ElseIf Tmp = 4                             ; -(R)
+    Reg(EaReg) = (Reg(EaReg) - 2) & $FFFF
+    MmrRecord(EaReg, -2)
+    If EaReg = 6
+      StackCheckFast()
+    EndIf
     ProcedureReturn Reg(EaReg)
   ElseIf Tmp = 2                             ; (R)+   #n when R = PC
     Tmp = Reg(EaReg)
@@ -1384,6 +1436,8 @@ ProcedureRAM.i EaWordM(spec.i)
       MmrRecord(EaReg, 2)
     EndIf
     ProcedureReturn Tmp
+  ElseIf Tmp = 1                                 ; (R)
+    ProcedureReturn Reg(EaReg)
   ElseIf Tmp = 3                             ; @(R)+  @#a when R = PC
     Adr = Reg(EaReg)
     Reg(EaReg) = (Adr + 2) & $FFFF
@@ -1394,27 +1448,15 @@ ProcedureRAM.i EaWordM(spec.i)
       MMReadWordE(Tmp, Adr, CurD)
     EndIf
     ProcedureReturn Tmp
-  ElseIf Tmp = 4                             ; -(R)
-    Reg(EaReg) = (Reg(EaReg) - 2) & $FFFF
-    MmrRecord(EaReg, -2)
-    If EaReg = 6
-      StackCheck()
-    EndIf
-    ProcedureReturn Reg(EaReg)
   ElseIf Tmp = 5                             ; @-(R)
     Adr = (Reg(EaReg) - 2) & $FFFF
     Reg(EaReg) = Adr
     MmrRecord(EaReg, -2)
     If EaReg = 6
-      StackCheck()
+      StackCheckFast()
     EndIf
     MMReadWordE(Tmp, Adr, CurD)
     ProcedureReturn Tmp
-  ElseIf Tmp = 6                             ; X(R)   a when R = PC
-    Adr = Reg(7)
-    Reg(7) = (Adr + 2) & $FFFF
-    MMReadWordE(Tmp, Adr, CurI)
-    ProcedureReturn (Tmp + Reg(EaReg)) & $FFFF
   ElseIf Tmp = 7                             ; @X(R)  @a when R = PC
     Adr = Reg(7)
     Reg(7) = (Adr + 2) & $FFFF
@@ -1448,7 +1490,7 @@ ProcedureRAM.i EaByteM(spec.i)
     Reg(EaReg) = (Reg(EaReg) - EaStep) & $FFFF
     MmrRecord(EaReg, 0 - EaStep)
     If EaReg = 6
-      StackCheck()
+      StackCheckFast()
     EndIf
     ProcedureReturn Reg(EaReg)
   EndIf
@@ -1458,7 +1500,7 @@ EndProcedure
 ProcedureRAM PushM(v.i)
   Adr = (Reg(6) - 2) & $FFFF
   Reg(6) = Adr
-  StackCheck()
+  StackCheckFast()
   MMWriteWordE(Adr, v, CurD)
 EndProcedure
 

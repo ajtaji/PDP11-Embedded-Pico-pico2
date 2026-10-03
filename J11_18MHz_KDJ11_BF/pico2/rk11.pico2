@@ -207,6 +207,11 @@ ProcedureRAM.i RkMemRead(pa.i)
   If pa < #RAM_BYTES
     ProcedureReturn Mem(pa >> 1)
   EndIf
+  CompilerIf #PSRAM = 1                  ; the memory past 56 KB, in the PSRAM (psram.pico2)
+    If pa < MemTop
+      ProcedureReturn PeekU(#PS_MEM + (pa & ~1))
+    EndIf
+  CompilerEndIf
   ProcedureReturn -1
 EndProcedure
 
@@ -215,6 +220,12 @@ ProcedureRAM.i RkMemWrite(pa.i, v.i)
     Mem(pa >> 1) = v
     ProcedureReturn 1
   EndIf
+  CompilerIf #PSRAM = 1
+    If pa < MemTop
+      PokeU(#PS_MEM + (pa & ~1), v & $FFFF)
+      ProcedureReturn 1
+    EndIf
+  CompilerEndIf
   ProcedureReturn 0
 EndProcedure
 
@@ -658,13 +669,15 @@ ProcedureRAM DevPoll()
     Define t.i
     t = Micros()
   CompilerEndIf
-  If KwIe
-    KwPoll()
+  If KwIe                                ; KwPoll acts only on a new tick
+    If KwSeq <> KwSeen
+      KwPoll()
+    EndIf
   EndIf
   If RkBusy | RkSeekMask | RkSeekDone
     RkPoll()
   EndIf
-  DevUpdate()
+  DevActive = KwIe | RkBusy | RkSeekMask | RkSeekDone   ; DevUpdate, inline: once a window
   CompilerIf #DESK_PROBE = 1
     If Micros() - t > DevPollMax
       DevPollMax = Micros() - t

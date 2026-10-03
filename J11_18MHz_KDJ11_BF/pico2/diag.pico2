@@ -56,6 +56,9 @@
 #DISK_FLASH_MODEL = 0        ; 1 = the desk model of the flash chip (disk.pico2)
 #DESK_PROBE = 0            ; 1 = the desk measurement build (see DESK PROBE)
 #STAT_CHIP = 2350            ; for the stats block's title
+#PSRAM = 0                   ; 1 = a board with QSPI PSRAM on QMI CS1 (psram.pico2) - UNTESTED ON HARDWARE
+#PSRAM_CS_PIN = 8            ; its chip select: GPIO8 on the Adafruit Feather RP2350, GPIO47 on the Pimoroni Pico Plus 2
+#FLASH_CHIP = $400000        ; the flash: 4 MB on the Pico 2 W; 8 MB on the Feather RP2350 (#PSRAM = 1)
 EnableExplicit
 XIncludeFile "RP2350/Lib/clocks.pico2"
 XIncludeFile "RP2350/Lib/timer.pico2"
@@ -69,6 +72,9 @@ XIncludeFile "instructions.pico2"
 XIncludeFile "disk.pico2"
 XIncludeFile "kw11.pico2"
 XIncludeFile "rk11.pico2"
+CompilerIf #PSRAM = 1
+XIncludeFile "psram.pico2"
+CompilerEndIf
 XIncludeFile "tape_image.pico2"
 XIncludeFile "tapeload.pico2"
 
@@ -721,6 +727,12 @@ EndProcedure
 
 ; ---- THE DISK: the counters, and BOOT ------------------------------------
 Procedure DiskStats()
+  CompilerIf #PSRAM = 1
+    If PsramOk
+      Say(" | PSRAM ") : Num(PsReads) : Say(" blocks read ") : Num(PsWrites) : Say(" written, memory ")
+      Num(MemTop / 1024) : Say(" KB")
+    EndIf
+  CompilerEndIf
   CompilerIf #DISK_BACKEND = 2
     Say(" | flash ") : Num(DkErases) : Say(" erases ") : Num(DkPages) : Say(" pages ")
     Num(DkDirtyCount()) : Say(" dirty ") : Num(DkSkipped) : Say(" unchanged")
@@ -821,6 +833,13 @@ Procedure DiskBanner()
     If DkMapped
       Say(" (mapped)")
     EndIf
+    CompilerIf #PSRAM = 1
+      If PsramOk                         ; the pack runs from its PSRAM copy (psram.pico2)
+        Say(", running from its PSRAM copy: writable, every write lost at power-off, the whole swap area")
+        Say(" (") : Num(DkSwapLo) : Say("-") : Num(#RK_BLOCKS - 1) : Say("); the flash is never written") : Eol()
+        ProcedureReturn
+      EndIf
+    CompilerEndIf
     If DkSwapN > 0
       Say(", swap ") : Num(DkSwapLo) : Say("-") : Num(DkSwapLo + DkSwapN - 1) : Say(" on a RAM disk")
       If DkSwapEnd - DkSwapLo > DkSwapN
@@ -1348,6 +1367,9 @@ Procedure Core1Main()
     If C1Alone
       Say("core 1 did not start: the PDP-11 cannot run in this boot; the port stays up for a re-flash") : Eol()
     EndIf
+    CompilerIf #PSRAM = 1
+      PsramBanner()
+    CompilerEndIf
     DiskBanner()
     AutoBootWait()
   EndIf
@@ -1439,9 +1461,9 @@ Procedure Core1Main()
     Service()
     C1Where = 8
     While (Micros() - tpass) < #C1_PASS_US And ConOutHead = ConOutTail And DkReqSeq = DkDoneSeq
-      KwTick()                           ; nothing to do: wait out the pass in a tight loop
-      If Micros() - UsbLastSvc > 250     ; but USB at least every 250 us
+      If Micros() - UsbLastSvc > 250     ; nothing to do: USB and the clock every 250 us
         Service()
+        KwTick()
       EndIf
     Wend
   ForEver
@@ -1450,6 +1472,10 @@ EndProcedure
 Procedure Main()
   SafetyBoot()
   ClockInitKhz(#CLOCK_KHZ)
+  CompilerIf #PSRAM = 1
+    PsramInit()                          ; before USB and core 1: direct mode stalls the flash
+    PsramLoad()                          ; the packs into the PSRAM, checked; else the Pico 2 path
+  CompilerEndIf
   UsbSerialInit()
   SafetyOk()
   BuildOpcodeTable()

@@ -269,20 +269,24 @@ CompilerIf #DISK_BACKEND = 2
 #LL_TIMER     = $400B0028        ; TIMERAWL, read directly in the slice (nothing in flash may be called)
 #DK_SLICE_US  = 300              ; the longest a slice keeps the flash out of XIP (plus the suspend)
 #DK_MAX_SLICES = 4000            ; 1.2 s of slices on one operation: the flash has failed
-#FLASH_BYTES  = $400000          ; 4 MB: the Pico 2 W's flash
+#FLASH_BYTES  = #FLASH_CHIP      ; the main file's: 4 MB on the Pico 2 W, 8 MB on the Feather RP2350
 #DISK_REGION  = $40000           ; 256 KB in: the firmware lives below
 #DK_SECTOR    = 4096
 #DK_LINES     = 4                ; the write cache: 4 x 4 KB
 #DK_IDLE_US   = 2000000          ; a line untouched this long goes back to flash
 #DK_BLOCKS    = 4872
 #DK_BOOT2     = $20030600        ; 256 B: the RAM copy of boot2, called to restore XIP
-ReserveSram #DK_BOOT2, 256, "rk flash boot2 copy"
+CompilerIf #DISK_READ_ONLY = 0                 ; only the write side restores XIP from it:
+ReserveSram #DK_BOOT2, 256, "rk flash boot2 copy"   ; a read-only build leaves the SRAM to the rest
+CompilerEndIf
 
 Global DkInitWhy.i                ; why DiskInit found no pack: 1 magic, 2 version, 3 size
 Global DkPresent.i, DkMapped.i, DkStored.i, DkMapSectors.i, DkData.i, DkSlots.i, DkNext.i
 Global DkFatal.i                 ; the flash failed a write-back three times: no more writes
 CompilerIf #DESK_PROBE = 1                ; the desk's measurement build carries its feed and checks:
 #DK_OV_SLOTS  = 40                         ; it gives 8 overlay blocks for them
+CompilerElseIf #PSRAM = 1                  ; the PSRAM boards (psram.pico2): their bring-up code needs
+#DK_OV_SLOTS  = 44                         ; SRAM, and the overlay serves only their fallback
 CompilerElse
 #DK_OV_SLOTS  = 48                         ; the file-write overlay, 512 bytes a block (see THE SWAP RAM DISK)
 CompilerEndIf
@@ -645,6 +649,11 @@ Procedure DiskInit()
 EndProcedure
 
 Procedure.i DiskPresent(d.i)
+  CompilerIf #PSRAM = 1
+    If PsramOk                           ; the packs are in the PSRAM (psram.pico2)
+      ProcedureReturn (PsDrives >> (d & 7)) & 1
+    EndIf
+  CompilerEndIf
   If d = 0
     ProcedureReturn DkPresent
   EndIf
@@ -652,6 +661,11 @@ Procedure.i DiskPresent(d.i)
 EndProcedure
 
 Procedure.i DiskWritable(d.i)
+  CompilerIf #PSRAM = 1
+    If PsramOk
+      ProcedureReturn (PsDrives >> (d & 7)) & 1
+    EndIf
+  CompilerEndIf
   If d = 0 And DkPresent <> 0 And DkFatal = 0
     ProcedureReturn 1
   EndIf
@@ -767,6 +781,11 @@ Procedure.i DiskRead(d.i, blk.i)
   Define k.i
   Define i.i
   Define b.i
+  CompilerIf #PSRAM = 1
+    If PsramOk
+      ProcedureReturn PsDiskRead(d, blk)
+    EndIf
+  CompilerEndIf
   If d <> 0 Or DkPresent = 0
     DkWhy = 1
     ProcedureReturn -1
@@ -831,6 +850,11 @@ Procedure.i DiskWrite(d.i, blk.i)
   Define b.i
   Define slot.i
   Define msec.i
+  CompilerIf #PSRAM = 1
+    If PsramOk
+      ProcedureReturn PsDiskWrite(d, blk)
+    EndIf
+  CompilerEndIf
   If d <> 0 Or DkPresent = 0
     DkWhy = 1
     ProcedureReturn -1

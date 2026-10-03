@@ -267,26 +267,29 @@ def cmd_rm(fs, a):
     print("v6fs: %s removed, inode %d and %d blocks freed" % (a.path, n, len([b for b in data if b]) + len(ind)))
 
 
-def cmd_patch(fs, a):
-    n = fs.lookup(a.file)
+def locate(fs, path, symbol):
+    """Where the data word of a.out PATH's SYMBOL is: (image byte offset,
+    the symbol's value, the word there now). rk_image.py --psram-patch
+    uses this too."""
+    n = fs.lookup(path)
     if not n:
-        fail("%s is not there" % a.file)
+        fail("%s is not there" % path)
     img = fs.read(n)
     magic, tsz, dsz, bsz, ssz, entry, unused, flag = struct.unpack_from("<8H", img, 0)
     if magic not in (0o407, 0o410, 0o411):
-        fail("%s is not an a.out (magic %o)" % (a.file, magic))
+        fail("%s is not an a.out (magic %o)" % (path, magic))
     if ssz == 0:
-        fail("%s has no symbol table" % a.file)
+        fail("%s has no symbol table" % path)
     so = 16 + tsz + dsz + (0 if flag else tsz + dsz)      # flag 1: no relocation bits
     val = None
     for i in range(so, so + ssz, 12):
-        if img[i:i + 8].rstrip(b"\0").decode("latin-1") == a.symbol:
+        if img[i:i + 8].rstrip(b"\0").decode("latin-1") == symbol:
             typ, val = struct.unpack_from("<HH", img, i + 8)
             break
     if val is None:
-        fail("%s has no symbol %s" % (a.file, a.symbol))
+        fail("%s has no symbol %s" % (path, symbol))
     if typ & 0o37 != 3:
-        fail("%s is not a data symbol (type %o)" % (a.symbol, typ))
+        fail("%s is not a data symbol (type %o)" % (symbol, typ))
     if magic == 0o407:
         off = 16 + val
     elif magic == 0o410:
@@ -294,11 +297,18 @@ def cmd_patch(fs, a):
     else:
         off = 16 + tsz + val
     old = struct.unpack_from("<H", img, off)[0]
-    new = int(a.value, 0) & 0xFFFF
     bl, _ = fs.blocks(n)
-    b = bl[off // BS]
+    if off & 1:
+        fail("%s %s is at an odd offset" % (path, symbol))
+    return bl[off // BS] * BS + off % BS, val, old
+
+
+def cmd_patch(fs, a):
+    where, val, old = locate(fs, a.file, a.symbol)
+    new = int(a.value, 0) & 0xFFFF
+    b = where // BS
     blk = bytearray(fs.blk(b))
-    struct.pack_into("<H", blk, off % BS, new)
+    struct.pack_into("<H", blk, where % BS, new)
     fs.put(b, blk)
     print("v6fs: %s %s at %06o: %d -> %d" % (a.file, a.symbol, val, old, new))
 

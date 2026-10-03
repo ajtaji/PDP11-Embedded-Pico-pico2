@@ -19,7 +19,7 @@ The UNIX files inside the disk packs are covered by the Caldera licence in
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `pico2w-v6/combined.uf2` | 5,289,984 | `625ab738800d34487a5ac2caf1377c451246c3a1ed76fa217d53f6e1d6bd49aa` |
+| `pico2w-v6/combined.uf2` | 5,295,616 | `8d747f870157f792721a272c921fa4d6fe72b0d87692d1d842418fea7726fa57` |
 
 Firmware and disk pack in one UF2: hold BOOTSEL, plug in, copy the file to
 the `RP2350` drive. At the serial console:
@@ -33,8 +33,8 @@ mem = 76
 ```
 
 `#` 3.4 s after the port opened on a Pico 2 W (2 s of the Esc wait, then the
-boot). `time od /rkunix >/dev/null` takes 21 s (about 460,000 PDP-11
-instructions per second). The pack is the V6 root pack (`../media/unix/v6root.gz`) with V6's
+boot). `time od /rkunix >/dev/null` takes real 19.0 s, user 18.2 s (it was
+21.0 / 20.0 s before the speed pass of 2026-10-02: about 9% faster). The pack is the V6 root pack (`../media/unix/v6root.gz`) with V6's
 own `rkuboot` installed in block 0.
 
 The pack is changed with `tools/v6fs.py` (see `../README.md`): `/dev/rk0`,
@@ -42,6 +42,9 @@ The pack is changed with `tools/v6fs.py` (see `../README.md`): `/dev/rk0`,
 and the kernel's swap sized to the firmware's 112-block swap RAM disk. `ps`
 works; use `df /dev/rk0` (plain `df` looks for V6's built-in `/dev/rk2` and
 `/dev/rp0`). V6's `dc` is too large for the 56 KB machine.
+
+The PSRAM boards' images, not yet run on a board, are in
+[untested/](untested/README.md).
 
 ## Pico W (RP2040): Mini-Unix
 

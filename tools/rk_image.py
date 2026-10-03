@@ -10,6 +10,7 @@ USE
                        [--layout dense|mapped] [--blocks N] [--name TEXT]
                        [--swap auto|LO,N|none] [--boot-block FILE|@/PATH]
                        [--autoboot KERNEL[,SWITCHES]]
+                       [--psram-patch FILE,SYMBOL,VALUE] [--drive1 IMAGE]
                        [--firmware FW.bin [--desk OUT.bin] [--combined OUT.uf2]
                                           [--firmware-uf2 OUT.uf2]]
         a UF2 that the board's BOOTSEL drive writes to the disk region of
@@ -24,6 +25,10 @@ USE
 THE FLASH REGION (disk.pico's header says the same)
     Pico W   (RP2040, 2 MB flash):  0x10040000 - 0x101FFFFF
     Pico 2 W (RP2350, 4 MB flash):  0x10040000 - 0x103FFFFF
+    feather    (Adafruit Feather RP2350 with 8 MB PSRAM, 8 MB flash) and
+    picoplus2  (Pimoroni Pico Plus 2 and Pico Plus 2 W, 16 MB flash, 8 MB
+               PSRAM): the PSRAM builds, UNTESTED ON HARDWARE. RK0 from
+               0x10040000, RK1 from 0x102C0000 (--drive1), both dense
     The firmware lives below 0x10040000 (256 KB); this tool refuses a
     firmware bigger than that.
         +0      4 KB header: "PDP11RK1", u32 version 1, u32 layout (0 dense,
@@ -67,6 +72,18 @@ SWAP
     (Mini-Unix: 4000,872, SWPLO and NSWAP in its /usr/sys/param.h). Check
     it against the kernel's own configuration; --swap none turns it off.
 
+THE PSRAM BUILD (--chip feather or picoplus2; psram.pico2 - UNTESTED ON HARDWARE)
+    The firmware copies the packs into the PSRAM at start-up and runs them
+    from there, writable, with the whole swap area - or, if the PSRAM is
+    not there or fails its checks, runs RK0 from the flash exactly as the
+    Pico 2 build does (read-only, the 112-block swap RAM disk).
+    --psram-patch FILE,SYMBOL,VALUE records in the header (+96) one word
+    to change in the PSRAM copy only: rkunix,_nswap,872 gives V6 its whole
+    swap area there, while the flash - and so the fallback - keeps the
+    kernel patched for the RAM disk. The word's present value is recorded
+    too, and the firmware changes nothing unless it finds it.
+    --drive1 IMAGE packs a second RK05 image for RK1 (dense, whole).
+
 AUTO-BOOT
     --autoboot rkunix (or rkunix,173030) asks the firmware to boot this
     pack at power-up: BOOT RK0 with the switch register at SWITCHES (octal,
@@ -81,10 +98,13 @@ import sys
 
 UF2_MAGIC0, UF2_MAGIC1, UF2_END = 0x0A324655, 0x9E5D5157, 0x0AB16F30
 UF2_FLAG_FAMILY = 0x00002000
-FAMILY = {"pico": 0xE48BFF56, "pico2": 0xE48BFF59}   # rp2040; rp2350 Arm secure
-FLASH = {"pico": 0x200000, "pico2": 0x400000}
+FAMILY = {"pico": 0xE48BFF56, "pico2": 0xE48BFF59,            # rp2040; rp2350 Arm secure
+          "feather": 0xE48BFF59, "picoplus2": 0xE48BFF59}
+FLASH = {"pico": 0x200000, "pico2": 0x400000, "feather": 0x800000, "picoplus2": 0x1000000}
+PSRAM_CHIPS = ("feather", "picoplus2")   # the boards with PSRAM (psram.pico2)
 XIP = 0x10000000
 REGION = 0x40000
+REGION1 = 0x2C0000       # RK1 on the 8 MB boards (psram.pico2 #DISK_REGION1)
 SECTOR = 4096
 RK_BLOCKS = 4872
 MAP_SECTORS = (RK_BLOCKS * 2 + SECTOR - 1) // SECTOR     # 3
@@ -212,6 +232,7 @@ SWAP = (0, 0)
 
 
 AUTOBOOT = (0, b"")      # (switches | 1 << 16, kernel name) or (0, "") for none
+PSPATCH = None           # (block, byte offset, old word, new word) for the PSRAM copy
 
 
 def header(layout, stored, slots, name):
@@ -223,6 +244,8 @@ def header(layout, stored, slots, name):
     struct.pack_into("<II", h, 64, SWAP[0], SWAP[1])
     struct.pack_into("<I", h, 72, AUTOBOOT[0])
     h[80:80 + len(AUTOBOOT[1])] = AUTOBOOT[1]
+    if PSPATCH:
+        struct.pack_into("<IIIII", h, 96, 1, *PSPATCH)
     return bytes(h)
 
 
@@ -281,7 +304,9 @@ def main():
     ap = argparse.ArgumentParser(description="Put an RK05 image into a Pico's flash.")
     ap.add_argument("cmd", choices=["info", "pack"])
     ap.add_argument("image")
-    ap.add_argument("--chip", choices=["pico", "pico2"])
+    ap.add_argument("--chip", choices=["pico", "pico2", "feather", "picoplus2"])
+    ap.add_argument("--psram-patch")
+    ap.add_argument("--drive1")
     ap.add_argument("--layout", choices=["auto", "dense", "mapped"], default="auto")
     ap.add_argument("--blocks", type=int)
     ap.add_argument("--name")
@@ -344,7 +369,42 @@ def main():
             fail("--autoboot: the kernel's name is 1 to 15 printable characters, the switches 0-177777.")
         AUTOBOOT = (sw | 1 << 16, kern.encode("ascii"))
         print("rk_image: auto-boot: RK0, switches %06o, then %s at the @ prompt" % (sw, kern))
+    global PSPATCH
+    if a.psram_patch or a.drive1:
+        if a.chip not in PSRAM_CHIPS:
+            fail("--psram-patch and --drive1 are for --chip feather or picoplus2 (the PSRAM builds).")
+    if a.psram_patch:
+        try:
+            pf, psym, pval = a.psram_patch.split(",")
+            pval = int(pval, 0)
+        except ValueError:
+            fail("--psram-patch takes FILE,SYMBOL,VALUE (rkunix,_nswap,872).")
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import tempfile
+        import v6fs
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".rk") as t:
+            t.write(img)
+        try:
+            where, val, old = v6fs.locate(v6fs.Fs(t.name), pf, psym)
+        finally:
+            os.unlink(t.name)
+        PSPATCH = (where // 512, where % 512, old, pval & 0xFFFF)
+        print("rk_image: PSRAM patch: %s %s at block %d +%d, %d -> %d in the PSRAM copy only"
+              % (pf, psym, where // 512, where % 512, old, pval & 0xFFFF))
     parts, summary = build(img, a.chip, a.layout, a.blocks, a.name or os.path.basename(a.image))
+    if a.drive1:
+        img1 = open(a.drive1, "rb").read()
+        n1 = blocks_of(img1)
+        if REGION1 + SECTOR + RK_BLOCKS * 512 > FLASH[a.chip]:
+            fail("RK1 does not fit the %s's flash." % a.chip)
+        if REGION + SECTOR + max(len(d) for d in parts.values()) > REGION1:
+            fail("RK0 runs into RK1's region at 0x%08X." % (XIP + REGION1))
+        keep = (SWAP, AUTOBOOT, PSPATCH)
+        SWAP, AUTOBOOT, PSPATCH = (0, 0), (0, b""), None
+        parts[REGION1] = header(0, n1, n1, os.path.basename(a.drive1))
+        SWAP, AUTOBOOT, PSPATCH = keep
+        parts[REGION1 + SECTOR] = img1
+        print("rk_image: RK1 <- %s, dense, %d blocks, at 0x%08X" % (a.drive1, n1, XIP + REGION1))
     open(a.o, "wb").write(uf2(parts, a.chip))
     print("rk_image: %s -> %s for the %s at 0x%08X: %s" % (a.image, a.o, a.chip, XIP + REGION, summary))
     if (a.desk or a.combined or a.firmware_uf2) and not a.firmware:

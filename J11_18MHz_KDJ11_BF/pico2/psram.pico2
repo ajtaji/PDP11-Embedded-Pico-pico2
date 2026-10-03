@@ -1,0 +1,473 @@
+; ======================================================================
+;  psram.pico2 - QSPI PSRAM on the RP2350's second QMI chip select, for the
+;  boards that carry it (#PSRAM = 1 in the main file).
+;
+;  UNTESTED ON HARDWARE. This was written from the RP2350 datasheet (the
+;  QMI, chapter 12.14) and the AP Memory APS6404L datasheet, and it has
+;  run only on the desk, against tools/arm_run.exe's model of that chip
+;  (psram=8M). No Feather RP2350 or Pico Plus 2 has ever run it.
+;
+;  THE BOARDS (APS6404L PSRAM on each; pico-sdk board files for the pins)
+;      Adafruit Feather RP2350 with 8 MB PSRAM   RP2350A  CS1 on GPIO8   8 MB flash
+;      Pimoroni Pico Plus 2 / Pico Plus 2 W      RP2350B  CS1 on GPIO47  16 MB flash
+;  #PSRAM_CS_PIN and #FLASH_CHIP pick the board; tools/psram_build.py sets
+;  them (--board feather or picoplus2) and builds the image.
+;
+;  WHAT IT GIVES THE PDP-11 (when PsramOk = 1)
+;    * both RK05 packs in PSRAM, copied from the flash at start-up, and
+;      writable: every write stays in PSRAM and is lost at power-off, as
+;      with the RAM overlay - the flash is never written;
+;    * the whole swap area of the pack (V6: 872 blocks);
+;    * physical memory up to 248 KB: 000000-157777 stays in SRAM (the fast
+;      path, untouched), 160000-757777 is PSRAM, reached through the memory
+;      management unit's slow path (cpu.pico2, MmuReadWord and friends) and
+;      the RK11's DMA (rk11.pico2, RkMemRead/RkMemWrite).
+;
+;  THE FALLBACK. Anything short of a fully working chip leaves PsramOk = 0,
+;  and then NOTHING here is used: the firmware runs exactly as the Pico 2
+;  build does - the pack read-only in flash, the RAM overlay, the 112-block
+;  swap RAM disk, 56 KB of memory. It falls back when:
+;      the ID read does not give AP Memory's MFID 0Dh and KGD 5Dh;
+;      a direct-mode wait does not end;
+;      the write test finds one wrong word (a pattern across all 8 MB,
+;        through the uncached window, which also proves there is no
+;        smaller chip wrapping around);
+;      the pack header is not a dense pack this code can copy;
+;      the copy does not read back exactly as the flash holds it.
+;  Every one of those also gives the CS pin back (PsUnroute: no function,
+;  the pad at its reset value), so the pin is not left driven. The banner
+;  says which, and "UNTESTED ON HARDWARE".
+;
+;  HOW, from the datasheets:
+;   1. route CS1: IO_BANK0 GPIOn_CTRL FUNCSEL 9 (XIP_CS1), and the pad's
+;      ISO bit cleared (it resets set on this part);
+;   2. in QMI DIRECT MODE (DIRECT_CSR EN, one byte at a time through
+;      DIRECT_TX / DIRECT_RX): F5h at quad width (leave QPI - after a warm
+;      reboot the chip may still be in it; a chip in SPI mode ignores it),
+;      66h 99h (reset), 9Fh (the ID: MFID, KGD, EID), 35h (enter QPI);
+;   3. M1's timing and formats: quad read EBh with 6 wait clocks, quad
+;      write 38h, CLKDIV for at most 133 MHz, MAX_SELECT under the chip's
+;      8 us CS-low limit (tCEM, its refresh), PAGEBREAK at its 1 KB page;
+;   4. XIP_CTRL.WRITABLE_M1 set.
+;  While DIRECT_CSR.EN is set the QMI starts no memory-mapped transfer, so
+;  the flash cannot be read: step 2 is ProcedureRAM, calls nothing in
+;  flash, and runs before core 1 is started. Every wait in it is bounded.
+;
+;  WHICH WINDOW. Everything uses the CACHED window, $11000000, so both
+;  cores see the same bytes through the one XIP cache. The uncached window
+;  ($15000000) is used only by the write test, before anything else
+;  touches the chip, and the cached window is not read until it is done.
+;
+;  THE LAYOUT IN PSRAM
+;      $000000   RK0, 4872 blocks (2,494,464 bytes)
+;      $280000   RK1, 4872 blocks
+;      $500000   PDP-11 physical memory: byte pa at $500000 + pa, used
+;                for pa from 160000 (octal) to MemTop
+; ======================================================================
+#PS_QMI        = $400D0000
+#PS_CSR        = $400D0000
+#PS_TX         = $400D0004
+#PS_RX         = $400D0008
+#PS_M1_TIMING  = $400D0020
+#PS_M1_RFMT    = $400D0024
+#PS_M1_RCMD    = $400D0028
+#PS_M1_WFMT    = $400D002C
+#PS_M1_WCMD    = $400D0030
+#PS_XIP_SET    = $400CA000       ; XIP_CTRL ($400C8000), atomic SET alias
+#PS_XIP_CLR    = $400CB000       ; ... and CLR alias
+#PS_IOB0       = $40028000       ; IO_BANK0: GPIOn_CTRL at +4 + 8n
+#PS_PADS0      = $40038000       ; PADS_BANK0: GPIOn at +4 + 4n
+#PS_WIN        = $11000000       ; M1, cached - everything uses this
+#PS_TEST       = $15000000       ; M1, uncached - the write test only
+#PS_BYTES      = $800000         ; the chip this is built for: 8 MB
+#PS_RK1        = $280000         ; RK1's place (RK0 is at 0)
+#PS_DIRECT     = $07800001       ; DIRECT_CSR: CLKDIV 30 (5 MHz at 150), EN
+#PS_CS1        = 8               ; DIRECT_CSR.ASSERT_CS1N
+#PS_QUAD       = $000A0000       ; DIRECT_TX: IWIDTH quad | OE
+#PS_WAIT       = 100000          ; the most any direct-mode wait polls
+#PS_MEM_TOP    = $3E000          ; 248 KB: up to the 18-bit I/O page
+; M1_TIMING at #CLOCK_KHZ: CLKDIV 2 (75 MHz at 150), RXDELAY 2, MIN_DESELECT
+; 3 (the chip's 18 ns CS-high), MAX_SELECT 18 x 64 clocks (7.7 us, under
+; tCEM 8 us), SELECT_HOLD 3, PAGEBREAK 2 (1 KB), COOLDOWN 1.
+#PS_TIMING     = (1 << 30) | (2 << 28) | (3 << 23) | (18 << 17) | (3 << 12) | (2 << 8) | 2
+; M1_RFMT: prefix, address, dummy and data all quad; an 8-bit prefix; 6
+; quad wait clocks (DUMMY_LEN 6 = 24 bits). M1_RCMD EBh.
+#PS_RFMT       = 2 | (2 << 2) | (2 << 6) | (2 << 8) | (1 << 12) | (6 << 16)
+#PS_WFMT       = 2 | (2 << 2) | (2 << 8) | (1 << 12)
+
+#DISK_REGION1  = $2C0000         ; RK1's pack in the flash (8 MB boards; rk_image.py --drive1)
+; PsramOk, PsDrives and MemTop are declared in cpu.pico2, which the others read.
+Global PsramWhy.i                ; why not: see PsramWhyText
+Global PsramMfid.i = -1, PsramKgd.i = -1, PsramEid.i = -1
+Global PsramBad.i                ; the write test's first wrong offset
+Global PsramCopyUs.i             ; the boot copy and its check, us
+Global PsRk1Blocks.i
+Global PsReads.i, PsWrites.i     ; blocks read and written in PSRAM
+
+; ---- step 2: direct mode, from SRAM, with nothing in flash on the path ----
+; One byte out and its reply back. -1 when a wait did not end.
+ProcedureRAM.i PsXfer(tx.i)
+  Define n.i
+  n = 0
+  While (PeekL(#PS_CSR) & $400) <> 0     ; TXFULL
+    n = n + 1
+    If n > #PS_WAIT
+      ProcedureReturn -1
+    EndIf
+  Wend
+  PokeL(#PS_TX, tx)
+  n = 0
+  While (PeekL(#PS_CSR) & $10000) <> 0   ; RXEMPTY
+    n = n + 1
+    If n > #PS_WAIT
+      ProcedureReturn -1
+    EndIf
+  Wend
+  ProcedureReturn PeekL(#PS_RX) & $FF
+EndProcedure
+
+; CS1 low, or back high once the last byte is out. 0 = a wait did not end.
+ProcedureRAM.i PsCs(on.i)
+  Define n.i
+  n = 0
+  While (PeekL(#PS_CSR) & 2) <> 0        ; BUSY
+    n = n + 1
+    If n > #PS_WAIT
+      ProcedureReturn 0
+    EndIf
+  Wend
+  If on
+    PokeL(#PS_CSR, #PS_DIRECT | #PS_CS1)
+  Else
+    PokeL(#PS_CSR, #PS_DIRECT)
+  EndIf
+  ProcedureReturn 1
+EndProcedure
+
+; A one-byte command. 0 = a wait did not end.
+ProcedureRAM.i PsCmd(tx.i)
+  If PsCs(1) = 0
+    ProcedureReturn 0
+  EndIf
+  If PsXfer(tx) < 0
+    PsCs(0)
+    ProcedureReturn 0
+  EndIf
+  ProcedureReturn PsCs(0)
+EndProcedure
+
+; Reset, ID, QPI. Leaves direct mode OFF whatever happens. 0 = the chip
+; answered as an APS6404L and is in QPI mode; else a PsramWhy code.
+ProcedureRAM.i PsDirect()
+  Define r.i
+  Define i.i
+  Define b.i
+  r = 0
+  PokeL(#PS_CSR, #PS_DIRECT)
+  If PsCs(0) = 0                         ; BUSY: an XIP transfer still finishing
+    r = 2
+  EndIf
+  If r = 0
+    If PsCmd($F5 | #PS_QUAD) = 0 Or PsCmd($66) = 0 Or PsCmd($99) = 0
+      r = 2
+    EndIf
+  EndIf
+  If r = 0
+    For i = 0 To 50                      ; tRST: the reset needs 50 ns; this is far more
+      b = PeekL(#PS_CSR)
+    Next
+    If PsCs(1) = 0
+      r = 2
+    Else
+      For i = 0 To 6                     ; 9Fh, three address bytes, MFID, KGD, EID
+        If i = 0
+          b = PsXfer($9F)
+        Else
+          b = PsXfer($FF)
+        EndIf
+        If b < 0
+          r = 2
+          Break
+        EndIf
+        If i = 4
+          PsramMfid = b
+        ElseIf i = 5
+          PsramKgd = b
+        ElseIf i = 6
+          PsramEid = b
+        EndIf
+      Next
+      If PsCs(0) = 0
+        r = 2
+      EndIf
+    EndIf
+  EndIf
+  If r = 0
+    If PsramMfid <> $0D Or PsramKgd <> $5D
+      r = 1
+    ElseIf PsCmd($35) = 0
+      r = 2
+    EndIf
+  EndIf
+  PokeL(#PS_CSR, 0)                      ; direct mode off: the flash is back
+  ProcedureReturn r
+EndProcedure
+
+; ---- steps 1, 3, 4 and the write test ---------------------------------------
+; Give the CS pin back: FUNCSEL 31 (no function) and the pad's reset value
+; ($116: ISO set, input off), as the board had it before PsramInit. Every
+; failure path ends here, so a board without a working PSRAM - or an image
+; flashed onto the wrong board - is left with the pin not driven.
+Procedure PsUnroute()
+  PokeL(#PS_XIP_CLR, $800)                       ; WRITABLE_M1 off
+  PokeL(#PS_IOB0 + 4 + 8 * #PSRAM_CS_PIN, $1F)
+  PokeL(#PS_PADS0 + 4 + 4 * #PSRAM_CS_PIN, $116)
+EndProcedure
+
+Procedure PsramInit()
+  Define i.i
+  Define a.i
+  Define v.i
+  PsramOk = 0
+  PokeL(#PS_IOB0 + 4 + 8 * #PSRAM_CS_PIN, 9)     ; FUNCSEL 9: XIP_CS1
+  PokeL(#PS_PADS0 + 4 + 4 * #PSRAM_CS_PIN, $56)  ; IE, 4 mA, ISO cleared
+  PsramWhy = PsDirect()
+  If PsramWhy <> 0
+    PsUnroute()
+    ProcedureReturn
+  EndIf
+  PokeL(#PS_M1_TIMING, #PS_TIMING)
+  PokeL(#PS_M1_RFMT, #PS_RFMT)
+  PokeL(#PS_M1_RCMD, $EB)
+  PokeL(#PS_M1_WFMT, #PS_WFMT)
+  PokeL(#PS_M1_WCMD, $38)
+  PokeL(#PS_XIP_SET, $800)               ; XIP_CTRL.WRITABLE_M1
+  ; THE WRITE TEST, uncached: one word every 32 KB across the whole chip,
+  ; each different, then all read back. A 2 or 4 MB chip wraps and
+  ; overwrites the early words; a bad data line shows as a wrong bit.
+  For i = 0 To 255
+    a = i << 15
+    PokeL(#PS_TEST + a, (i * $01010101) ! $5AC3F00F ! a)
+  Next
+  For i = 0 To 255
+    a = i << 15
+    v = (i * $01010101) ! $5AC3F00F ! a
+    If PeekL(#PS_TEST + a) <> v
+      PsramWhy = 3
+      PsramBad = a
+      PsUnroute()
+      ProcedureReturn
+    EndIf
+  Next
+  ; and the halfword and byte stores the PDP-11's memory uses
+  PokeU(#PS_TEST + $500000, $A55A)
+  PokeA(#PS_TEST + $500002, $3C)
+  PokeA(#PS_TEST + $500003, $C3)
+  If PeekL(#PS_TEST + $500000) <> $C33CA55A
+    PsramWhy = 3
+    PsramBad = $500000
+    PsUnroute()
+    ProcedureReturn
+  EndIf
+  PsramOk = 1                            ; the packs still have to copy (PsramLoad)
+EndProcedure
+
+; ---- the packs, from flash into PSRAM, and checked --------------------------
+; A region's header: "PDP11RK1", version 1, dense. The number of blocks
+; stored, or -1 if it is not a pack this can copy.
+Procedure.i PsPackBlocks(region.i)
+  If PeekL($10000000 + region) <> $31504450 Or PeekL($10000000 + region + 4) <> $314B5231
+    ProcedureReturn -1
+  EndIf
+  If PeekL($10000000 + region + 8) <> 1 Or PeekL($10000000 + region + 12) <> 0
+    ProcedureReturn -1                   ; not version 1, or not the dense layout
+  EndIf
+  If PeekL($10000000 + region + 16) > #RK_BLOCKS
+    ProcedureReturn -1
+  EndIf
+  ProcedureReturn PeekL($10000000 + region + 16)
+EndProcedure
+
+; Copy one pack: its stored blocks, then zeros to the end of the RK05.
+; 1 = copied and read back exactly.
+Procedure.i PsCopy(region.i, dst.i, blocks.i)
+  Define src.i
+  Define i.i
+  Define n.i
+  src = $10000000 + region + 4096        ; dense: the data follows the header sector
+  n = blocks * 128                       ; words of 32 bits
+  For i = 0 To n - 1
+    PokeL(#PS_WIN + dst + i * 4, PeekL(src + i * 4))
+  Next
+  For i = n To #RK_BLOCKS * 128 - 1
+    PokeL(#PS_WIN + dst + i * 4, 0)
+  Next
+  For i = 0 To n - 1
+    If PeekL(#PS_WIN + dst + i * 4) <> PeekL(src + i * 4)
+      ProcedureReturn 0
+    EndIf
+  Next
+  For i = n To #RK_BLOCKS * 128 - 1
+    If PeekL(#PS_WIN + dst + i * 4) <> 0
+      ProcedureReturn 0
+    EndIf
+  Next
+  ProcedureReturn 1
+EndProcedure
+
+; THE PSRAM KERNEL PATCH (the header's +96, rk_image.py --psram-patch): a
+; word of the pack changed in the PSRAM copy only - V6's _nswap back to the
+; whole swap area, which only the PSRAM can hold. The flash copy, and so
+; the fallback, keeps the pack exactly as packed. The old value must
+; match, or the copy is not used.
+;   +96 u32 1 = a patch   +100 u32 block   +104 u32 byte offset (even)
+;   +108 u32 the old word +112 u32 the new word
+Procedure.i PsPatch(region.i, dst.i)
+  Define a.i
+  If PeekL($10000000 + region + 96) <> 1
+    ProcedureReturn 1
+  EndIf
+  a = PeekL($10000000 + region + 100) * 512 + PeekL($10000000 + region + 104)
+  If (a & 1) <> 0 Or a >= #RK_BLOCKS * 512
+    ProcedureReturn 0
+  EndIf
+  If PeekU(#PS_WIN + dst + a) <> (PeekL($10000000 + region + 108) & $FFFF)
+    ProcedureReturn 0
+  EndIf
+  PokeU(#PS_WIN + dst + a, PeekL($10000000 + region + 112) & $FFFF)
+  ProcedureReturn 1
+EndProcedure
+
+Procedure PsramLoad()
+  Define t0.i
+  Define n.i
+  Define i.i
+  If PsramOk = 0
+    ProcedureReturn
+  EndIf
+  t0 = Micros()
+  n = PsPackBlocks(#DISK_REGION)
+  If n < 0
+    PsramWhy = 4
+  ElseIf PsCopy(#DISK_REGION, 0, n) = 0
+    PsramWhy = 5
+  ElseIf PsPatch(#DISK_REGION, 0) = 0
+    PsramWhy = 6
+  EndIf
+  If PsramWhy = 0
+    PsDrives = 1
+    n = PsPackBlocks(#DISK_REGION1)      ; RK1: optional, and a bad one is simply absent
+    If n >= 0
+      If PsCopy(#DISK_REGION1, #PS_RK1, n)
+        If PsPatch(#DISK_REGION1, #PS_RK1)
+          PsDrives = 3
+          PsRk1Blocks = n
+        EndIf
+      EndIf
+    EndIf
+    For i = #RAM_BYTES To #PS_MEM_TOP - 4 Step 4   ; the extra memory starts clear
+      PokeL(#PS_MEM + i, 0)
+    Next
+  EndIf
+  PsramCopyUs = Micros() - t0
+  If PsramWhy <> 0
+    PsramOk = 0
+    PsDrives = 0
+    PsUnroute()
+    ProcedureReturn
+  EndIf
+  MemTop = #PS_MEM_TOP
+EndProcedure
+
+Procedure PsramWhyText()
+  Select PsramWhy
+    Case 1 : Say("no AP Memory PSRAM answered its ID read")
+    Case 2 : Say("the QMI's direct mode did not finish a transfer")
+    Case 3 : Say("the write test failed at offset ") : Num(PsramBad)
+    Case 4 : Say("the RK0 pack is not a dense pack that can be copied")
+    Case 5 : Say("the copy of RK0 did not read back as the flash holds it")
+    Case 6 : Say("the pack's PSRAM kernel patch did not find its old value")
+  EndSelect
+EndProcedure
+
+Procedure PsHex(v.i)                     ; two hex digits
+  Define k.i
+  k = (v >> 4) & 15
+  If k < 10
+    Ch(48 + k)
+  Else
+    Ch(55 + k)
+  EndIf
+  k = v & 15
+  If k < 10
+    Ch(48 + k)
+  Else
+    Ch(55 + k)
+  EndIf
+EndProcedure
+
+; The banner's PSRAM line (core 1, before the pack's own line).
+Procedure PsramBanner()
+  Say("PSRAM (UNTESTED ON HARDWARE): ")
+  If PsramOk
+    Say("8 MB on GPIO") : Num(#PSRAM_CS_PIN) : Say(", ID ") : PsHex(PsramMfid)
+    Ch(32) : PsHex(PsramKgd) : Ch(32) : PsHex(PsramEid)
+    Say("; packs copied and checked in ") : Num(PsramCopyUs / 1000) : Say(" ms")
+    Say("; memory ") : Num(MemTop / 1024) : Say(" KB; RK0")
+    If PsDrives & 2
+      Say(" and RK1 (") : Num(PsRk1Blocks) : Say(" blocks)")
+    EndIf
+    Say(" writable in PSRAM, never written to flash")
+    If PeekL($10000000 + #DISK_REGION + 96) = 1
+      Say("; the PSRAM copy's kernel patch applied (block ") : Num(PeekL($10000000 + #DISK_REGION + 100))
+      Say(" +") : Num(PeekL($10000000 + #DISK_REGION + 104)) : Say(")")
+    EndIf
+    Eol()
+  Else
+    Say("not in use - ") : PsramWhyText()
+    If PsramMfid >= 0
+      Say(" (ID ") : PsHex(PsramMfid) : Ch(32) : PsHex(PsramKgd) : Ch(32) : PsHex(PsramEid) : Ch(41)
+    EndIf
+    Say(". Running as the Pico 2 build: 56 KB, the pack read-only in flash.") : Eol()
+  EndIf
+EndProcedure
+
+; ---- the disk, when PsramOk (disk.pico2 calls these) -----------------------
+Procedure.i PsDiskRead(d.i, blk.i)
+  Define a.i
+  Define i.i
+  Define w.i
+  If ((PsDrives >> d) & 1) = 0 Or blk < 0 Or blk >= #RK_BLOCKS
+    DkWhy = 1
+    ProcedureReturn -1
+  EndIf
+  a = #PS_WIN + blk * 512
+  If d = 1
+    a = a + #PS_RK1
+  EndIf
+  For i = 0 To 127
+    w = PeekL(a + i * 4)
+    DkBuf(i * 2) = w & $FFFF
+    DkBuf(i * 2 + 1) = (w >> 16) & $FFFF
+  Next
+  PsReads = PsReads + 1
+  ProcedureReturn 1
+EndProcedure
+
+Procedure.i PsDiskWrite(d.i, blk.i)
+  Define a.i
+  Define i.i
+  If ((PsDrives >> d) & 1) = 0 Or blk < 0 Or blk >= #RK_BLOCKS
+    DkWhy = 1
+    ProcedureReturn -1
+  EndIf
+  a = #PS_WIN + blk * 512
+  If d = 1
+    a = a + #PS_RK1
+  EndIf
+  For i = 0 To 127
+    PokeL(a + i * 4, DkBuf(i * 2) | (DkBuf(i * 2 + 1) << 16))
+  Next
+  PsWrites = PsWrites + 1
+  ProcedureReturn 1
+EndProcedure

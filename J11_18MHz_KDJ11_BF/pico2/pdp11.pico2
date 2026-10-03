@@ -12,6 +12,9 @@
 #DISK_FLASH_MODEL = 0
 #DISK_READ_ONLY = 0
 #DESK_PROBE = 0             ; the desk probe's timing (rk11), off here
+#PSRAM = 0                  ; no PSRAM in the report firmware (diag.pico2, psram.pico2)
+#PSRAM_CS_PIN = 8
+#FLASH_CHIP = $400000
 EnableExplicit
 XIncludeFile "RP2350/Lib/clocks.pico2"
 XIncludeFile "RP2350/Lib/timer.pico2"
