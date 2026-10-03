@@ -1053,23 +1053,29 @@ EndProcedure
 ProcedureRAM.i EaWord(spec.i)
   EaReg = spec & 7
   Tmp = (spec >> 3) & 7
-  If Tmp = 1                                 ; (R)
-    ProcedureReturn Reg(EaReg)
-  ElseIf Tmp = 2                             ; (R)+   #n when R = PC
-    Tmp = Reg(EaReg)
-    Reg(EaReg) = (Tmp + 2) & $FFFF
-    ProcedureReturn Tmp
-  ElseIf Tmp = 3                             ; @(R)+  @#a when R = PC
-    Adr = Reg(EaReg)
-    Reg(EaReg) = (Adr + 2) & $FFFF
+  ; The modes most used first (Mini-Unix and V6, desk profiles of 2026-10-02).
+  If Tmp = 6                             ; X(R)   a when R = PC
+    Adr = Reg(7)                             ; the index word (FetchWord, inline)
+    Reg(7) = (Adr + 2) & $FFFF
     MReadWord(Tmp, Adr)
-    ProcedureReturn Tmp
+    ProcedureReturn (Tmp + Reg(EaReg)) & $FFFF
   ElseIf Tmp = 4                             ; -(R)
     Reg(EaReg) = (Reg(EaReg) - 2) & $FFFF
     If EaReg = 6
       StackCheckFast()
     EndIf
     ProcedureReturn Reg(EaReg)
+  ElseIf Tmp = 2                             ; (R)+   #n when R = PC
+    Tmp = Reg(EaReg)
+    Reg(EaReg) = (Tmp + 2) & $FFFF
+    ProcedureReturn Tmp
+  ElseIf Tmp = 1                                 ; (R)
+    ProcedureReturn Reg(EaReg)
+  ElseIf Tmp = 3                             ; @(R)+  @#a when R = PC
+    Adr = Reg(EaReg)
+    Reg(EaReg) = (Adr + 2) & $FFFF
+    MReadWord(Tmp, Adr)
+    ProcedureReturn Tmp
   ElseIf Tmp = 5                             ; @-(R)
     Adr = (Reg(EaReg) - 2) & $FFFF
     Reg(EaReg) = Adr
@@ -1078,11 +1084,6 @@ ProcedureRAM.i EaWord(spec.i)
     EndIf
     MReadWord(Tmp, Adr)
     ProcedureReturn Tmp
-  ElseIf Tmp = 6                             ; X(R)   a when R = PC
-    Adr = Reg(7)                             ; the index word (FetchWord, inline)
-    Reg(7) = (Adr + 2) & $FFFF
-    MReadWord(Tmp, Adr)
-    ProcedureReturn (Tmp + Reg(EaReg)) & $FFFF
   ElseIf Tmp = 7                             ; @X(R)  @a when R = PC
     Adr = Reg(7)
     Reg(7) = (Adr + 2) & $FFFF

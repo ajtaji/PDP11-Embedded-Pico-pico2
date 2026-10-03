@@ -19,7 +19,7 @@ The UNIX files inside the disk packs are covered by the Caldera licence in
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `pico2w-v6/combined.uf2` | 5,295,616 | `8d747f870157f792721a272c921fa4d6fe72b0d87692d1d842418fea7726fa57` |
+| `pico2w-v6/combined.uf2` | 5,305,344 | `54586ace6e6f1bc1e075d8a4b99d98ec87b5fc453427419e31f04c1ee437065c` |
 
 Firmware and disk pack in one UF2: hold BOOTSEL, plug in, copy the file to
 the `RP2350` drive. At the serial console:
@@ -33,8 +33,10 @@ mem = 76
 ```
 
 `#` 3.4 s after the port opened on a Pico 2 W (2 s of the Esc wait, then the
-boot). `time od /rkunix >/dev/null` takes real 19.0 s, user 18.2 s (it was
-21.0 / 20.0 s before the speed pass of 2026-10-02: about 9% faster). The pack is the V6 root pack (`../media/unix/v6root.gz`) with V6's
+boot). `time od /rkunix >/dev/null` takes real 17.0 s, user 16.4 s, 17.4 s timed
+from the host (19.3 s before the dispatch pass of 2026-10-03, 21.7 s before
+the speed pass of 2026-10-02). The file-write overlay is 38 blocks (it was 48):
+ten went to MOV handlers in SRAM. The pack is the V6 root pack (`../media/unix/v6root.gz`) with V6's
 own `rkuboot` installed in block 0.
 
 The pack is changed with `tools/v6fs.py` (see `../README.md`): `/dev/rk0`,

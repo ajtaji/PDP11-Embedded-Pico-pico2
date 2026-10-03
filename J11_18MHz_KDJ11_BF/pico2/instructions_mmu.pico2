@@ -77,12 +77,10 @@ Macro NextNativeM()
   EndIf
   If PC >= FetchLo                       ; the fetch, through the fetch window (cpu)
     If PC < FetchHi
-      If (PC & 1) = 0
-        MmuInstrStart(PC)
-        Op = Mem((PC + FetchBase) >> 1)
-        PC = PC + 2
-        Goto OpTableM(Op >> 3)
-      EndIf
+      MmuInstrStart(PC)
+      Op = Mem((PC + FetchBase) >> 1)
+      PC = PC + 2
+      Goto OpTableM(Op >> 3)
     EndIf
   EndIf
   Goto SlowFetchM
@@ -2332,6 +2330,109 @@ RunEndM:
   RunBank = 0
   ProcedureReturn InstrCount - RunFrom
 
+InstructionMOV_01_M04M:            ; MOV, source mode 0, destination mode 4
+  PcOutM()
+  Src = Reg((Op >> 6) & 7)
+  EaReg = Op & 7
+  Ea = (Reg(EaReg) - 2) & $FFFF
+  Reg(EaReg) = Ea
+  MmrRecord(EaReg, -2)
+  If EaReg = 6
+    StackCheckFast()
+  EndIf
+  MMWriteWordE(Ea, Src, CurD)
+  FlagNZ = Src
+  FlagV = 0
+  NextSyncedM()
+
+InstructionMOV_01_M40M:            ; MOV, source mode 4, destination mode 0
+  PcOutM()
+  EaReg = (Op >> 6) & 7
+  Ea = (Reg(EaReg) - 2) & $FFFF
+  Reg(EaReg) = Ea
+  MmrRecord(EaReg, -2)
+  If EaReg = 6
+    StackCheckFast()
+  EndIf
+  MMReadWordE(Src, Ea, CurD)
+  Reg(Op & 7) = Src
+  FlagNZ = Src
+  FlagV = 0
+  NextSyncedM()
+
+InstructionMOV_01_M60M:            ; MOV, source mode 6, destination mode 0
+  PcOutM()
+  EaReg = (Op >> 6) & 7
+  Adr = Reg(7)
+  Reg(7) = (Adr + 2) & $FFFF
+  MMReadWordE(Tmp, Adr, CurI)
+  Ea = (Tmp + Reg(EaReg)) & $FFFF
+  MMReadWordE(Src, Ea, CurD)
+  Reg(Op & 7) = Src
+  FlagNZ = Src
+  FlagV = 0
+  NextSyncedM()
+
+InstructionMOV_01_M64M:            ; MOV, source mode 6, destination mode 4
+  PcOutM()
+  EaReg = (Op >> 6) & 7
+  Adr = Reg(7)
+  Reg(7) = (Adr + 2) & $FFFF
+  MMReadWordE(Tmp, Adr, CurI)
+  Ea = (Tmp + Reg(EaReg)) & $FFFF
+  MMReadWordE(Src, Ea, CurD)
+  EaReg = Op & 7
+  Ea = (Reg(EaReg) - 2) & $FFFF
+  Reg(EaReg) = Ea
+  MmrRecord(EaReg, -2)
+  If EaReg = 6
+    StackCheckFast()
+  EndIf
+  MMWriteWordE(Ea, Src, CurD)
+  FlagNZ = Src
+  FlagV = 0
+  NextSyncedM()
+
+InstructionMOV_01_M20M:            ; MOV, source mode 2, destination mode 0
+  PcOutM()
+  EaReg = (Op >> 6) & 7
+  Ea = Reg(EaReg)
+  Reg(EaReg) = (Ea + 2) & $FFFF
+  MmrRecord(EaReg, 2)
+  MMReadWordE(Src, Ea, CurD)
+  Reg(Op & 7) = Src
+  FlagNZ = Src
+  FlagV = 0
+  NextSyncedM()
+
+InstructionMOV_01_M61M:            ; MOV, source mode 6, destination mode 1
+  PcOutM()
+  EaReg = (Op >> 6) & 7
+  Adr = Reg(7)
+  Reg(7) = (Adr + 2) & $FFFF
+  MMReadWordE(Tmp, Adr, CurI)
+  Ea = (Tmp + Reg(EaReg)) & $FFFF
+  MMReadWordE(Src, Ea, CurD)
+  EaReg = Op & 7
+  Ea = Reg(EaReg)
+  MMWriteWordE(Ea, Src, CurD)
+  FlagNZ = Src
+  FlagV = 0
+  NextSyncedM()
+
+InstructionMOV_01_M06M:            ; MOV, source mode 0, destination mode 6
+  PcOutM()
+  Src = Reg((Op >> 6) & 7)
+  EaReg = Op & 7
+  Adr = Reg(7)
+  Reg(7) = (Adr + 2) & $FFFF
+  MMReadWordE(Tmp, Adr, CurI)
+  Ea = (Tmp + Reg(EaReg)) & $FFFF
+  MMWriteWordE(Ea, Src, CurD)
+  FlagNZ = Src
+  FlagV = 0
+  NextSyncedM()
+
 ; ======================================================================
 ;  THE TABLE - filled the first time CpuRun runs. A '.Label' is taken
 ;  with ?Name only inside the procedure that owns the label, so this is
@@ -2471,6 +2572,62 @@ BuildTableM:
   OpTableM($12B8) = ?InstructionMOVB_11_IRM
   OpTableM($14B8) = ?InstructionCMPB_12_IRM
   OpTableM($16B8) = ?InstructionBITB_13_IRM
+  ; ---- MOV by addressing mode (tools/mmu_gen.py, MOV_PAIRS) ----
+  OpTableM($0204) = ?InstructionMOV_01_M04M
+  OpTableM($020C) = ?InstructionMOV_01_M04M
+  OpTableM($0214) = ?InstructionMOV_01_M04M
+  OpTableM($021C) = ?InstructionMOV_01_M04M
+  OpTableM($0224) = ?InstructionMOV_01_M04M
+  OpTableM($022C) = ?InstructionMOV_01_M04M
+  OpTableM($0234) = ?InstructionMOV_01_M04M
+  OpTableM($023C) = ?InstructionMOV_01_M04M
+  OpTableM($0300) = ?InstructionMOV_01_M40M
+  OpTableM($0308) = ?InstructionMOV_01_M40M
+  OpTableM($0310) = ?InstructionMOV_01_M40M
+  OpTableM($0318) = ?InstructionMOV_01_M40M
+  OpTableM($0320) = ?InstructionMOV_01_M40M
+  OpTableM($0328) = ?InstructionMOV_01_M40M
+  OpTableM($0330) = ?InstructionMOV_01_M40M
+  OpTableM($0338) = ?InstructionMOV_01_M40M
+  OpTableM($0380) = ?InstructionMOV_01_M60M
+  OpTableM($0388) = ?InstructionMOV_01_M60M
+  OpTableM($0390) = ?InstructionMOV_01_M60M
+  OpTableM($0398) = ?InstructionMOV_01_M60M
+  OpTableM($03A0) = ?InstructionMOV_01_M60M
+  OpTableM($03A8) = ?InstructionMOV_01_M60M
+  OpTableM($03B0) = ?InstructionMOV_01_M60M
+  OpTableM($03B8) = ?InstructionMOV_01_M60M
+  OpTableM($0384) = ?InstructionMOV_01_M64M
+  OpTableM($038C) = ?InstructionMOV_01_M64M
+  OpTableM($0394) = ?InstructionMOV_01_M64M
+  OpTableM($039C) = ?InstructionMOV_01_M64M
+  OpTableM($03A4) = ?InstructionMOV_01_M64M
+  OpTableM($03AC) = ?InstructionMOV_01_M64M
+  OpTableM($03B4) = ?InstructionMOV_01_M64M
+  OpTableM($03BC) = ?InstructionMOV_01_M64M
+  OpTableM($0280) = ?InstructionMOV_01_M20M
+  OpTableM($0288) = ?InstructionMOV_01_M20M
+  OpTableM($0290) = ?InstructionMOV_01_M20M
+  OpTableM($0298) = ?InstructionMOV_01_M20M
+  OpTableM($02A0) = ?InstructionMOV_01_M20M
+  OpTableM($02A8) = ?InstructionMOV_01_M20M
+  OpTableM($02B0) = ?InstructionMOV_01_M20M
+  OpTableM($0381) = ?InstructionMOV_01_M61M
+  OpTableM($0389) = ?InstructionMOV_01_M61M
+  OpTableM($0391) = ?InstructionMOV_01_M61M
+  OpTableM($0399) = ?InstructionMOV_01_M61M
+  OpTableM($03A1) = ?InstructionMOV_01_M61M
+  OpTableM($03A9) = ?InstructionMOV_01_M61M
+  OpTableM($03B1) = ?InstructionMOV_01_M61M
+  OpTableM($03B9) = ?InstructionMOV_01_M61M
+  OpTableM($0206) = ?InstructionMOV_01_M06M
+  OpTableM($020E) = ?InstructionMOV_01_M06M
+  OpTableM($0216) = ?InstructionMOV_01_M06M
+  OpTableM($021E) = ?InstructionMOV_01_M06M
+  OpTableM($0226) = ?InstructionMOV_01_M06M
+  OpTableM($022E) = ?InstructionMOV_01_M06M
+  OpTableM($0236) = ?InstructionMOV_01_M06M
+  OpTableM($023E) = ?InstructionMOV_01_M06M
   OpTableReadyM = 1
   Goto RunStartM
 EndProcedure

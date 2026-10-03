@@ -6,8 +6,8 @@ Do not treat them as ready to flash until one has run on the board it names.
 
 | Board | File | Size | SHA-256 |
 |---|---|---|---|
-| Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM ([6130](https://www.adafruit.com/product/6130)) | `feather/combined.uf2` | 9,409,024 | `dcd5db1f0b512c079db38b628559151e1e83c949818da1cac83444aabf489b08` |
-| Pimoroni Pico Plus 2 ([PIM724](https://shop.pimoroni.com/products/pimoroni-pico-plus-2)) and Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w), Adafruit [6243](https://www.adafruit.com/product/6243)) | `picoplus2/combined.uf2` | 9,409,024 | `43950919bba9b191294dbce7c91c20eb2b412157df3e7e068715b0ccc9afeb6b` |
+| Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM ([6130](https://www.adafruit.com/product/6130)) | `feather/combined.uf2` | 9,418,752 | `5ff97c344979dbadf0ebe701c351e20cb8e38795a797f83bf01495fb55f12d37` |
+| Pimoroni Pico Plus 2 ([PIM724](https://shop.pimoroni.com/products/pimoroni-pico-plus-2)) and Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w), Adafruit [6243](https://www.adafruit.com/product/6243)) | `picoplus2/combined.uf2` | 9,418,752 | `fab2df5d6483b09ce5cb32303813f83364adcc97c011a7d150b2f68d58cb72f3` |
 
 | | Feather RP2350 | Pico Plus 2 / Plus 2 W |
 |---|---|---|
@@ -34,8 +34,8 @@ At power-up the firmware looks for the PSRAM on the board's chip select:
 - **Anything wrong** (no ID, the wrong ID, a failed write test, a pack that
   does not copy back exactly): the CS pin is given back and the board runs as
   the Pico 2 W build does - 56 KB, RK0 read-only from the flash, the 112-block
-  swap RAM disk. The one difference is a 44-block file-write overlay instead
-  of 48, because the PSRAM bring-up code needs that SRAM.
+  swap RAM disk. The one difference is a 36-block file-write overlay instead
+  of the Pico 2 W's 38, because the PSRAM bring-up code needs that SRAM.
 
 The banner says which, and always says `UNTESTED ON HARDWARE`.
 
@@ -65,6 +65,6 @@ python tools/psram_desk_check.py --arm-run arm_run.exe --image build_picoplus2/d
 ```
 
 Each build writes `build_<board>/combined.uf2` (and the firmware and the desk
-image beside it). With PureMetal Forge main `64428375` this reproduces both
+image beside it). With PureMetal Forge main `dbaab248` this reproduces both
 files here byte for byte. The desk check needs an `arm_run` with the PSRAM
 model (`psram=`, `flash=`).

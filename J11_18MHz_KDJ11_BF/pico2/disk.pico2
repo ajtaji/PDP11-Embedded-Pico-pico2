@@ -286,9 +286,11 @@ Global DkFatal.i                 ; the flash failed a write-back three times: no
 CompilerIf #DESK_PROBE = 1                ; the desk's measurement build carries its feed and checks:
 #DK_OV_SLOTS  = 40                         ; it gives 8 overlay blocks for them
 CompilerElseIf #PSRAM = 1                  ; the PSRAM boards (psram.pico2): their bring-up code needs
-#DK_OV_SLOTS  = 44                         ; SRAM, and the overlay serves only their fallback
+#DK_OV_SLOTS  = 36                         ; SRAM, and the overlay serves only their fallback
 CompilerElse
-#DK_OV_SLOTS  = 48                         ; the file-write overlay, 512 bytes a block (see THE SWAP RAM DISK)
+#DK_OV_SLOTS  = 38                         ; the file-write overlay, 512 bytes a block (see THE SWAP RAM DISK).
+                                           ; 38, not 48: ten blocks went to the MOV handlers in SRAM (tools/mmu_gen.py,
+                                           ; MOV_PAIRS) - V6 is 10% faster for them, and the CPU's speed comes first
 CompilerEndIf
 Global Dim DkOvIdx.a(#DK_BLOCKS) ; block -> overlay slot + 1, 0 = not in the overlay
 Global Dim DkOv.u(#DK_OV_SLOTS * 256)

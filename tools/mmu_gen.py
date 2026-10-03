@@ -196,6 +196,91 @@ def header(name, src_name):
 """ % (name, src_name)
 
 
+# ----------------------------------------------------------------------
+#  THE PICO 2's MOV, SPECIALISED BY ADDRESSING MODE (speed, 2026-10-03)
+#  The mapped table is indexed by Op >> 3, which already holds the source
+#  mode, the source register and the destination mode. So a MOV whose two
+#  modes are both common under V6 gets a handler of its own, with exactly
+#  the lines EaWordM would have run for those modes written in place: no
+#  call, and no test of the mode. Everything else about the instruction -
+#  the order of the register changes, MMR1, the stack limit, the traps -
+#  is the general handler's, line for line. Only the Pico 2's file has
+#  them (its mapped loop runs V6 from SRAM). MOV_PAIRS is the measured
+#  choice: SRAM limits how many there can be.
+# ----------------------------------------------------------------------
+MOV_PAIRS = [(0, 4), (4, 0), (6, 0), (6, 4), (2, 0), (6, 1), (0, 6)]     # (source mode, destination mode)
+
+SRC_CODE = {
+    0: "  Src = Reg((Op >> 6) & 7)\n",
+    1: "  EaReg = (Op >> 6) & 7\n  Ea = Reg(EaReg)\n  MMReadWordE(Src, Ea, CurD)\n",
+    2: "  EaReg = (Op >> 6) & 7\n  Ea = Reg(EaReg)\n  Reg(EaReg) = (Ea + 2) & $FFFF\n"
+       "  MmrRecord(EaReg, 2)\n  MMReadWordE(Src, Ea, CurD)\n",          # the table sends only R0-R6 here
+    4: "  EaReg = (Op >> 6) & 7\n  Ea = (Reg(EaReg) - 2) & $FFFF\n  Reg(EaReg) = Ea\n  MmrRecord(EaReg, -2)\n"
+       "  If EaReg = 6\n    StackCheckFast()\n  EndIf\n  MMReadWordE(Src, Ea, CurD)\n",
+    6: "  EaReg = (Op >> 6) & 7\n  Adr = Reg(7)\n  Reg(7) = (Adr + 2) & $FFFF\n  MMReadWordE(Tmp, Adr, CurI)\n"
+       "  Ea = (Tmp + Reg(EaReg)) & $FFFF\n  MMReadWordE(Src, Ea, CurD)\n",
+}
+DST_CODE = {
+    0: "  Reg(Op & 7) = Src\n",
+    1: "  EaReg = Op & 7\n  Ea = Reg(EaReg)\n  MMWriteWordE(Ea, Src, CurD)\n",
+    2: "  EaReg = Op & 7\n  Ea = Reg(EaReg)\n  Reg(EaReg) = (Ea + 2) & $FFFF\n"
+       "  If EaReg = 7\n    MMWriteWordE(Ea, Src, CurI)\n  Else\n    MmrRecord(EaReg, 2)\n"
+       "    MMWriteWordE(Ea, Src, CurD)\n  EndIf\n",
+    4: "  EaReg = Op & 7\n  Ea = (Reg(EaReg) - 2) & $FFFF\n  Reg(EaReg) = Ea\n  MmrRecord(EaReg, -2)\n"
+       "  If EaReg = 6\n    StackCheckFast()\n  EndIf\n  MMWriteWordE(Ea, Src, CurD)\n",
+    6: "  EaReg = Op & 7\n  Adr = Reg(7)\n  Reg(7) = (Adr + 2) & $FFFF\n  MMReadWordE(Tmp, Adr, CurI)\n"
+       "  Ea = (Tmp + Reg(EaReg)) & $FFFF\n  MMWriteWordE(Ea, Src, CurD)\n",
+}
+
+
+NATIVE_EVEN = True     # the Pico 2's native tail does not test the PC for odd (see native_even)
+
+
+def native_even(text):
+    """The Pico 2's file: NextNativeM without the odd-PC test. A native handler
+    is reached only through a fetch that found the PC even, and it moves the PC
+    by an even amount or not at all - the reason the unmapped NextNative has no
+    such test either. One test fewer on every branch and register-form tail."""
+    i = text.index("Macro NextNativeM()\n")
+    j = text.index("EndMacro\n", i)
+    old = """      If (PC & 1) = 0
+        MmuInstrStart(PC)
+        Op = Mem((PC + FetchBase) >> 1)
+        PC = PC + 2
+        Goto OpTableM(Op >> 3)
+      EndIf
+"""
+    new = """      MmuInstrStart(PC)
+      Op = Mem((PC + FetchBase) >> 1)
+      PC = PC + 2
+      Goto OpTableM(Op >> 3)
+"""
+    if text[i:j].count(old) != 1:
+        fail("native_even: NextNativeM changed shape; teach tools/mmu_gen.py.")
+    return text[:i] + text[i:j].replace(old, new) + text[j:]
+
+
+def specialise(text):
+    """The Pico 2's file: MOV handlers for MOV_PAIRS, and their table entries."""
+    if NATIVE_EVEN:
+        text = native_even(text)
+    if not MOV_PAIRS:
+        return text
+    hs, fill = "", "  ; ---- MOV by addressing mode (tools/mmu_gen.py, MOV_PAIRS) ----\n"
+    for sm, dm in MOV_PAIRS:
+        name = "InstructionMOV_01_M%d%dM" % (sm, dm)
+        hs += ("%s:            ; MOV, source mode %d, destination mode %d\n  PcOutM()\n" % (name, sm, dm)
+               + SRC_CODE[sm] + DST_CODE[dm] + "  FlagNZ = Src\n  FlagV = 0\n  NextSyncedM()\n\n")
+        regs = range(7) if sm == 2 else range(8)          # (R7)+ is an immediate: the general handler
+        for sr in regs:
+            fill += "  OpTableM($%04X) = ?%s\n" % (0x200 | sm << 6 | sr << 3 | dm, name)
+    mark = "\n; ======================================================================\n;  THE TABLE - filled"
+    if text.count(mark) != 1 or text.count("  OpTableReadyM = 1\n") != 1:
+        fail("specialise: the mapped file's table section moved; teach tools/mmu_gen.py.")
+    text = text.replace(mark, "\n" + hs.rstrip("\n") + "\n" + mark)
+    return text.replace("  OpTableReadyM = 1\n", fill + "  OpTableReadyM = 1\n")
+
+
 def main():
     body = generate()
     bad = []
@@ -203,7 +288,8 @@ def main():
         text = header(name, src_name) + body
         if name.endswith(".pico2"):          # the Pico 2: V6 runs here - SRAM (55 KB fits beside its tables)
             text = text.replace("\nProcedure.i CpuRunM(n.i)\n", "\nProcedureRAM.i CpuRunM(n.i)\n", 1)
-        else:                                 # the Pico: its SRAM holds CpuRun (Mini-Unix); CpuRunM stays in flash
+            text = specialise(text)
+        else:                                # the Pico: its SRAM holds CpuRun (Mini-Unix); CpuRunM stays in flash
             text = text.replace("\nProcedureRAM.i CpuRunM(n.i)", "\nProcedure.i CpuRunM(n.i)", 1)
         if "--check" in sys.argv:
             try:

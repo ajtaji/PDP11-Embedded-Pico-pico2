@@ -22,7 +22,7 @@ The emulated machine has a console on the USB serial port, an RK11 disk controll
 | PDP-11 memory | 56 KB (000000-157777) plus the I/O page | 56 KB (000000-157777) plus the I/O page |
 | Speed, measured 2026-10-02 (Pico 2 W) and 2026-09-26 (Pico W) | about 495,000 PDP-11 instructions per second under V6 (`od /rkunix` in 19.8 s); about 1,728,000 with memory management off | about 800,000 under Mini-Unix |
 | Console ready after port open | `#` after 3.4 s | `#` after 3.2 s |
-| RAM for writes | 112-block swap RAM disk plus 48 blocks for file-system writes | 124 blocks shared by swap and file writes |
+| RAM for writes | 112-block swap RAM disk plus 38 blocks for file-system writes | 124 blocks shared by swap and file writes |
 | Flash images | `combined.uf2` (one file) | `firmware.uf2` then `minix.uf2` (two files) |
 | Disk | RK05 pack in flash, read-only | RK05 pack in flash, read-only |
 | DEC diagnostic ladder | 17 of 19 pass (the other two halt by design for a J-11) | 17 of 19 pass (the same two) |
@@ -80,7 +80,7 @@ Images for the Adafruit Feather RP2350 (8 MB PSRAM) and the Pimoroni Pico Plus 2
 
 - **56 KB of PDP-11 memory** (000000-157777) plus the I/O page. V6 reports `mem = 76` at boot; about 15 KB is left for user programs once its kernel is in.
 - **Writes live in RAM (RAM disks), in 512-byte blocks.**
-  - Pico 2 W: a **swap RAM disk of 112 blocks** (56 KB, blocks 4000-4111 of the pack) and **48 blocks for file-system writes**. The V6 kernel in the image is patched to swap only there (`_nswap` = 112), so swap can never be refused. 112 blocks hold about three of V6's largest processes (about 33 blocks each) or many small ones; if a session ever needs more, V6 stops with its own "panic: out of swap space".
+  - Pico 2 W: a **swap RAM disk of 112 blocks** (56 KB, blocks 4000-4111 of the pack) and **38 blocks for file-system writes**. The V6 kernel in the image is patched to swap only there (`_nswap` = 112), so swap can never be refused. 112 blocks hold about three of V6's largest processes (about 33 blocks each) or many small ones; if a session ever needs more, V6 stops with its own "panic: out of swap space".
   - Pico W: **124 blocks shared** by swap and file writes. Mini-Unix gives each of its 13 process slots a fixed 66-block swap area (858 blocks by design) and has no swap size to patch, so this cannot be bounded in the Pico W's SRAM. Mini-Unix swaps whole processes, and after enough commands the blocks run out; keep Pico W sessions short.
   - When the file-write blocks are used up, a write to a new block fails: Unix sees a disk error, the console prints once `[RK0: the RAM overlay for file writes is full ...]`, and the statistics block shows `FULL: n writes refused`. Nothing already written changes and nothing reaches the flash; power off to start clean.
 - **Nothing is saved across a power cycle.** Every disk write, the swap area included, goes to RAM; the next power-up starts from the pack as flashed. `sync` does no harm but saves nothing. (The flash-wear warnings in [disk_boot_readme.md](disk_boot_readme.md) concern emulators that write the flash; this firmware never does.)
