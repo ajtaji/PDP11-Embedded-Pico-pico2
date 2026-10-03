@@ -6,8 +6,8 @@ Do not treat them as ready to flash until one has run on the board it names.
 
 | Board | File | Size | SHA-256 |
 |---|---|---|---|
-| Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM ([6130](https://www.adafruit.com/product/6130)) | `feather/combined.uf2` | 9,419,264 | `38a62390615de2577bcbed7cb8d5014f50597fe5151e8a1b7b4ea1bb2cddfc42` |
-| Pimoroni Pico Plus 2 ([PIM724](https://shop.pimoroni.com/products/pimoroni-pico-plus-2)) and Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w), Adafruit [6243](https://www.adafruit.com/product/6243)) | `picoplus2/combined.uf2` | 9,419,264 | `1f3902ec566f79754446fa78381858fbf4f97a5df5ccc103ad04f2e3ba91ae68` |
+| Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM ([6130](https://www.adafruit.com/product/6130)) | `feather/combined.uf2` | 9,379,840 | `7ab0c0fb0d1e086b95c7a2a8fc738dbe6dc90c63d5c3592f52e49e8f2e145c0c` |
+| Pimoroni Pico Plus 2 ([PIM724](https://shop.pimoroni.com/products/pimoroni-pico-plus-2)) and Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w), Adafruit [6243](https://www.adafruit.com/product/6243)) | `picoplus2/combined.uf2` | 9,379,840 | `b2ecbc653e816f5ea7f7d4b06e8a2a1c58a5de904001ce9f87644bd21ad530d5` |
 
 | | Feather RP2350 | Pico Plus 2 / Plus 2 W |
 |---|---|---|
@@ -65,6 +65,39 @@ python tools/psram_desk_check.py --arm-run arm_run.exe --image build_picoplus2/d
 ```
 
 Each build writes `build_<board>/combined.uf2` (and the firmware and the desk
-image beside it). With PureMetal Forge main `dbaab248` this reproduces both
+image beside it). With PureMetal Forge main `f408822d` this reproduces both
 files here byte for byte. The desk check needs an `arm_run` with the PSRAM
 model (`psram=`, `flash=`).
+
+Both files were rebuilt on 2026-10-03 with PureMetal Forge main `f408822d`
+(its faster code generation; the source is unchanged) and pass the desk check
+again, 6 of 6 cases each.
+
+## Pico 2 W, built with the newer compiler - RUN ONLY IN THE EMULATOR
+
+| File | Size | SHA-256 |
+|---|---|---|
+| `pico2w-v6-newcompiler/combined.uf2` | 5,265,920 | `05fafbe6d8fa484105c43f69bf7aadf24b34e13bf007625c44a558b05cfd737a` |
+
+**This file has not run on a Pico 2 W.** It is the Pico 2 W image of
+`../pico2w-v6/` built from the same source with PureMetal Forge main
+`f408822d` instead of `dbaab248`. The board image in `../pico2w-v6/` stays
+as it is until this one has run on a board.
+
+In the PureMetal ARM emulator (which adds both cores' cycles into one clock,
+so compare these with each other, not with a board):
+
+| | `../pico2w-v6/` (compiler `dbaab248`) | this file (compiler `f408822d`) |
+|---|---|---|
+| V6 `time od /rkunix >/dev/null` | real 39.0 s, user 37.5 s | real 31.0 s, user 29.5 s |
+| bench loop, memory management off | 699,604 instructions/s | 1,001,117 instructions/s |
+| firmware size | 154,040 bytes | 134,360 bytes |
+
+No clock ticks dropped in either run. The DEC diagnostics DFKAA, DFKAB and
+DFKAC end the same way on both builds in the emulator (`END OF DFKAA-B`,
+`END OF DFKAB`, `END PASS`), with the same machine-state checksum after
+1,000,000 instructions of DFKAA.
+
+A board run still has to show: it boots V6 to `#`, `time od /rkunix` three
+times with no clock ticks dropped, the bench loop, the longest USB gap, and
+the diagnostic ladder (`tools/tape_ladder.py`) on the Pico 2 W.

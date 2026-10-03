@@ -47,6 +47,8 @@ works; use `df /dev/rk0` (plain `df` looks for V6's built-in `/dev/rk2` and
 
 The PSRAM boards' images, not yet run on a board, are in
 [untested/](untested/README.md).
+So is a build of this Pico 2 W image with the newer compiler (main `f408822d`),
+which has run only in the emulator: `untested/pico2w-v6-newcompiler/`.
 
 ## Pico W (RP2040): Mini-Unix
 
