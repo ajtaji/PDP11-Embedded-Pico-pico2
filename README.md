@@ -20,7 +20,7 @@ The emulated machine has a console on the USB serial port, an RK11 disk controll
 | Kernel booted | `rkunix` | `rkmx` |
 | Memory management | on | off (Mini-Unix does not use it; the stats block says `MMU off (16-bit)`) |
 | PDP-11 memory | 56 KB (000000-157777) plus the I/O page | 56 KB (000000-157777) plus the I/O page |
-| Speed, measured on the boards (Pico 2 W 2026-10-04, Pico W 2026-10-04) | about 675,000 PDP-11 instructions per second under V6 (`od /rkunix` in 13.8 s); about 2,480,000 with memory management off | about 1,020,000 under Mini-Unix (`od /rkmx` in 5.9 s); about 2,550,000 on the bench loop |
+| Speed, measured on the boards (Pico 2 W 2026-10-04, Pico W 2026-10-04) | about 674,000 PDP-11 instructions per second under V6 (`od /rkunix` in 13.9 s); about 2,440,000 with memory management off | about 1,020,000 under Mini-Unix (`od /rkmx` in 5.9 s); about 2,550,000 on the bench loop |
 | Console ready after port open | `#` after 3.4 s | `#` after 3.2 s |
 | RAM for writes | 112-block swap RAM disk plus 38 blocks for file-system writes | 124 blocks shared by swap and file writes |
 | Flash images | `combined.uf2` (one file) | `firmware.uf2` then `minix.uf2` (two files) |
@@ -109,9 +109,10 @@ held back 3 times; every character sent was read by the PDP-11 and none was
 lost. The stats block (Ctrl-] then `s`) has a `typed` line with these
 counts.
 
-**The Pico 2 W build with the fix has run only in the emulator** (identical
-in one write); it is in `images/untested/pico2w-v6-paste/` and the board
-image in `images/pico2w-v6/` does not have the fix yet.
+**Measured on a Pico 2 W** (V6, `images/pico2w-v6/combined.uf2`,
+2026-10-04): the same test, the same result - identical in one write and at
+1000, 300, 100, 30 and 10 characters a second; the host was held back 4
+times in the one-write case, and nothing was lost.
 
 What remains is Unix's own, on any PDP-11:
 

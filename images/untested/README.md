@@ -72,25 +72,3 @@ model (`psram=`, `flash=`).
 Both files were rebuilt on 2026-10-04 with PureMetal Forge main `b9b70ed1`,
 with the Pico 2's dispatch tails in assembly and the paste fix (the README's
 Pasting text section), and pass the desk check again, 6 of 6 cases each.
-
-## Pico 2 W with the paste fix - RUN ONLY IN THE EMULATOR
-
-| File | Size | SHA-256 |
-|---|---|---|
-| `pico2w-v6-paste/combined.uf2` | 5,267,456 | `4d50e25227baa32e39bd5e26a2f25c33f9f92d2fe61acfd56c66035ef3c06f6a` |
-
-**This file has not run on a Pico 2 W.** It is the Pico 2 W firmware built
-from the current source (the console's receive pace and USB receive flow
-control) with PureMetal Forge main `b9b70ed1`. The same change on the
-Pico W has run on its board and is in `../picow-mini-unix/`.
-
-In the PureMetal ARM emulator: the 620-character test program pasted into
-`cat >pn.c` in one write is byte for byte identical (the board image in
-`../pico2w-v6/` keeps 4 of 620 bytes in the same test); V6 `time od
-/rkunix` real 30.0 s, user 28.7 s (29.0 and 28.5 before the fix); bench loop 1,044,093 instructions/s; no clock ticks dropped. (The
-emulator adds both cores' cycles into one clock: compare its figures with
-each other, not with a board.)
-
-A board run still has to show: the paste from a real terminal at full
-speed, `time od` three times with no ticks dropped, the bench loop, the
-longest USB gap, and the diagnostic ladder.

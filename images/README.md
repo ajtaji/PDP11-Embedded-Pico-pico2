@@ -19,7 +19,7 @@ The UNIX files inside the disk packs are covered by the Caldera licence in
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `pico2w-v6/combined.uf2` | 5,265,920 | `4b344f3cc48a70fc845f60d11321c787bf898543244bfd6d49d6eab7b17ef275` |
+| `pico2w-v6/combined.uf2` | 5,267,456 | `4d50e25227baa32e39bd5e26a2f25c33f9f92d2fe61acfd56c66035ef3c06f6a` |
 
 Firmware and disk pack in one UF2: hold BOOTSEL, plug in, copy the file to
 the `RP2350` drive. At the serial console:
@@ -33,15 +33,19 @@ mem = 76
 ```
 
 `#` 3.4 s after the port opened on a Pico 2 W (2 s of the Esc wait, then the
-boot). `time od /rkunix >/dev/null` takes real 13-14 s, user 12.9 s, 13.84 s timed
+boot). `time od /rkunix >/dev/null` takes real 13-14 s, user 13.0 s, 13.86 s timed
 from the host (14.22 s before the dispatch tails in assembly, 17.43 s
 before the compiler's code generation pass of 2026-10-03, 19.3 s before the
 dispatch pass of 2026-10-03, 21.7 s before the speed pass of 2026-10-02).
-The memory-management-off bench loop runs at 2,480,000 instructions/s
-(2,310,000 before the tails, 1,733,000 before the compiler pass). No clock
-ticks are dropped, the longest gap between USB services is 339 us, and the
-DEC diagnostics DFKAA, DFKAB and DFKAC pass on the board. Built with
-PureMetal Forge main `f408822d`, with `#ASM_TAILS = 1` in `pico2/cpu.pico2`. The file-write overlay is 38 blocks (it was 48):
+The memory-management-off bench loop runs at 2,439,000 instructions/s
+(2,482,000 before the paste fix of 2026-10-04, 2,310,000 before the tails,
+1,733,000 before the compiler pass). No clock ticks are dropped, the longest
+gap between USB services is 338 us, and the DEC diagnostics DFKAA, DFKAB and
+DFKAC pass on the board. Built with PureMetal Forge main `b9b70ed1`, with
+`#ASM_TAILS = 1` in `pico2/cpu.pico2`. Text pasted into the terminal arrives
+whole (the README's Pasting text section): a 620-character program was byte
+for byte identical sent in one write and at every rate from 10 to 1000
+characters a second. The file-write overlay is 38 blocks (it was 48):
 ten went to MOV handlers in SRAM. The pack is the V6 root pack (`../media/unix/v6root.gz`) with V6's
 own `rkuboot` installed in block 0.
 
@@ -52,9 +56,7 @@ works; use `df /dev/rk0` (plain `df` looks for V6's built-in `/dev/rk2` and
 `/dev/rp0`). V6's `dc` is too large for the 56 KB machine.
 
 The PSRAM boards' images, not yet run on a board, are in
-[untested/](untested/README.md). So is this Pico 2 W image with the paste
-fix (the README's Pasting text section), which has run only in the
-emulator: `untested/pico2w-v6-paste/`.
+[untested/](untested/README.md).
 
 ## Pico W (RP2040): Mini-Unix
 

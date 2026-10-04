@@ -110,12 +110,10 @@ Both systems print in capitals: their terminal setting assumes an upper-case-onl
 
 ### Pasting text
 
-A file can be pasted into `cat >name` at any speed on the Pico W image: see
+A file can be pasted into `cat >name` at any speed: see
 [Pasting text](../README.md#pasting-text) in the README for what was
-measured and what Unix itself still limits (`#`, `@`, capitals, lines over
-255 characters). `stty -lcase` first keeps capitals. The Pico 2 W board
-image does not have this fix yet (the build that does is in
-`images/untested/`).
+measured on both boards and what Unix itself still limits (`#`, `@`,
+capitals, lines over 255 characters). `stty -lcase` first keeps capitals.
 
 ### Set the date and time
 
@@ -244,12 +242,8 @@ python ../../tools/rk_image.py pack ../../mini-unix.rk05 --chip pico --name mini
 ```
 
 The compiler's output is the same byte for byte from the same source and
-the same compiler. With main `b9b70ed1` the Pico W lines reproduce
-`images/picow-mini-unix/firmware.uf2`; compare with the SHA-256 values in
-`images/README.md`. The Pico 2 W lines give
-`images/untested/pico2w-v6-paste/combined.uf2`, which has run only in the
-emulator: `images/pico2w-v6/combined.uf2` is the build of commit `1dc0592`
-with main `f408822d`, the last one run on a Pico 2 W. The firmware's
+the same compiler. With main `b9b70ed1` these reproduce the committed
+files; compare with the SHA-256 values in `images/README.md`. The firmware's
 defaults (`#DISK_BACKEND = 2`, `#DISK_READ_ONLY = 1`, `#DESK_PROBE = 0` at
 the top of `diag.pico(2)`) are the ones the images use.
 
