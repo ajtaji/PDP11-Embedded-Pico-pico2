@@ -20,7 +20,7 @@ The emulated machine has a console on the USB serial port, an RK11 disk controll
 | Kernel booted | `rkunix` | `rkmx` |
 | Memory management | on | off (Mini-Unix does not use it; the stats block says `MMU off (16-bit)`) |
 | PDP-11 memory | 56 KB (000000-157777) plus the I/O page | 56 KB (000000-157777) plus the I/O page |
-| Speed, measured 2026-10-03 on both boards | about 535,000 PDP-11 instructions per second under V6 (`od /rkunix` in 17.4 s); about 1,730,000 with memory management off | about 1,010,000 under Mini-Unix (`od /rkmx` in 5.9 s); about 2,590,000 on the bench loop |
+| Speed, measured on the boards (Pico 2 W 2026-10-04, Pico W 2026-10-03) | about 657,000 PDP-11 instructions per second under V6 (`od /rkunix` in 14.2 s); about 2,310,000 with memory management off | about 1,010,000 under Mini-Unix (`od /rkmx` in 5.9 s); about 2,590,000 on the bench loop |
 | Console ready after port open | `#` after 3.4 s | `#` after 3.2 s |
 | RAM for writes | 112-block swap RAM disk plus 38 blocks for file-system writes | 124 blocks shared by swap and file writes |
 | Flash images | `combined.uf2` (one file) | `firmware.uf2` then `minix.uf2` (two files) |

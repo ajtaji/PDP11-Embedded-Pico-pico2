@@ -234,12 +234,8 @@ python ../../tools/rk_image.py pack ../../mini-unix.rk05 --chip pico --name mini
 ```
 
 The compiler's output is the same byte for byte from the same source and
-the same compiler. With main `f408822d` the Pico W lines reproduce
-`images/picow-mini-unix/firmware.uf2`; compare with the SHA-256 values in
-`images/README.md`. The Pico 2 W lines give
-`images/untested/pico2w-v6-newcompiler/combined.uf2`, which has run only in
-the emulator: `images/pico2w-v6/combined.uf2` is still the build made with
-compiler main `dbaab248`, the last one run on a Pico 2 W. The firmware's defaults (`#DISK_BACKEND = 2`,
+the same compiler. With main `f408822d` these reproduce the committed files;
+compare with the SHA-256 values in `images/README.md`. The firmware's defaults (`#DISK_BACKEND = 2`,
 `#DISK_READ_ONLY = 1`, `#DESK_PROBE = 0` at the top of `diag.pico(2)`) are
 the ones the images use.
 

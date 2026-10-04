@@ -19,7 +19,7 @@ The UNIX files inside the disk packs are covered by the Caldera licence in
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `pico2w-v6/combined.uf2` | 5,305,344 | `6b59055917ec9dbec165088bd87c4df3637d27ef8e9096a8e9a21294155e309d` |
+| `pico2w-v6/combined.uf2` | 5,265,920 | `05fafbe6d8fa484105c43f69bf7aadf24b34e13bf007625c44a558b05cfd737a` |
 
 Firmware and disk pack in one UF2: hold BOOTSEL, plug in, copy the file to
 the `RP2350` drive. At the serial console:
@@ -33,9 +33,14 @@ mem = 76
 ```
 
 `#` 3.4 s after the port opened on a Pico 2 W (2 s of the Esc wait, then the
-boot). `time od /rkunix >/dev/null` takes real 17.0 s, user 16.4 s, 17.4 s timed
-from the host (19.3 s before the dispatch pass of 2026-10-03, 21.7 s before
-the speed pass of 2026-10-02). The file-write overlay is 38 blocks (it was 48):
+boot). `time od /rkunix >/dev/null` takes real 14.0 s, user 13.4 s, 14.22 s timed
+from the host (17.43 s before the compiler's code generation pass of
+2026-10-03, 19.3 s before the dispatch pass of 2026-10-03, 21.7 s before
+the speed pass of 2026-10-02). The memory-management-off bench loop runs at
+2,310,000 instructions/s (1,733,000 before). No clock ticks are dropped, the
+longest gap between USB services is 346 us, and the DEC diagnostics DFKAA,
+DFKAB and DFKAC pass on the board. Built with PureMetal Forge main
+`f408822d` from unchanged source. The file-write overlay is 38 blocks (it was 48):
 ten went to MOV handlers in SRAM. The pack is the V6 root pack (`../media/unix/v6root.gz`) with V6's
 own `rkuboot` installed in block 0.
 
@@ -47,8 +52,6 @@ works; use `df /dev/rk0` (plain `df` looks for V6's built-in `/dev/rk2` and
 
 The PSRAM boards' images, not yet run on a board, are in
 [untested/](untested/README.md).
-So is a build of this Pico 2 W image with the newer compiler (main `f408822d`),
-which has run only in the emulator: `untested/pico2w-v6-newcompiler/`.
 
 ## Pico W (RP2040): Mini-Unix
 
