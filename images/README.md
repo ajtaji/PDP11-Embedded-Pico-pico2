@@ -19,7 +19,7 @@ The UNIX files inside the disk packs are covered by the Caldera licence in
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `pico2w-v6/combined.uf2` | 5,265,920 | `05fafbe6d8fa484105c43f69bf7aadf24b34e13bf007625c44a558b05cfd737a` |
+| `pico2w-v6/combined.uf2` | 5,265,920 | `4b344f3cc48a70fc845f60d11321c787bf898543244bfd6d49d6eab7b17ef275` |
 
 Firmware and disk pack in one UF2: hold BOOTSEL, plug in, copy the file to
 the `RP2350` drive. At the serial console:
@@ -33,14 +33,15 @@ mem = 76
 ```
 
 `#` 3.4 s after the port opened on a Pico 2 W (2 s of the Esc wait, then the
-boot). `time od /rkunix >/dev/null` takes real 14.0 s, user 13.4 s, 14.22 s timed
-from the host (17.43 s before the compiler's code generation pass of
-2026-10-03, 19.3 s before the dispatch pass of 2026-10-03, 21.7 s before
-the speed pass of 2026-10-02). The memory-management-off bench loop runs at
-2,310,000 instructions/s (1,733,000 before). No clock ticks are dropped, the
-longest gap between USB services is 346 us, and the DEC diagnostics DFKAA,
-DFKAB and DFKAC pass on the board. Built with PureMetal Forge main
-`f408822d` from unchanged source. The file-write overlay is 38 blocks (it was 48):
+boot). `time od /rkunix >/dev/null` takes real 13-14 s, user 12.9 s, 13.84 s timed
+from the host (14.22 s before the dispatch tails in assembly, 17.43 s
+before the compiler's code generation pass of 2026-10-03, 19.3 s before the
+dispatch pass of 2026-10-03, 21.7 s before the speed pass of 2026-10-02).
+The memory-management-off bench loop runs at 2,480,000 instructions/s
+(2,310,000 before the tails, 1,733,000 before the compiler pass). No clock
+ticks are dropped, the longest gap between USB services is 339 us, and the
+DEC diagnostics DFKAA, DFKAB and DFKAC pass on the board. Built with
+PureMetal Forge main `f408822d`, with `#ASM_TAILS = 1` in `pico2/cpu.pico2`. The file-write overlay is 38 blocks (it was 48):
 ten went to MOV handlers in SRAM. The pack is the V6 root pack (`../media/unix/v6root.gz`) with V6's
 own `rkuboot` installed in block 0.
 

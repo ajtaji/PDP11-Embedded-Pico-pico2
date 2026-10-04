@@ -197,11 +197,11 @@ Under Git Bash on Windows, put `MSYS_NO_PATHCONV=1` in front of any command with
 
 You need Python 3 and the PureMetal compiler (`PureMetalForge.exe`), the
 release build from compiler main `f408822d` or later: the firmware keeps the
-lazy N/Z flags in r4 (`#RESERVE_MORE = 1` in `cpu.pico(2)`), and the Pico W's
+lazy N/Z flags in r4 (`#RESERVE_MORE = 1` in `cpu.pico(2)`), and the
 dispatch tails are assembly blocks that name the reserved registers
-(`ASM Uses`, `#ASM_TAILS = 1` in `pico/instructions.pico`), which that
-release has. With `#ASM_TAILS = 0` the Pico W source also builds with
-`dbaab248`. From the repository root:
+(`ASM Uses`; `#ASM_TAILS = 1` in `pico/instructions.pico` and in
+`pico2/cpu.pico2`), which that release has. With `#ASM_TAILS = 0` the
+sources also build with `dbaab248`. From the repository root:
 
 **Pico 2 W, V6** (`images/pico2w-v6/combined.uf2`):
 

@@ -224,9 +224,18 @@ Global TrapHeld.i            ; a trap a trap sequence left pending, across the m
 Global EaBase.i             ; where the last mapped operand address lies (EaWordM)
 Global MmE.i                ; the mapped memory macros' entry
 Global RunSave.i            ; CpuRun's RunFrom while the mapped loop runs
-Global MmuPc.i              ; the address of the mapped instruction being run (MMR2)
+; THE FETCH WINDOW AND THE INSTRUCTION'S ADDRESS, in one array so that the
+; mapped tails (assembly, #ASM_TAILS) reach all four through one base
+; register: Fw(0) FetchLo, Fw(1) FetchHi, Fw(2) FetchBase (MmuFetchWindow),
+; Fw(3) the address of the mapped instruction being run (MMR2). A literal
+; index costs compiled code nothing: Fw(1) is the address of Fw plus 4.
+Global Dim Fw.i(4)
+; The dispatch tails as assembly blocks (instructions.pico2, and the mapped
+; ones tools/mmu_gen.py writes). They name the reserved registers through
+; "ASM Uses", so they need PureMetal Forge main f408822d or later; 0 builds
+; the compiled tails.
+#ASM_TAILS = 1
 Global MmuPcRec.i           ; the instruction MMR1 holds the changes of
-Global FetchLo.i, FetchHi.i, FetchBase.i   ; THE FETCH WINDOW (MmuFetchWindow)
 Global MmuTouches.i         ; reads and writes of the unit's registers, for tests
 Global Halted.i, Waiting.i
 Global PC.i                 ; the emulated PC between instructions; Reg(7) is its
@@ -416,8 +425,8 @@ ProcedureRAM PswBanks(v.i)
   CurI = ((v >> 14) & 3) << 4            ; the memory management unit's entry bases
   CurD = CurI + 8
   PrvBase = ((v >> 12) & 3) << 4
-  FetchLo = #MAP_NONE                    ; and a new mode: a new fetch window
-  FetchHi = 0
+  Fw(0) = #MAP_NONE                    ; and a new mode: a new fetch window
+  Fw(1) = 0
 EndProcedure
 
 ; The stack pointer of mode m (0 kernel, 1 supervisor, 3 user), wherever
@@ -605,8 +614,8 @@ ProcedureRAM MmuRecompute()
   CurI = ((PswHigh >> 14) & 3) << 4
   CurD = CurI + 8
   PrvBase = ((PswHigh >> 12) & 3) << 4
-  FetchLo = #MAP_NONE                    ; the fetch window is found again
-  FetchHi = 0
+  Fw(0) = #MAP_NONE                    ; the fetch window is found again
+  Fw(1) = 0
 EndProcedure
 
 ; One register pair (entry r) changed - a PAR or PDR write, or W set: only
@@ -621,8 +630,8 @@ ProcedureRAM MmuRegChanged(r.i)
       MmuMapEntry(r + 8)
     EndIf
   EndIf
-  FetchLo = #MAP_NONE                    ; the fetch window is found again
-  FetchHi = 0
+  Fw(0) = #MAP_NONE                    ; the fetch window is found again
+  Fw(1) = 0
 EndProcedure
 
 ProcedureRAM MmuReset()                     ; power-up and the bus INIT: MMR0 and MMR3 cleared
@@ -671,13 +680,13 @@ ProcedureRAM.i MmuRegRead(a.i)
   If a = #MMR0_ADDR
     ProcedureReturn Mmr0
   ElseIf a = #MMR1_ADDR
-    If (Mmr0 & $E000) = 0 And MmuPcRec <> MmuPc
+    If (Mmr0 & $E000) = 0 And MmuPcRec <> Fw(3)
       ProcedureReturn 0                  ; nothing recorded for this instruction yet
     EndIf
     ProcedureReturn Mmr1
   ElseIf a = #MMR2_ADDR
     If (Mmr0 & $E000) = 0
-      ProcedureReturn MmuPc
+      ProcedureReturn Fw(3)
     EndIf
     ProcedureReturn Mmr2
   ElseIf a = #MMR3_ADDR
@@ -1151,8 +1160,8 @@ ProcedureRAM MmuAbort(bits.i, e.i)
   r = MapReg(e)
   If (Mmr0 & $E000) = 0
     Mmr0 = (Mmr0 & $0101) | bits | ((r >> 4) << 5) | (((r >> 3) & 1) << 4) | ((r & 7) << 1)
-    Mmr2 = MmuPc                         ; frozen with MMR0
-    If MmuPcRec <> MmuPc
+    Mmr2 = Fw(3)                         ; frozen with MMR0
+    If MmuPcRec <> Fw(3)
       Mmr1 = 0
     EndIf
   EndIf
@@ -1388,8 +1397,8 @@ EndMacro
 ; (the speed pass of 2026-10-02: 5% of V6's cycles on the desk).
 Macro MmrRecord(mR, mAmt)
   If (Mmr0 & $E000) = 0
-    If MmuPcRec <> MmuPc
-      MmuPcRec = MmuPc
+    If MmuPcRec <> Fw(3)
+      MmuPcRec = Fw(3)
       Mmr1 = (((mAmt) & $1F) << 3) | (mR)
     ElseIf (Mmr1 & $FF) = 0
       Mmr1 = (((mAmt) & $1F) << 3) | (mR)
@@ -1404,7 +1413,7 @@ EndMacro
 ; at an instruction's first register change (MmrRecord). (An instruction
 ; that loops on itself keeps adding to MMR1 - none of the diagnostics do.)
 Macro MmuInstrStart(mPc)
-  MmuPc = mPc
+  Fw(3) = mPc
 EndMacro
 
 ; EaWord mapped: the index word and an immediate come from I space, every
@@ -1521,8 +1530,8 @@ EndProcedure
 ; changes.
 ProcedureRAM MmuFetchWindow(va.i)
   Protected e.i, lo.i, hi.i, bs.i
-  FetchLo = #MAP_NONE
-  FetchHi = 0
+  Fw(0) = #MAP_NONE
+  Fw(1) = 0
   e = CurI + (va >> 13)
   If va < MapRLo(e) Or va >= MapRHi(e)
     ProcedureReturn
@@ -1539,9 +1548,9 @@ ProcedureRAM MmuFetchWindow(va.i)
     e = e + 1
     hi = MapRHi(e)
   Wend
-  FetchLo = lo
-  FetchHi = hi
-  FetchBase = bs
+  Fw(0) = lo
+  Fw(1) = hi
+  Fw(2) = bs
 EndProcedure
 
 ProcedureRAM.i FetchWordM()

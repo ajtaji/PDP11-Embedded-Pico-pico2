@@ -6,8 +6,8 @@ Do not treat them as ready to flash until one has run on the board it names.
 
 | Board | File | Size | SHA-256 |
 |---|---|---|---|
-| Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM ([6130](https://www.adafruit.com/product/6130)) | `feather/combined.uf2` | 9,379,840 | `7ab0c0fb0d1e086b95c7a2a8fc738dbe6dc90c63d5c3592f52e49e8f2e145c0c` |
-| Pimoroni Pico Plus 2 ([PIM724](https://shop.pimoroni.com/products/pimoroni-pico-plus-2)) and Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w), Adafruit [6243](https://www.adafruit.com/product/6243)) | `picoplus2/combined.uf2` | 9,379,840 | `b2ecbc653e816f5ea7f7d4b06e8a2a1c58a5de904001ce9f87644bd21ad530d5` |
+| Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM ([6130](https://www.adafruit.com/product/6130)) | `feather/combined.uf2` | 9,379,328 | `95e9f12129c7fdf3493b4f8aef0d892ddfe9df48a4e90031aa2226e7e4bbc89d` |
+| Pimoroni Pico Plus 2 ([PIM724](https://shop.pimoroni.com/products/pimoroni-pico-plus-2)) and Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w), Adafruit [6243](https://www.adafruit.com/product/6243)) | `picoplus2/combined.uf2` | 9,379,328 | `a30f10d55cec1b6393ab08e2eeba25c70039dd2212d78a6db0fead09483c4ca9` |
 
 | | Feather RP2350 | Pico Plus 2 / Plus 2 W |
 |---|---|---|
@@ -69,6 +69,6 @@ image beside it). With PureMetal Forge main `f408822d` this reproduces both
 files here byte for byte. The desk check needs an `arm_run` with the PSRAM
 model (`psram=`, `flash=`).
 
-Both files were rebuilt on 2026-10-03 with PureMetal Forge main `f408822d`
-(its faster code generation; the source is unchanged) and pass the desk check
-again, 6 of 6 cases each.
+Both files were rebuilt on 2026-10-04 with PureMetal Forge main `f408822d`
+and the Pico 2's dispatch tails in assembly (`#ASM_TAILS = 1`), and pass the
+desk check again, 6 of 6 cases each.

@@ -274,6 +274,69 @@ def native_even(text):
     return text[:i] + text[i:j].replace(old, new) + text[j:]
 
 
+ASM_FETCH_M = """    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __ul_cpurunm_slowfetchm
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __ul_cpurunm_slowfetchm
+%s    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    adds r1, r1, r0
+    bic r1, r1, #1
+    ldr r2, =global_mem
+    ldrh r2, [r2, r1]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+EndMacro
+"""
+ASM_SYNCED_M = """Macro NextSyncedM()
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __ul_cpurunm_slowtailm
+    subs.w r11, r11, #1
+    beq __ul_cpurunm_runendm
+""" + ASM_FETCH_M % "    lsls r1, r0, #31\n    bne __ul_cpurunm_slowfetchm\n"
+ASM_NATIVE_M = """Macro NextNativeM()
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __ul_cpurunm_runendm
+    mov r0, r9
+""" + ASM_FETCH_M % ""
+
+
+def pico2_tails(text):
+    """The Pico 2's file: the fetch window and the instruction's address are
+    the array Fw (cpu.pico2), and each tail macro also exists as an assembly
+    block, chosen by #ASM_TAILS (cpu.pico2). The assembly is the macro's own
+    steps for the Cortex-M33, with the four Fw words reached through one base
+    register."""
+    for name, asm in (("NextSyncedM", ASM_SYNCED_M), ("NextNativeM", ASM_NATIVE_M)):
+        i = text.index("Macro %s()\n" % name)
+        j = text.index("EndMacro\n", i) + len("EndMacro\n")
+        text = (text[:i] + "CompilerIf #ASM_TAILS = 1\n" + asm + "CompilerElse\n" + text[i:j] +
+                "CompilerEndIf\n" + text[j:])
+    out = []
+    for line in text.split("\n"):
+        code, sep, comment = line.partition(";")
+        for a, b in (("FetchLo", "Fw(0)"), ("FetchHi", "Fw(1)"), ("FetchBase", "Fw(2)")):
+            code = re.sub(r"\b%s\b" % a, b, code)
+        out.append(code + sep + comment)
+    return "\n".join(out)
+
+
 def specialise(text):
     """The Pico 2's file: MOV handlers for MOV_PAIRS, and their table entries."""
     if NATIVE_EVEN:
@@ -303,6 +366,7 @@ def main():
         if name.endswith(".pico2"):          # the Pico 2: V6 runs here - SRAM (55 KB fits beside its tables)
             text = text.replace("\nProcedure.i CpuRunM(n.i)\n", "\nProcedureRAM.i CpuRunM(n.i)\n", 1)
             text = specialise(text)
+            text = pico2_tails(text)
         else:                                # the Pico: its SRAM holds CpuRun (Mini-Unix); CpuRunM stays in flash
             text = text.replace("\nProcedureRAM.i CpuRunM(n.i)", "\nProcedure.i CpuRunM(n.i)", 1)
         if "--check" in sys.argv:

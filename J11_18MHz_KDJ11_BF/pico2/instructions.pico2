@@ -130,6 +130,38 @@ EndMacro
 ; expanded in place at the end of every handler - a macro costs nothing
 ; at run time, so every handler still has its own copy of these lines.
 ; After a synced handler: take the PC back, take any trap, count, fetch.
+; THE TAILS IN ASSEMBLY (#ASM_TAILS = 1, cpu.pico2). The same steps as the
+; macros in the Else branches, for the Cortex-M33, with Op, PC and RunLeft
+; used where they live (r8, r9, r11). r0-r3 are free at a tail: every handler
+; starts at a label, and nothing is held in a register across one. PC is
+; always 0-$FFFF, so the unsigned compare is the signed one.
+CompilerIf #ASM_TAILS = 1
+Macro NextSynced()
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __ul_cpurun_slowtail
+    subs.w r11, r11, #1
+    beq __ul_cpurun_runend
+    cmp.w r0, ##RAM_BYTES
+    bhs __ul_cpurun_slowfetch
+    lsls r1, r0, #31
+    bne __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+EndMacro
+CompilerElse
 Macro NextSynced()
   PC = Reg(7)
   If TrapVector
@@ -148,10 +180,30 @@ Macro NextSynced()
   EndIf
   Goto SlowFetch
 EndMacro
+CompilerEndIf
 
 ; After a native handler: it cannot trap and the PC it leaves is even (it
 ; was even when fetched, and a branch moves it by an even amount), so the
 ; only test left is whether it is still in RAM.
+CompilerIf #ASM_TAILS = 1
+Macro NextNative()
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    cmp.w r0, ##RAM_BYTES
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+EndMacro
+CompilerElse
 Macro NextNative()
   RunLeft = RunLeft - 1
   If RunLeft = 0
@@ -164,6 +216,7 @@ Macro NextNative()
   EndIf
   Goto SlowFetch
 EndMacro
+CompilerEndIf
 
 ; After a native handler that read memory (an immediate operand): that
 ; read can leave a trap (the I/O page), so take it; otherwise as above.

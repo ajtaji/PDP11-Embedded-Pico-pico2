@@ -45,6 +45,43 @@ EndMacro
 ; expanded in place at the end of every handler - a macro costs nothing
 ; at run time, so every handler still has its own copy of these lines.
 ; After a synced handler: take the PC back, take any trap, count, fetch.
+CompilerIf #ASM_TAILS = 1
+Macro NextSyncedM()
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __ul_cpurunm_slowtailm
+    subs.w r11, r11, #1
+    beq __ul_cpurunm_runendm
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __ul_cpurunm_slowfetchm
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __ul_cpurunm_slowfetchm
+    lsls r1, r0, #31
+    bne __ul_cpurunm_slowfetchm
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    adds r1, r1, r0
+    bic r1, r1, #1
+    ldr r2, =global_mem
+    ldrh r2, [r2, r1]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+EndMacro
+CompilerElse
 Macro NextSyncedM()
   PC = Reg(7)
   If TrapVector
@@ -54,11 +91,11 @@ Macro NextSyncedM()
   If RunLeft = 0
     Goto RunEndM
   EndIf
-  If PC >= FetchLo                       ; the fetch, through the fetch window (cpu)
-    If PC < FetchHi
+  If PC >= Fw(0)                       ; the fetch, through the fetch window (cpu)
+    If PC < Fw(1)
       If (PC & 1) = 0
         MmuInstrStart(PC)
-        Op = Mem((PC + FetchBase) >> 1)
+        Op = Mem((PC + Fw(2)) >> 1)
         PC = PC + 2
         Goto OpTableM(Op >> 3)
       EndIf
@@ -66,25 +103,56 @@ Macro NextSyncedM()
   EndIf
   Goto SlowFetchM
 EndMacro
+CompilerEndIf
 
 ; After a native handler: it cannot trap and the PC it leaves is even (it
 ; was even when fetched, and a branch moves it by an even amount), so the
 ; only test left is whether it is still in RAM.
+CompilerIf #ASM_TAILS = 1
+Macro NextNativeM()
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __ul_cpurunm_runendm
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __ul_cpurunm_slowfetchm
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __ul_cpurunm_slowfetchm
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    adds r1, r1, r0
+    bic r1, r1, #1
+    ldr r2, =global_mem
+    ldrh r2, [r2, r1]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+EndMacro
+CompilerElse
 Macro NextNativeM()
   RunLeft = RunLeft - 1
   If RunLeft = 0
     Goto RunEndM
   EndIf
-  If PC >= FetchLo                       ; the fetch, through the fetch window (cpu)
-    If PC < FetchHi
+  If PC >= Fw(0)                       ; the fetch, through the fetch window (cpu)
+    If PC < Fw(1)
       MmuInstrStart(PC)
-      Op = Mem((PC + FetchBase) >> 1)
+      Op = Mem((PC + Fw(2)) >> 1)
       PC = PC + 2
       Goto OpTableM(Op >> 3)
     EndIf
   EndIf
   Goto SlowFetchM
 EndMacro
+CompilerEndIf
 
 ; After a native handler that read memory (an immediate operand): that
 ; read can leave a trap (the I/O page), so take it; otherwise as above.
@@ -116,11 +184,11 @@ RunStartM:
   RunWindow = 0
   Goto RunEndM                            ; which lets the devices act, then opens a window
 FetchM:
-  If PC >= FetchLo                       ; the fetch, through the fetch window (cpu)
-    If PC < FetchHi
+  If PC >= Fw(0)                       ; the fetch, through the fetch window (cpu)
+    If PC < Fw(1)
       If (PC & 1) = 0
         MmuInstrStart(PC)
-        Op = Mem((PC + FetchBase) >> 1)
+        Op = Mem((PC + Fw(2)) >> 1)
         PC = PC + 2
         Goto OpTableM(Op >> 3)
       EndIf
