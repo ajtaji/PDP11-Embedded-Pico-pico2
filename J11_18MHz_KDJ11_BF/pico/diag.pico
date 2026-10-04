@@ -96,6 +96,16 @@ Global C0CmdSeq.i, C0Op.i, C0A1.i, C0A2.i   ; a command for core 0: core 1 write
 Global C0DoneSeq.i                         ; core 0 has done it: core 0 writes
 Global PswSnap.i                           ; the PSW after core 0's last slice (core 1 must not call PswGet)
 Global C1Alone.i                           ; core 1 did not start: the I/O loop runs on core 0, no processor
+; PASTING. Text pasted into the terminal arrives all at once. Three things
+; keep it whole: the receiver's pace (cpu, THE RECEIVER'S PACE), the 256
+; characters of ConIn, and - with #USB_RX_HOLD = 1 - the USB library's
+; receive flow control, which makes the host wait while the queues are full.
+; #USB_RX_HOLD = 1 needs a usb_serial library that has UsbSerialRxHold()
+; (PureMetal Forge after main f408822d). With 0 the file builds with
+; f408822d, and a paste longer than the queues (about 500 characters) loses
+; what does not fit, in the library's receive ring.
+#USB_RX_HOLD = 1
+Global ConTyped.i, ConDropped.i, ConHeld.i   ; console input counts, for the stats block
 Global UsbGapMax.i, UsbLastSvc.i           ; core 1: the longest gap between USB services since the banner
 Global DkOvFullShown.i                    ; core 1 has said the overlay is full
 Global C1Where.i, GapWhere.i               ; what core 1 was doing, and what it was doing in the longest gap
@@ -649,6 +659,13 @@ Procedure StatsBlock()
   Else
     StatLine("cores   core 0: the PDP-11 CPU and its device registers; core 1: USB, console, disk storage, 60 Hz, this block")
   EndIf
+  StatLine("typed   ") : Num(ConTyped) : Say(" characters from the port since BOOT, ") : Num(Dl11RxReads)
+  Say(" read by the PDP-11, ") : Num(ConInHead - ConInTail) : Say(" waiting, ") : Num(ConDropped + usbser_rxlost)
+  CompilerIf #USB_RX_HOLD = 1
+    Say(" lost; the host was held back ") : Num(UsbSerialRxHolds()) : Say(" times")
+  CompilerElse
+    Say(" lost (no flow control in this build: a paste of more than about 500 characters at once loses the rest)")
+  CompilerEndIf
   StatLine("usb     longest gap between USB services since the banner: ") : Num(UsbGapMax) : Say(" us, during ")
   If GapWhere = 1
     Say("input")
@@ -1092,6 +1109,9 @@ Procedure InByte(c.i)
         ConIn(ConInHead & (#CON_SIZE - 1)) = c
         SmpBarrier()                     ; the character, then the head core 0 reads
         ConInHead = ConInHead + 1
+        ConTyped = ConTyped + 1
+      Else
+        ConDropped = ConDropped + 1      ; (ReadPort never calls with the queue full)
       EndIf
     Else
       TypedChar(c)                        ; no program runs: a command (BOOT)
@@ -1213,6 +1233,7 @@ Procedure ReadPort()
   k = 0
   While k < #FEED_MAX And UsbSerialAvailable() > 0
     If Mode = #MODE_RUN And FrameState = 0 And (ConInHead - ConInTail) >= #CON_SIZE
+      ConHeld = ConHeld + 1
       Break                              ; a long paste: the rest waits in the port until there is room
     EndIf
     InByte(UsbSerialRead())
@@ -1473,6 +1494,9 @@ Procedure Main()
   SafetyBoot()
   ClockInitKhz(#CLOCK_KHZ)
   UsbSerialInit()
+  CompilerIf #USB_RX_HOLD = 1
+    UsbSerialRxHold(1)                   ; a paste: the host is held back while the queues are full, not dropped
+  CompilerEndIf
   SafetyOk()
   BuildOpcodeTable()
   BuildOpcodeTableM()                    ; the mapped loop's table too, before any timing

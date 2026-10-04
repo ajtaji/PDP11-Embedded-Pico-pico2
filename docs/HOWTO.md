@@ -108,6 +108,14 @@ There is no login and no password. Boot is complete at the `#` prompt, where you
 
 Both systems print in capitals: their terminal setting assumes an upper-case-only terminal. Type in lower case. On Mini-Unix, `stty -lcase` switches the output to mixed case (as the screenshots show).
 
+### Pasting text
+
+Pasting a file into `cat >name` loses characters with the board images
+here, and is fixed in the builds in `images/untested/`: see
+[Pasting text](../README.md#pasting-text) in the README for what was
+measured and what Unix itself still limits (`#`, `@`, capitals, lines over
+255 characters). With either build, `stty -lcase` first keeps capitals.
+
 ### Set the date and time
 
 Optional. The `date` command takes the date as `MMDDhhmmYY`, with a **two-digit year** (it is not Y2K compliant). For 22 September, 10:00, year 98:
@@ -234,8 +242,13 @@ python ../../tools/rk_image.py pack ../../mini-unix.rk05 --chip pico --name mini
 ```
 
 The compiler's output is the same byte for byte from the same source and
-the same compiler. With main `f408822d` these reproduce the committed files;
-compare with the SHA-256 values in `images/README.md`. The firmware's defaults (`#DISK_BACKEND = 2`,
+the same compiler. The files in `images/pico2w-v6/` and
+`images/picow-mini-unix/` are builds of commit `1dc0592` with main
+`f408822d`; compare with the SHA-256 values in `images/README.md`. The
+source since then asks the USB serial library for receive flow control
+(`#USB_RX_HOLD = 1` in `diag.pico(2)`, see Pasting text), which needs a
+PureMetal Forge later than `f408822d`; set it to 0 to build with
+`f408822d`. The firmware's defaults (`#DISK_BACKEND = 2`,
 `#DISK_READ_ONLY = 1`, `#DESK_PROBE = 0` at the top of `diag.pico(2)`) are
 the ones the images use.
 

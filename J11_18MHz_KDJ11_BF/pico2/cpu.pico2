@@ -151,6 +151,7 @@
 #DL11_XBUF   = $FF76        ; 177566 transmitter data
 #SWR_ADDR    = $FF78        ; 177570 switch register (read), display (write)
 #DL11_TX_INSTRUCTIONS = 100 ; how long one character takes to send
+#DL11_RX_INSTRUCTIONS = 2000 ; the least time between two characters received (THE RECEIVER'S PACE)
 #CON_SIZE    = 256          ; each console queue, a power of two
 #INT_DL11_RX = 1            ; IntReq bits: the console receiver ...
 #INT_DL11_TX = 2            ; ... and transmitter (both BR4)
@@ -251,6 +252,8 @@ Global InstrCount.i         ; instructions finished before this window began
 ; The console DL11 and the switch register - see THE I/O PAGE.
 Global Dl11RxDone.i, Dl11RxIe.i, Dl11RxBuf.i
 Global Dl11RxPolled.i      ; the program has looked at RCSR since the last character
+Global Dl11RxDue.i         ; InstrCount at which the receiver may take its next character
+Global Dl11RxReads.i       ; characters the program has read from RBUF (the stats block)
 Global Dl11TxRdy.i, Dl11TxIe.i, Dl11TxChar.i, Dl11TxDue.i
 Global SwitchReg.i, DisplayReg.i
 Global IntReq.i             ; interrupts asked for: #INT_DL11_RX | #INT_DL11_TX | #INT_RK | #INT_KW
@@ -776,10 +779,12 @@ ProcedureRAM.i IoRead(a.i)                  ; a is even and past the end of RAM
     Dl11RxPolled = 1
     ProcedureReturn (Dl11RxDone << 7) | (Dl11RxIe << 6)
   ElseIf a = #DL11_RBUF
+    Dl11RxReads = Dl11RxReads + Dl11RxDone
     Dl11RxDone = 0
     IntReq = IntReq & ~#INT_DL11_RX
+    Dl11RxDue = CpuNow() + #DL11_RX_INSTRUCTIONS   ; THE RECEIVER'S PACE (DevService)
     If ConInHead <> ConInTail
-      CpuEventIn(#DL11_TX_INSTRUCTIONS)  ; the next typed character arrives
+      CpuEventIn(#DL11_RX_INSTRUCTIONS)  ; the next typed character's moment
     EndIf
     ProcedureReturn Dl11RxBuf
   ElseIf a = #DL11_XCSR
@@ -1647,17 +1652,30 @@ ProcedureRAM DevService()
       EndIf
     EndIf
   EndIf
-  ; the receiver taking a typed character
+  ; the receiver taking a typed character - THE RECEIVER'S PACE. A real
+  ; line delivers a character every bit-time times ten and no faster; a
+  ; paste into the USB port arrives all at once. Unix takes each character
+  ; at interrupt level whether or not the program reading the terminal has
+  ; had time to run, and throws its whole input queue away at 256
+  ; characters (V6 tty.c, ttyinput: TTYHOG), so characters handed over as
+  ; fast as the kernel reads them are lost inside Unix. So the next
+  ; character is given #DL11_RX_INSTRUCTIONS instructions after the last
+  ; one was read - or at once when the processor is in a WAIT, which is
+  ; Unix saying it has nothing left to do. The rest of a paste waits in
+  ; ConIn, and behind that in the USB port (ReadPort stops reading it), so
+  ; the host is held back and nothing is dropped.
   If Dl11RxDone = 0
     If ConInHead <> ConInTail
-      SmpBarrier()                       ; core 1's head, then the character it announces
-      Dl11RxBuf = ConIn(ConInTail & (#CON_SIZE - 1)) & $FF
-      SmpBarrier()                       ; the character read, then the slot given back
-      ConInTail = ConInTail + 1
-      Dl11RxDone = 1
-      Dl11RxPolled = 0
-      If Dl11RxIe
-        IntReq = IntReq | #INT_DL11_RX
+      If InstrCount - Dl11RxDue >= 0 Or Waiting <> 0
+        SmpBarrier()                     ; core 1's head, then the character it announces
+        Dl11RxBuf = ConIn(ConInTail & (#CON_SIZE - 1)) & $FF
+        SmpBarrier()                     ; the character read, then the slot given back
+        ConInTail = ConInTail + 1
+        Dl11RxDone = 1
+        Dl11RxPolled = 0
+        If Dl11RxIe
+          IntReq = IntReq | #INT_DL11_RX
+        EndIf
       EndIf
     EndIf
   EndIf
@@ -1705,6 +1723,17 @@ ProcedureRAM StartWindow()
     EndIf
     If Tmp < RunLeft
       RunLeft = Tmp
+    EndIf
+  EndIf
+  If Dl11RxDone = 0                      ; a typed character is waiting for its
+    If ConInHead <> ConInTail            ; moment (THE RECEIVER'S PACE)
+      Tmp = Dl11RxDue - InstrCount
+      If Tmp < 1
+        Tmp = 1
+      EndIf
+      If Tmp < RunLeft
+        RunLeft = Tmp
+      EndIf
     EndIf
   EndIf
   If IntReq

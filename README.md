@@ -72,6 +72,51 @@ The full walk-through, with the console boot commands, setting the date and re-f
 
 *`date 0922100098` sets Tue Sep 22 10:00:00 1998 (month, day, hour, minute, two-digit year).*
 
+## Pasting text
+
+Text pasted into the terminal arrives all at once, far faster than any
+terminal of the time could send. Measured in the emulator with a 35-line,
+620-character C program pasted into `cat >pn.c` (2026-10-04), the firmware
+in `images/pico2w-v6/` and `images/picow-mini-unix/` loses most of it, in
+two places:
+
+- **In the USB serial library.** It keeps 256 characters and the console
+  queue another 256. A paste longer than that overflowed the library's ring:
+  128 of the 656 characters sent never reached the emulated machine.
+- **Inside Unix.** Every character that did reach the PDP-11 was read by it
+  (528 of 528; and 656 of 656 when the same text was sent a line every
+  20 ms). But the console handed Unix the next character 100 instructions
+  after the last, and V6 takes each one at interrupt level whether or not
+  `cat` has had time to run. When its input queue reaches 256 characters it
+  throws the whole queue away (`/usr/sys/dmr/tty.c`, `ttyinput`: `if
+  (tp->t_rawq.c_cc>=TTYHOG) { flushtty(tp); return; }`). The file ended up
+  with 4 bytes of 620 (131 at a line every 20 ms). At a line every 50 ms or
+  slower the file was complete.
+
+The source in this repository fixes both, and the builds in
+`images/untested/` (see its README) carry the fix:
+
+- **The receiver has a pace.** The next character is given to the PDP-11
+  2000 instructions after the last one was read, or at once when the
+  processor is in a WAIT (Unix has nothing left to do). The rest waits.
+- **The host is held back.** While the queues are full the firmware stops
+  accepting USB packets, the host waits and sends again. This is USB's own
+  flow control: nothing to set in the terminal.
+
+With both, the same paste is byte for byte identical however fast the host
+sends it (emulator, both builds; the stats block, Ctrl-] then `s`, has a
+`typed` line with the counts). These builds have not run on a board yet.
+
+What remains is Unix's own, on any PDP-11:
+
+- A single line longer than 255 characters is thrown away (the same
+  `TTYHOG` test: Unix only hands a line to the program at its end).
+- `#` erases the character before it and `@` erases the line, as on every
+  V6 terminal. Type `\#` and `\@` to enter them, or change them with
+  `stty`.
+- While the terminal is in upper-case mode (the images' default) capitals
+  are stored as lower case. `stty -lcase` first.
+
 ## PSRAM boards (untested on hardware)
 
 Images for the Adafruit Feather RP2350 (8 MB PSRAM) and the Pimoroni Pico Plus 2 and Pico Plus 2 W are in [images/untested/](images/untested/README.md). They have run only in the PureMetal ARM emulator and are not yet tested on hardware; do not treat them as ready to flash until one has run on the board it names. With the PSRAM found, V6 reports `mem = 1036` instead of 76 and gets its whole swap area. Without it, they run as the Pico 2 W build does.

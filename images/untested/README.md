@@ -72,3 +72,39 @@ model (`psram=`, `flash=`).
 Both files were rebuilt on 2026-10-04 with PureMetal Forge main `f408822d`
 and the Pico 2's dispatch tails in assembly (`#ASM_TAILS = 1`), and pass the
 desk check again, 6 of 6 cases each.
+The two PSRAM files are builds of commit `1dc0592`: they do not have the
+paste fix below yet.
+
+## Paste fix builds - RUN ONLY IN THE EMULATOR
+
+| File | Size | SHA-256 |
+|---|---|---|
+| `pico2w-v6-paste/combined.uf2` | 5,267,456 | `c2a71a9715cdebd432a9b07b9b5e78fa8e38a9e5e39f4e0b95aeac4cb1c387df` |
+| `picow-mini-unix-paste/firmware.uf2` | 272,896 | `7c7d1b5a6561e72f899450926aeec46a120886dc535dc5a619875d05abdf375e` |
+
+**Neither file has run on a board.** They are the Pico 2 W and Pico W
+firmware with the console's receive pace and USB receive flow control (the
+README's Pasting text section), built with a PureMetal Forge whose
+`usb_serial` library has `UsbSerialRxHold()` (later than main `f408822d`).
+The Pico W file goes with `../picow-mini-unix/minix.uf2`, unchanged.
+
+In the PureMetal ARM emulator, pasting the 620-character test program into
+`cat >pn.c`:
+
+| | board images (`1dc0592`) | these builds |
+|---|---|---|
+| Pico 2 W, V6: the whole text in one write | 4 of 620 bytes in the file | identical; the host was held back 4 times |
+| Pico 2 W, V6: a line every 20 ms | 131 of 620 | identical |
+| Pico 2 W, V6: a line every 50 ms or slower | identical | identical |
+| Pico W, Mini-Unix: the whole text in one write | not measured | identical; the host was held back 6 times |
+
+Speed in the emulator (it adds both cores' cycles into one clock: compare
+the columns, not with a board): Pico 2 W V6 `time od /rkunix` real 29.0 s
+before and after (user 29.0 s against 28.5, sys 0.7 against 1.1), bench loop 1,042,859 instructions/s (1,044,475 before);
+Pico W bench loop 693,155 (709,540 before), Mini-Unix `od /rkmx` user 16.9 s.
+No clock ticks dropped. DFKAA, DFKAB and DFKAC end the same on the Pico 2 W
+build, with the same state checksums.
+
+A board run still has to show: the paste itself from a real terminal at
+full speed, `time od` three times with no ticks dropped, the bench loop, the
+longest USB gap, and the diagnostic ladder.
