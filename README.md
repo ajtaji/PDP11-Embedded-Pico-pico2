@@ -20,7 +20,7 @@ The emulated machine has a console on the USB serial port, an RK11 disk controll
 | Kernel booted | `rkunix` | `rkmx` |
 | Memory management | on | off (Mini-Unix does not use it; the stats block says `MMU off (16-bit)`) |
 | PDP-11 memory | 56 KB (000000-157777) plus the I/O page | 56 KB (000000-157777) plus the I/O page |
-| Speed, measured on the boards (Pico 2 W 2026-10-04, Pico W 2026-10-03) | about 675,000 PDP-11 instructions per second under V6 (`od /rkunix` in 13.8 s); about 2,480,000 with memory management off | about 1,010,000 under Mini-Unix (`od /rkmx` in 5.9 s); about 2,590,000 on the bench loop |
+| Speed, measured on the boards (Pico 2 W 2026-10-04, Pico W 2026-10-04) | about 675,000 PDP-11 instructions per second under V6 (`od /rkunix` in 13.8 s); about 2,480,000 with memory management off | about 1,020,000 under Mini-Unix (`od /rkmx` in 5.9 s); about 2,550,000 on the bench loop |
 | Console ready after port open | `#` after 3.4 s | `#` after 3.2 s |
 | RAM for writes | 112-block swap RAM disk plus 38 blocks for file-system writes | 124 blocks shared by swap and file writes |
 | Flash images | `combined.uf2` (one file) | `firmware.uf2` then `minix.uf2` (two files) |
@@ -75,10 +75,9 @@ The full walk-through, with the console boot commands, setting the date and re-f
 ## Pasting text
 
 Text pasted into the terminal arrives all at once, far faster than any
-terminal of the time could send. Measured in the emulator with a 35-line,
-620-character C program pasted into `cat >pn.c` (2026-10-04), the firmware
-in `images/pico2w-v6/` and `images/picow-mini-unix/` loses most of it, in
-two places:
+terminal of the time could send. With the firmware before 2026-10-04 a
+35-line, 620-character C program pasted into `cat >pn.c` lost most of its
+text (measured in the emulator on the Pico 2 W build, V6), in two places:
 
 - **In the USB serial library.** It keeps 256 characters and the console
   queue another 256. A paste longer than that overflowed the library's ring:
@@ -93,8 +92,7 @@ two places:
   with 4 bytes of 620 (131 at a line every 20 ms). At a line every 50 ms or
   slower the file was complete.
 
-The source in this repository fixes both, and the builds in
-`images/untested/` (see its README) carry the fix:
+Both are fixed in the source:
 
 - **The receiver has a pace.** The next character is given to the PDP-11
   2000 instructions after the last one was read, or at once when the
@@ -103,9 +101,17 @@ The source in this repository fixes both, and the builds in
   accepting USB packets, the host waits and sends again. This is USB's own
   flow control: nothing to set in the terminal.
 
-With both, the same paste is byte for byte identical however fast the host
-sends it (emulator, both builds; the stats block, Ctrl-] then `s`, has a
-`typed` line with the counts). These builds have not run on a board yet.
+**Measured on a Pico W** (Mini-Unix, `images/picow-mini-unix/firmware.uf2`,
+2026-10-04): the same program sent in one write, and at 1000, 300, 100, 30
+and 10 characters a second, read back with `od -c`: the file is byte for
+byte identical every time (620 of 620). In the one-write case the host was
+held back 3 times; every character sent was read by the PDP-11 and none was
+lost. The stats block (Ctrl-] then `s`) has a `typed` line with these
+counts.
+
+**The Pico 2 W build with the fix has run only in the emulator** (identical
+in one write); it is in `images/untested/pico2w-v6-paste/` and the board
+image in `images/pico2w-v6/` does not have the fix yet.
 
 What remains is Unix's own, on any PDP-11:
 
@@ -116,6 +122,8 @@ What remains is Unix's own, on any PDP-11:
   `stty`.
 - While the terminal is in upper-case mode (the images' default) capitals
   are stored as lower case. `stty -lcase` first.
+- On the Pico W the RAM for disk writes is small (Known limits, below): a
+  session of about ten commands fills it, whatever was pasted.
 
 ## PSRAM boards (untested on hardware)
 

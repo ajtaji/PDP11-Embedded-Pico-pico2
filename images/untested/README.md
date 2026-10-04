@@ -6,8 +6,8 @@ Do not treat them as ready to flash until one has run on the board it names.
 
 | Board | File | Size | SHA-256 |
 |---|---|---|---|
-| Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM ([6130](https://www.adafruit.com/product/6130)) | `feather/combined.uf2` | 9,379,328 | `95e9f12129c7fdf3493b4f8aef0d892ddfe9df48a4e90031aa2226e7e4bbc89d` |
-| Pimoroni Pico Plus 2 ([PIM724](https://shop.pimoroni.com/products/pimoroni-pico-plus-2)) and Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w), Adafruit [6243](https://www.adafruit.com/product/6243)) | `picoplus2/combined.uf2` | 9,379,328 | `a30f10d55cec1b6393ab08e2eeba25c70039dd2212d78a6db0fead09483c4ca9` |
+| Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM ([6130](https://www.adafruit.com/product/6130)) | `feather/combined.uf2` | 9,381,376 | `96bc062b94eb5f2607238672f324d76ab36b1d12285df0b4e14127decf115981` |
+| Pimoroni Pico Plus 2 ([PIM724](https://shop.pimoroni.com/products/pimoroni-pico-plus-2)) and Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w), Adafruit [6243](https://www.adafruit.com/product/6243)) | `picoplus2/combined.uf2` | 9,381,376 | `658904fae1445e2052c9ca434d15ef95b3d5a918a663ce83bdee6340b5e54b58` |
 
 | | Feather RP2350 | Pico Plus 2 / Plus 2 W |
 |---|---|---|
@@ -65,46 +65,32 @@ python tools/psram_desk_check.py --arm-run arm_run.exe --image build_picoplus2/d
 ```
 
 Each build writes `build_<board>/combined.uf2` (and the firmware and the desk
-image beside it). With PureMetal Forge main `f408822d` this reproduces both
+image beside it). With PureMetal Forge main `b9b70ed1` this reproduces both
 files here byte for byte. The desk check needs an `arm_run` with the PSRAM
 model (`psram=`, `flash=`).
 
-Both files were rebuilt on 2026-10-04 with PureMetal Forge main `f408822d`
-and the Pico 2's dispatch tails in assembly (`#ASM_TAILS = 1`), and pass the
-desk check again, 6 of 6 cases each.
-The two PSRAM files are builds of commit `1dc0592`: they do not have the
-paste fix below yet.
+Both files were rebuilt on 2026-10-04 with PureMetal Forge main `b9b70ed1`,
+with the Pico 2's dispatch tails in assembly and the paste fix (the README's
+Pasting text section), and pass the desk check again, 6 of 6 cases each.
 
-## Paste fix builds - RUN ONLY IN THE EMULATOR
+## Pico 2 W with the paste fix - RUN ONLY IN THE EMULATOR
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `pico2w-v6-paste/combined.uf2` | 5,267,456 | `c2a71a9715cdebd432a9b07b9b5e78fa8e38a9e5e39f4e0b95aeac4cb1c387df` |
-| `picow-mini-unix-paste/firmware.uf2` | 272,896 | `7c7d1b5a6561e72f899450926aeec46a120886dc535dc5a619875d05abdf375e` |
+| `pico2w-v6-paste/combined.uf2` | 5,267,456 | `4d50e25227baa32e39bd5e26a2f25c33f9f92d2fe61acfd56c66035ef3c06f6a` |
 
-**Neither file has run on a board.** They are the Pico 2 W and Pico W
-firmware with the console's receive pace and USB receive flow control (the
-README's Pasting text section), built with a PureMetal Forge whose
-`usb_serial` library has `UsbSerialRxHold()` (later than main `f408822d`).
-The Pico W file goes with `../picow-mini-unix/minix.uf2`, unchanged.
+**This file has not run on a Pico 2 W.** It is the Pico 2 W firmware built
+from the current source (the console's receive pace and USB receive flow
+control) with PureMetal Forge main `b9b70ed1`. The same change on the
+Pico W has run on its board and is in `../picow-mini-unix/`.
 
-In the PureMetal ARM emulator, pasting the 620-character test program into
-`cat >pn.c`:
+In the PureMetal ARM emulator: the 620-character test program pasted into
+`cat >pn.c` in one write is byte for byte identical (the board image in
+`../pico2w-v6/` keeps 4 of 620 bytes in the same test); V6 `time od
+/rkunix` real 30.0 s, user 28.7 s (29.0 and 28.5 before the fix); bench loop 1,044,093 instructions/s; no clock ticks dropped. (The
+emulator adds both cores' cycles into one clock: compare its figures with
+each other, not with a board.)
 
-| | board images (`1dc0592`) | these builds |
-|---|---|---|
-| Pico 2 W, V6: the whole text in one write | 4 of 620 bytes in the file | identical; the host was held back 4 times |
-| Pico 2 W, V6: a line every 20 ms | 131 of 620 | identical |
-| Pico 2 W, V6: a line every 50 ms or slower | identical | identical |
-| Pico W, Mini-Unix: the whole text in one write | not measured | identical; the host was held back 6 times |
-
-Speed in the emulator (it adds both cores' cycles into one clock: compare
-the columns, not with a board): Pico 2 W V6 `time od /rkunix` real 29.0 s
-before and after (user 29.0 s against 28.5, sys 0.7 against 1.1), bench loop 1,042,859 instructions/s (1,044,475 before);
-Pico W bench loop 693,155 (709,540 before), Mini-Unix `od /rkmx` user 16.9 s.
-No clock ticks dropped. DFKAA, DFKAB and DFKAC end the same on the Pico 2 W
-build, with the same state checksums.
-
-A board run still has to show: the paste itself from a real terminal at
-full speed, `time od` three times with no ticks dropped, the bench loop, the
+A board run still has to show: the paste from a real terminal at full
+speed, `time od` three times with no ticks dropped, the bench loop, the
 longest USB gap, and the diagnostic ladder.

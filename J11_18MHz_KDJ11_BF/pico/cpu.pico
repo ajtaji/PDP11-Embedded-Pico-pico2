@@ -1684,17 +1684,6 @@ ProcedureRAM StartWindow()
       RunLeft = Tmp
     EndIf
   EndIf
-  If Dl11RxDone = 0                      ; a typed character is waiting for its
-    If ConInHead <> ConInTail            ; moment (THE RECEIVER'S PACE)
-      Tmp = Dl11RxDue - InstrCount
-      If Tmp < 1
-        Tmp = 1
-      EndIf
-      If Tmp < RunLeft
-        RunLeft = Tmp
-      EndIf
-    EndIf
-  EndIf
   If IntReq
     If (PswHigh & $E0) < IntLevel()
       RunLeft = 1

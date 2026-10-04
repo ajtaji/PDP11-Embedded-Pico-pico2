@@ -52,13 +52,15 @@ works; use `df /dev/rk0` (plain `df` looks for V6's built-in `/dev/rk2` and
 `/dev/rp0`). V6's `dc` is too large for the 56 KB machine.
 
 The PSRAM boards' images, not yet run on a board, are in
-[untested/](untested/README.md).
+[untested/](untested/README.md). So is this Pico 2 W image with the paste
+fix (the README's Pasting text section), which has run only in the
+emulator: `untested/pico2w-v6-paste/`.
 
 ## Pico W (RP2040): Mini-Unix
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `picow-mini-unix/firmware.uf2` | 270,848 | `479f3db8145e457f4297d588e59c9a0243bafcbd8fbb9fe55ded203e19914f3d` |
+| `picow-mini-unix/firmware.uf2` | 272,384 | `2cb43b80e71222e7bc832495a43db5d92129b3ee1f85a95681c74eb3df1173b7` |
 | `picow-mini-unix/minix.uf2` | 3,167,232 | `de8bb8dc541f17e25b38097f7b0063cdb0f11d7ff28a81eb8a1fb0e75460f55a` |
 
 **Flash these as two separate copies**, firmware first, then the pack, each
@@ -68,14 +70,18 @@ the Mini-Unix pack (`../mini-unix.rk05`, 3,061 blocks, mapped) so it fits
 the Pico W's flash. It boots `rkmx` by itself; `#` 3.2 s after the port
 opened on a Pico W. Mini-Unix runs with memory management off (the stats
 block says `MMU off (16-bit)`). `time od /rkmx >/dev/null` takes real 6.0 s,
-user 5.5 s on a Pico W, timed from the host 5.94 s a run (7.09 s before the
+user 5.4 s on a Pico W, timed from the host 5.90 s a run (7.09 s before the
 compiler's code generation pass of 2026-10-03 and the dispatch tails in
 assembly, 8.09 s before the MOV handlers by addressing mode, 8.64 s before
 the speed pass of 2026-10-03). The memory-management-off bench loop runs at
-2,587,000 instructions/s (2,048,000 before). No clock ticks are dropped and
-the longest gap between USB services is 332 us. Built with PureMetal Forge
-main `f408822d`, with `#ASM_TAILS = 1` in `pico/instructions.pico`; the DEC
-diagnostics DFKAA, DFKAB and DFKAC pass on the board with this file.
+2,548,000 instructions/s (2,587,000 before the paste fix of 2026-10-04,
+2,048,000 before the compiler pass). No clock ticks are dropped and the
+longest gap between USB services is 331 us. Built with PureMetal Forge main
+`b9b70ed1`, with `#ASM_TAILS = 1` in `pico/instructions.pico`; the DEC
+diagnostics DFKAA, DFKAB and DFKAC pass on the board with this file. Text
+pasted into the terminal arrives whole (the README's Pasting text section):
+a 620-character program was byte for byte identical sent in one write and
+at every rate from 10 to 1000 characters a second.
 
 Known: the RAM for disk writes (124 blocks, shared with swap) fills after a
 few commands; when it does, the console says so once and Unix sees a disk

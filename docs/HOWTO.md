@@ -110,11 +110,12 @@ Both systems print in capitals: their terminal setting assumes an upper-case-onl
 
 ### Pasting text
 
-Pasting a file into `cat >name` loses characters with the board images
-here, and is fixed in the builds in `images/untested/`: see
+A file can be pasted into `cat >name` at any speed on the Pico W image: see
 [Pasting text](../README.md#pasting-text) in the README for what was
 measured and what Unix itself still limits (`#`, `@`, capitals, lines over
-255 characters). With either build, `stty -lcase` first keeps capitals.
+255 characters). `stty -lcase` first keeps capitals. The Pico 2 W board
+image does not have this fix yet (the build that does is in
+`images/untested/`).
 
 ### Set the date and time
 
@@ -204,12 +205,13 @@ Under Git Bash on Windows, put `MSYS_NO_PATHCONV=1` in front of any command with
 ## 8. Build the firmware and images with PureMetal Forge
 
 You need Python 3 and the PureMetal compiler (`PureMetalForge.exe`), the
-release build from compiler main `f408822d` or later: the firmware keeps the
+release build from compiler main `b9b70ed1` or later: the firmware keeps the
 lazy N/Z flags in r4 (`#RESERVE_MORE = 1` in `cpu.pico(2)`), and the
 dispatch tails are assembly blocks that name the reserved registers
 (`ASM Uses`; `#ASM_TAILS = 1` in `pico/instructions.pico` and in
-`pico2/cpu.pico2`), which that release has. With `#ASM_TAILS = 0` the
-sources also build with `dbaab248`. From the repository root:
+`pico2/cpu.pico2`) and asks the USB serial library for receive flow control
+(`#USB_RX_HOLD = 1` in `diag.pico(2)`), which that release has. From the
+repository root:
 
 **Pico 2 W, V6** (`images/pico2w-v6/combined.uf2`):
 
@@ -242,15 +244,14 @@ python ../../tools/rk_image.py pack ../../mini-unix.rk05 --chip pico --name mini
 ```
 
 The compiler's output is the same byte for byte from the same source and
-the same compiler. The files in `images/pico2w-v6/` and
-`images/picow-mini-unix/` are builds of commit `1dc0592` with main
-`f408822d`; compare with the SHA-256 values in `images/README.md`. The
-source since then asks the USB serial library for receive flow control
-(`#USB_RX_HOLD = 1` in `diag.pico(2)`, see Pasting text), which needs a
-PureMetal Forge later than `f408822d`; set it to 0 to build with
-`f408822d`. The firmware's defaults (`#DISK_BACKEND = 2`,
-`#DISK_READ_ONLY = 1`, `#DESK_PROBE = 0` at the top of `diag.pico(2)`) are
-the ones the images use.
+the same compiler. With main `b9b70ed1` the Pico W lines reproduce
+`images/picow-mini-unix/firmware.uf2`; compare with the SHA-256 values in
+`images/README.md`. The Pico 2 W lines give
+`images/untested/pico2w-v6-paste/combined.uf2`, which has run only in the
+emulator: `images/pico2w-v6/combined.uf2` is the build of commit `1dc0592`
+with main `f408822d`, the last one run on a Pico 2 W. The firmware's
+defaults (`#DISK_BACKEND = 2`, `#DISK_READ_ONLY = 1`, `#DESK_PROBE = 0` at
+the top of `diag.pico(2)`) are the ones the images use.
 
 To try an image on the desk emulator instead of a board, add
 `--desk desk.bin` to the `rk_image.py` line and run `desk.bin` in the
