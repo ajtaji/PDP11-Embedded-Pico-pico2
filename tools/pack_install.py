@@ -343,6 +343,10 @@ def main():
     if a.probe:
         top = max(regions)
         off = top + len(regions[top]) - SECTOR
+        if " PACK " in b.ask("S %X" % top, "S"):
+            say("the highest region already holds a pack: the first-write test is for a board with "
+                "nothing installed, and was not run. Nothing was changed.")
+            return 0
         say("test sector at 0x%06X: %s" % (off, b.ask("T %X" % off, "T", 30)[5:]))
         return 0
 

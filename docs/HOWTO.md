@@ -302,7 +302,7 @@ The Pimoroni Pico Plus 2 W and the Adafruit Feather RP2350 HSTX run V6 with 248 
    python tools/pack_install.py --board picoplus2 --image images/picoplus2/combined.uf2 --hub-port 9 --compiler PureMetalForge.exe --probe
    ```
 
-   It builds the installer (`pico2/packinstall.pico2`), uploads it through the compiler, and prints the chip (`JEDEC ID EF 40 18 ... 16 MB; size measured by address wrap: 16 MB`) and `test sector at 0x4B4000: programmed, read back the same, erased again, reads blank`. The installer needs `FlashJedecIdRead()` in the compiler's `RP2350/Lib/flashid.pico2`.
+   It builds the installer (`pico2/packinstall.pico2`), uploads it through the compiler, and prints the chip (`JEDEC ID EF 40 18 ... 16 MB; size measured by address wrap: 16 MB`) and `test sector at 0x4B4000: programmed, read back the same, erased again, reads blank`. The installer needs PureMetal Forge main `0d2b796dd` or later (`FlashJedecIdRead()` in `RP2350/Lib/flashid.pico2`).
 2. Send the packs (the installer is running, so no `--compiler`):
 
    ```

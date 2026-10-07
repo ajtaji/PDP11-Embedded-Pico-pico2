@@ -26,7 +26,8 @@
 ;    T off                  test one sector at off, before anything else is
 ;                           written to a board for the first time: a pattern
 ;                           is programmed, read back and compared, and the
-;                           sector erased again and checked blank
+;                           sector erased again and checked blank. Refused
+;                           unless the sector is erased to begin with
 ;    S off                  what the flash holds at offset off (see below)
 ;    B off len a b          begin a region: len bytes at off, whose checksum
 ;                           will be a b. The region's first sector is
@@ -464,8 +465,8 @@ Procedure DoTest()
   If RegionOk(off, #PI_SECTOR) = 0
     ProcedureReturn
   EndIf
-  If Kind(off) = 1 Or Kind(off) = 2
-    No("that sector holds a pack's header or a transfer's mark; the test would destroy it. Test a sector that holds no pack.")
+  If SectorBlank(off) = 0
+    No("that sector is not erased: it holds data (a pack already installed?) and the test would destroy it. The test is for a board's first write; nothing was changed.")
     ProcedureReturn
   EndIf
   For i = 0 To #PI_SECTOR - 4 Step 4
@@ -488,9 +489,6 @@ Procedure DoTest()
     ProcedureReturn
   EndIf
   Say("OK T ") : Hex8(off)
-  If r = 2
-    Say(" erased first,")
-  EndIf
   Say(" programmed, read back the same, erased again, reads blank") : Eol()
 EndProcedure
 
