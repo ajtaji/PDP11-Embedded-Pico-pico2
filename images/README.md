@@ -1,5 +1,7 @@
 # Ready-to-flash Unix images
 
+**Read this first (2026-10-07).** The files here were built before the packs moved in the flash. They are complete and consistent in themselves (each UF2 carries its own firmware and its own packs, at 0x10040000 and 0x102C0000), and each ran as described below. The source in this repository now puts the packs at 0x10240000 and 0x104C0000, clear of the region a radio's firmware is kept in (`J11_18MHz_KDJ11_BF/pico2/flash_layout.pico2`), and has 22-bit memory on the PSRAM boards; `tools/pack_install.py` of the current source refuses these files and says why. Images of the current source have not been put here yet: the Feather has run that source, the Pimoroni and the Pico 2 W build have not. Build one with `tools/psram_build.py` (PSRAM boards) or the lines of HOWTO section 8.
+
 Each board **powers up into Unix**: the firmware boots the disk pack by
 itself and Unix's `#` prompt appears with no typing. Press **Esc** within
 2 s of the `auto-boot:` line to stay in the diagnostic console instead.

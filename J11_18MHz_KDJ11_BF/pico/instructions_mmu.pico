@@ -2255,6 +2255,150 @@ InstructionBITB_13_IRM:           ; 1327DD  BITB #n,Rd, the source an immediate
   NextNativeTrapM()
 
 ; ======================================================================
+;  REGISTER SOURCE, MEMORY DESTINATION - OP Rs,(Rd)  OP Rs,(Rd)+  OP Rs,X(Rd)
+;  and every other form whose source is a register and whose destination
+;  is not. On the J-11 the source register is read AFTER the destination's
+;  address has been worked out, so:
+;    OP R,(R)+  OP R,-(R)  OP R,@(R)+  OP R,@-(R)   the source is R already
+;                                                   stepped by the destination
+;    OP PC,X(R)  OP PC,@X(R)  OP PC,A  OP PC,@A     the source is the address
+;                                                   of the instruction + 4
+;  (KDJ11-A CPU Module User's Guide EK-KDJ1A-UG-002, appendix B, table B-1,
+;  items 1, 2 and 3, page B-2: the KDJ11-A is in the 11/23's row, not the
+;  11/44's or the 11/70's. The DCF11-AA CPU diagnostic CJKDBD0 tests the
+;  same row in its tests 264 to 267 and 271 to 274.) The general handlers
+;  above read the source first, which is the same thing for every other
+;  pair of modes, so the table sends these forms here and the general
+;  handlers never see them. Everything else is the general handler's, line
+;  for line; with neither mode to test, these are also the shorter path.
+; ======================================================================
+InstructionMOV_01_RMM:            ; 010SDD  MOV Rs,memory
+  PcOutM()
+  Ea = EaWordM(Op & $3F)
+  Src = Reg((Op >> 6) & 7)
+  MMWriteWord(Ea, Src)
+  FlagNZ = Src
+  FlagV = 0
+  NextSyncedM()
+
+InstructionCMP_02_RMM:            ; 020SDD  CMP Rs,memory
+  PcOutM()
+  Ea = EaWordM(Op & $3F)
+  Src = Reg((Op >> 6) & 7)
+  MMReadWord(Dst, Ea)
+  Res = Src - Dst
+  FlagC = Res
+  FlagV = (Src ! Dst) & (Src ! Res)
+  FlagNZ = Res & $FFFF
+  NextSyncedM()
+
+InstructionBIT_03_RMM:            ; 030SDD  BIT Rs,memory
+  PcOutM()
+  Ea = EaWordM(Op & $3F)
+  Src = Reg((Op >> 6) & 7)
+  MMReadWord(Dst, Ea)
+  FlagNZ = Src & Dst
+  FlagV = 0
+  NextSyncedM()
+
+InstructionBIC_04_RMM:            ; 040SDD  BIC Rs,memory
+  PcOutM()
+  Ea = EaWordM(Op & $3F)
+  Src = Reg((Op >> 6) & 7)
+  MMReadWord(Res, Ea)
+  Res = Res & ~Src & $FFFF
+  MMWriteWord(Ea, Res)
+  FlagNZ = Res
+  FlagV = 0
+  NextSyncedM()
+
+InstructionBIS_05_RMM:            ; 050SDD  BIS Rs,memory
+  PcOutM()
+  Ea = EaWordM(Op & $3F)
+  Src = Reg((Op >> 6) & 7)
+  MMReadWord(Res, Ea)
+  Res = Res | Src
+  MMWriteWord(Ea, Res)
+  FlagNZ = Res
+  FlagV = 0
+  NextSyncedM()
+
+InstructionADD_06_RMM:            ; 060SDD  ADD Rs,memory
+  PcOutM()
+  Ea = EaWordM(Op & $3F)
+  Src = Reg((Op >> 6) & 7)
+  MMReadWord(Dst, Ea)
+  Res = Src + Dst
+  MMWriteWord(Ea, Res)
+  FlagC = Res
+  FlagV = ~(Src ! Dst) & (Src ! Res)
+  FlagNZ = Res & $FFFF
+  NextSyncedM()
+
+InstructionSUB_16_RMM:            ; 160SDD  SUB Rs,memory
+  PcOutM()
+  Ea = EaWordM(Op & $3F)
+  Src = Reg((Op >> 6) & 7)
+  MMReadWord(Dst, Ea)
+  Res = Dst - Src
+  MMWriteWord(Ea, Res)
+  FlagC = Res                ; borrow
+  FlagV = (Src ! Dst) & (Dst ! Res)
+  FlagNZ = Res & $FFFF
+  NextSyncedM()
+
+InstructionMOVB_11_RMM:           ; 110SDD  MOVB Rs,memory
+  PcOutM()
+  Ea = EaByteM(Op & $3F)
+  Src = Reg((Op >> 6) & 7) & $FF
+  MMWriteByte(Ea, Src)
+  FlagNZ = Src << 8
+  FlagV = 0
+  NextSyncedM()
+
+InstructionCMPB_12_RMM:           ; 120SDD  CMPB Rs,memory
+  PcOutM()
+  Ea = EaByteM(Op & $3F)
+  Src = Reg((Op >> 6) & 7) & $FF
+  MMReadByte(Dst, Ea)
+  Res = Src - Dst
+  FlagC = Res << 8
+  FlagV = ((Src ! Dst) & (Src ! Res)) << 8
+  FlagNZ = (Res & $FF) << 8
+  NextSyncedM()
+
+InstructionBITB_13_RMM:           ; 130SDD  BITB Rs,memory
+  PcOutM()
+  Ea = EaByteM(Op & $3F)
+  Src = Reg((Op >> 6) & 7) & $FF
+  MMReadByte(Dst, Ea)
+  FlagNZ = (Src & Dst) << 8
+  FlagV = 0
+  NextSyncedM()
+
+InstructionBICB_14_RMM:           ; 140SDD  BICB Rs,memory
+  PcOutM()
+  Ea = EaByteM(Op & $3F)
+  Src = Reg((Op >> 6) & 7) & $FF
+  MMReadByte(Res, Ea)
+  Res = Res & ~Src & $FF
+  MMWriteByte(Ea, Res)
+  FlagNZ = Res << 8
+  FlagV = 0
+  NextSyncedM()
+
+InstructionBISB_15_RMM:           ; 150SDD  BISB Rs,memory
+  PcOutM()
+  Ea = EaByteM(Op & $3F)
+  Src = Reg((Op >> 6) & 7) & $FF
+  MMReadByte(Res, Ea)
+  Res = Res | Src
+  MMWriteByte(Ea, Res)
+  FlagNZ = Res << 8
+  FlagV = 0
+  NextSyncedM()
+
+; ======================================================================
 ;  THE SLOW WAY OUT OF AN INSTRUCTION - a trap to take, or a HALT. The
 ;  handlers' own tails send any instruction that left TrapVector set here,
 ;  and HALT comes here always, because this is the only place that looks
@@ -2477,6 +2621,24 @@ BuildTableM:
   OpTableM($12B8) = ?InstructionMOVB_11_IRM
   OpTableM($14B8) = ?InstructionCMPB_12_IRM
   OpTableM($16B8) = ?InstructionBITB_13_IRM
+  ; ---- register source, memory destination (the handlers' header says why):
+  ; every source register, R7 too, and destination modes 1 to 7 ----
+  For FillFromM = 0 To 7
+    For FillCountM = 1 To 7
+      OpTableM($0200 | (FillFromM << 3) | FillCountM) = ?InstructionMOV_01_RMM
+      OpTableM($0400 | (FillFromM << 3) | FillCountM) = ?InstructionCMP_02_RMM
+      OpTableM($0600 | (FillFromM << 3) | FillCountM) = ?InstructionBIT_03_RMM
+      OpTableM($0800 | (FillFromM << 3) | FillCountM) = ?InstructionBIC_04_RMM
+      OpTableM($0A00 | (FillFromM << 3) | FillCountM) = ?InstructionBIS_05_RMM
+      OpTableM($0C00 | (FillFromM << 3) | FillCountM) = ?InstructionADD_06_RMM
+      OpTableM($1200 | (FillFromM << 3) | FillCountM) = ?InstructionMOVB_11_RMM
+      OpTableM($1400 | (FillFromM << 3) | FillCountM) = ?InstructionCMPB_12_RMM
+      OpTableM($1600 | (FillFromM << 3) | FillCountM) = ?InstructionBITB_13_RMM
+      OpTableM($1800 | (FillFromM << 3) | FillCountM) = ?InstructionBICB_14_RMM
+      OpTableM($1A00 | (FillFromM << 3) | FillCountM) = ?InstructionBISB_15_RMM
+      OpTableM($1C00 | (FillFromM << 3) | FillCountM) = ?InstructionSUB_16_RMM
+    Next
+  Next
   OpTableReadyM = 1
   Goto RunStartM
 EndProcedure

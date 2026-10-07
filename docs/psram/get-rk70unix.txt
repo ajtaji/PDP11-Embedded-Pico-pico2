@@ -1,0 +1,9 @@
+# The 22-bit kernel off the board: run right after build-rk70unix.txt on the same running system
+# (no upload or reset in between). tools/od2bin.py rebuilds /rk70unix from this session's transcript.
+!boot
+!timeout 280
+stty -lcase
+ls -l /rk70unix
+sum /rk70unix
+od /rk70unix
+sum /rk70unix

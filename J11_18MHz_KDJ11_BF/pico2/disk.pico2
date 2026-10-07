@@ -33,10 +33,12 @@
 ;  ======================================================================
 ;  THE FLASH PACK (#DISK_BACKEND = 2)
 ;
-;  WHERE. A region of the board's flash from #DISK_REGION (256 KB in; the
-;  firmware below it) to the end of the chip: 2 MB on the Pico W, 4 MB on
-;  the Pico 2 W. tools/rk_image.py packs an image into a UF2 for exactly
-;  this place. The region is:
+;  WHERE. A region of the board's flash from #DISK_REGION = #FL_RK0
+;  (flash_layout.pico2: $240000, above the program and above the region a
+;  radio's firmware is kept in, which the PDP-11 never uses) to the end of
+;  the chip, 4 MB on the Pico 2 W; on the boards with more flash RK1's
+;  region follows RK0's. tools/rk_image.py packs an image into a UF2 for
+;  exactly this place. The region is:
 ;      +0      one 4 KB header sector: "PDP11RK1", version, layout, the
 ;              blocks stored, the map's size, a name (rk_image.py)
 ;      +4 KB   (the mapped layout only) the block map: one 16-bit entry
@@ -270,7 +272,8 @@ CompilerIf #DISK_BACKEND = 2
 #DK_SLICE_US  = 300              ; the longest a slice keeps the flash out of XIP (plus the suspend)
 #DK_MAX_SLICES = 4000            ; 1.2 s of slices on one operation: the flash has failed
 #FLASH_BYTES  = #FLASH_CHIP      ; the main file's: 4 MB on the Pico 2 W, 8 MB on the Feather RP2350
-#DISK_REGION  = $40000           ; 256 KB in: the firmware lives below
+XIncludeFile "flash_layout.pico2"
+#DISK_REGION  = #FL_RK0          ; RK0's pack: the one place for the flash addresses is flash_layout.pico2
 #DK_SECTOR    = 4096
 #DK_LINES     = 4                ; the write cache: 4 x 4 KB
 #DK_IDLE_US   = 2000000          ; a line untouched this long goes back to flash

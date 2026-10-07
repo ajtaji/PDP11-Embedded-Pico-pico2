@@ -349,8 +349,18 @@ def specialise(text):
     hs, fill = "", "  ; ---- MOV by addressing mode (tools/mmu_gen.py, MOV_PAIRS) ----\n"
     for sm, dm in MOV_PAIRS:
         name = "InstructionMOV_01_M%d%dM" % (sm, dm)
+        if sm == 0:
+            # a register source is read AFTER the destination's address is worked out
+            # (instructions.pico, REGISTER SOURCE, MEMORY DESTINATION): before the one store
+            if DST_CODE[dm].count("  MMWriteWordE(") != 1:
+                fail("specialise: destination mode %d stores in more than one place; a register "
+                     "source cannot be placed before 'the' store. Teach tools/mmu_gen.py." % dm)
+            k = DST_CODE[dm].index("  MMWriteWordE(")
+            body = DST_CODE[dm][:k] + SRC_CODE[0] + DST_CODE[dm][k:]
+        else:
+            body = SRC_CODE[sm] + DST_CODE[dm]
         hs += ("%s:            ; MOV, source mode %d, destination mode %d\n  PcOutM()\n" % (name, sm, dm)
-               + SRC_CODE[sm] + DST_CODE[dm] + "  FlagNZ = Src\n  FlagV = 0\n  NextSyncedM()\n\n")
+               + body + "  FlagNZ = Src\n  FlagV = 0\n  NextSyncedM()\n\n")
         regs = range(7) if sm == 2 else range(8)          # (R7)+ is an immediate: the general handler
         for sr in regs:
             fill += "  OpTableM($%04X) = ?%s\n" % (0x200 | sm << 6 | sr << 3 | dm, name)

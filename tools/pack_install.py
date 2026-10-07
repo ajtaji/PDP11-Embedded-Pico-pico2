@@ -10,7 +10,9 @@ over USB serial, with no boot drive and no button.
                                  [--status] [--sums] [--probe]
 
 WHY. The compiler's uploader writes the firmware; the packs live in the
-flash above the first 256 KB (RK0 from 0x10040000, RK1 from 0x102C0000) and
+flash at the places J11_18MHz_KDJ11_BF/pico2/flash_layout.pico2 gives (RK0
+from 0x10240000, RK1 from 0x104C0000; this tool reads that file through
+tools/flash_layout.py, and the installer is compiled with it) and
 a firmware upload leaves them alone. This tool gets them there:
 
   1. with --compiler it builds the installer program
@@ -65,10 +67,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 SRC = os.path.join(REPO, "J11_18MHz_KDJ11_BF", "pico2")
 XIP = 0x10000000
-KEEP = 0x40000
+sys.path.insert(0, HERE)
+import flash_layout
+KEEP = flash_layout.PACKS    # below it: the programs, and the region kept for a radio's firmware
 SECTOR = 4096
 BOARDS = {"feather": 0x800000, "picoplus2": 0x1000000}     # the flash chip's size
-NAMES = {0x40000: "rk0", 0x2C0000: "rk1"}
+NAMES = {flash_layout.RK0: "rk0", flash_layout.RK1: "rk1"}
 PHRASE = b"ResetPicoToBootSel1254"
 USB_IDS = ("VID_2E8A", "VID_239A")
 FLASH_LINE = "#PI_FLASH_CHIP = $400000 "
@@ -97,7 +101,9 @@ def sum_text(ab):
 
 
 def regions_of(path, flash):
-    """{offset: bytes} for every run of the UF2 that lies above the first 256 KB."""
+    """{offset: bytes} for every pack region of the UF2 (flash_layout.PACKS and above).
+    An image with a pack anywhere else, or with anything in the region kept for a
+    radio's firmware, is refused whole."""
     raw = open(path, "rb").read()
     if len(raw) % 512 or not raw:
         fail("%s is %d bytes, not a whole number of 512-byte UF2 blocks. Give the combined.uf2 "
@@ -108,6 +114,13 @@ def regions_of(path, flash):
         if m0 != 0x0A324655 or m1 != 0x9E5D5157 or n != 256 or addr % 256:
             fail("%s: block %d is not a 256-byte UF2 page. Check the file." % (path, i // 512))
         pages[addr - XIP] = raw[i + 32:i + 32 + 256]
+    for off in sorted(pages):
+        if flash_layout.touches_radio(off, 256):
+            fail("%s: %s Nothing was sent." % (path, flash_layout.check_region(off, 256, "the image's data")))
+        if off < KEEP and off % SECTOR == 0 and pages[off][:8] == b"PDP11RK1":
+            fail("%s: %s This is an image of the old layout (packs from 0x10040000); build it again with "
+                 "tools/psram_build.py. Nothing was sent."
+                 % (path, flash_layout.check_region(off, SECTOR, "a pack")))
     out = {}
     start = None
     for off in sorted(pages):
@@ -132,7 +145,7 @@ def regions_of(path, flash):
             fail("%s: the region at 0x%X does not start with a pack header. Check the file." % (path, off))
         out[off] = data
     if not out:
-        fail("%s holds nothing above the first 256 KB: there is no pack in it." % path)
+        fail("%s holds nothing at 0x%08X or above: there is no pack in it." % (path, XIP + KEEP))
     return out
 
 
@@ -214,8 +227,9 @@ def upload_installer(a, flash, port):
         fail("the compiler did not build and upload the installer (exit %d):\n  %s"
              % (r.returncode, "\n  ".join(tail)))
     size = os.path.getsize(out)
-    if size >= KEEP:
-        fail("the installer image is %d bytes; it must stay under the first 256 KB it protects." % size)
+    if size >= flash_layout.RADIO_LO:
+        fail("the installer image is %d bytes; it must stay below 0x%08X, where the region kept for a "
+             "radio's firmware begins." % (size, XIP + flash_layout.RADIO_LO))
     say("installer built (%d bytes) and uploaded through the compiler" % size)
 
 

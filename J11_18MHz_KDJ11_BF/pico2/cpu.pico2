@@ -198,9 +198,9 @@ Global Dim Reg.i(8)         ; R0-R7, R6 = SP, R7 = PC. 16-bit values.
 Global Dim Mem.u(#RAM_WORDS)
 CompilerIf #PSRAM = 1                ; a board with PSRAM (psram_pdp11.pico2)
 CompilerIf #PS_MEM_UNCACHED = 1
-#PS_MEM = $15447000                  ; physical byte pa >= #RAM_BYTES is at #PS_MEM + pa: the uncached window
+#PS_MEM = $14FF2000                  ; physical byte pa >= #RAM_BYTES is at #PS_MEM + pa: the uncached window
 CompilerElse
-#PS_MEM = $11447000                  ; ... or the window through the XIP cache (psram_pdp11.pico2, THE LAYOUT)
+#PS_MEM = $10FF2000                  ; ... or the window through the XIP cache (psram_pdp11.pico2, THE LAYOUT: the memory is first in the chip)
 CompilerEndIf
 Global MemTop.i = #RAM_BYTES         ; the end of physical memory: #RAM_BYTES, or 3812 KB with the PSRAM
 Global MemLim.i = #RAM_BYTES         ; ... as the mapping in force reaches it: MemTop with 22-bit mapping,

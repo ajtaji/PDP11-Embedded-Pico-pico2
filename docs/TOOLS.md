@@ -10,7 +10,12 @@ turn `/dev/rk0` or `@/usr/...` into a Windows path).
 ## `rk_image.py` - an RK05 pack into the board's flash
 
 Turns an RK05 disk image into a UF2 that writes the flash's disk region
-(0x10040000 up), leaving the firmware alone.
+(0x10240000 up on the RP2350 boards, 0x10040000 up on the Pico W), leaving
+the firmware alone. It refuses a pack region that touches 0x10200000 to
+0x1023FFFF and a firmware that reaches it (`flash_layout.py`, below).
+`--autoboot-psram KERNEL` names the kernel the auto-boot types on a board
+whose PSRAM is working (the 22-bit `/rk70unix`); without the PSRAM the
+board types `--autoboot`'s.
 
 ```
 python tools/rk_image.py info mini-unix.rk05
@@ -37,8 +42,10 @@ python tools/rk_image.py pack IMAGE --chip pico|pico2 -o OUT.uf2
   UF2 (use it on the Pico 2 W); with `--firmware-uf2` the firmware alone as a
   UF2 (the Pico W's first file); with `--desk` a flat flash image for the
   desk emulator.
-- Limits: RK05 packs only (up to 4872 blocks); drive 0 only; the firmware
-  must be under 256 KB.
+- Limits: RK05 packs only (up to 4872 blocks); drive 0 only (RK1 as well on
+  the PSRAM boards); the firmware must stay below 0x10200000 on the RP2350
+  boards and under 256 KB on the Pico W. On the Pico 2 W a whole RK05 no
+  longer fits dense: the V6 root pack is stored mapped (2,891 blocks).
 
 ## `tape2pico.py` - a paper tape built into the firmware
 
@@ -73,6 +80,32 @@ is `media/diagnostics/ladder.txt`. `--dump` writes the bytes it would send
 into a tape image instead, for the desk emulator (see
 [the diagnostic ladder](HOWTO.md#9-run-the-diagnostic-ladder)). The whole port session is one open of the port.
 
+## `flash_layout.py` - the flash addresses, read from the firmware's own file
+
+```
+python tools/flash_layout.py
+```
+
+Prints the layout. It holds no addresses of its own: it reads
+`J11_18MHz_KDJ11_BF/pico2/flash_layout.pico2`, the file the firmware and
+the pack installer are compiled with, so the tools and a board cannot
+disagree. `rk_image.py` and `pack_install.py` take the pack regions and
+the refusals from it.
+
+## `od2bin.py` - a file typed by V6's `od` back into its bytes
+
+```
+python tools/od2bin.py TRANSCRIPT [...] -o FILE [--size BYTES] [--sum "N B"]
+```
+
+A file made on a board lives in PSRAM and is gone at the next reset. This
+rebuilds it from a session transcript holding `od FILE`, and checks it
+against what V6's own `sum FILE` printed on the board. It is meant for
+the 22-bit kernel built on a board (`docs/psram/build-rk70unix.txt`, then
+`docs/psram/get-rk70unix.txt`), to be kept as `media/unix/rk70unix`.
+**Not yet run on a board's transcript:** tested on the host only, by a
+round trip of a V6 kernel file through od's format.
+
 ## `v6fs.py` - read and change a V6 file system in a disk image
 
 Works on the Sixth Edition file system inside an RK05 image, on the host.
@@ -85,6 +118,7 @@ python tools/v6fs.py cat   IMAGE /etc/passwd
 python tools/v6fs.py mknod IMAGE /dev/rk0 b 0 0 [--mode 640] -o OUT
 python tools/v6fs.py ln    IMAGE /rkunix /unix -o OUT
 python tools/v6fs.py rm    IMAGE /unix -o OUT
+python tools/v6fs.py put   IMAGE HOSTFILE /rk70unix [--mode 755] -o OUT
 python tools/v6fs.py patch IMAGE /rkunix _nswap 112 -o OUT
 python tools/v6fs.py check IMAGE
 ```
@@ -93,6 +127,10 @@ python tools/v6fs.py check IMAGE
   minor number; `ln` adds a name for an existing file; `rm` removes a name
   and, with the last one, frees the inode and its blocks onto the free list
   the way V6 does.
+- `put` writes a host file into the file system under a new name; a file
+  of more than 8 blocks becomes a V6 large file (indirect blocks), as the
+  kernel would write it, and is read back and compared before the image is
+  saved.
 - `patch` writes a word into the data of an a.out file at the address of a
   symbol from its symbol table (the kernel's `_nswap`, say).
 - `check` walks the file system as `icheck` would: every block free or in
@@ -154,7 +192,7 @@ generated files are out of date.
 python tools/psram_build.py --board feather|picoplus2 --compiler PureMetalForge.exe [--out DIR] [--desk]
 ```
 
-Compiles `pico2/diag.pico2` with the board's three constants (`#PSRAM = 1`, the chip-select pin, the flash size), makes the V6 root pack with `/dev/rk1`, and packs firmware, RK0 and RK1 into one `combined.uf2`.
+Compiles `pico2/diag.pico2` with the board's three constants (`#PSRAM = 1`, the chip-select pin, the flash size), makes the V6 root pack with `/dev/rk1`, and packs firmware, RK0 and RK1 into one `combined.uf2` at the addresses of `flash_layout.pico2`. When `media/unix/rk70unix` exists (it does not yet: the 22-bit kernel has so far only been built on a board, where a reset loses it), the tool also writes it into the root pack as `/rk70unix` with `v6fs.py put`, links `/unix` to it and names it as the kernel to boot when the PSRAM is working; that path has not been run.
 
 ## `pack_install.py` - the packs into a board's flash over USB serial
 

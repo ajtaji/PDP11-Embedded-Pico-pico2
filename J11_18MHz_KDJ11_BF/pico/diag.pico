@@ -790,6 +790,10 @@ Procedure DiskBanner()
   CompilerIf #DISK_BACKEND = 2
     Define i.i
     Define c.i
+    ; The Pico W has 2 MB of flash and the pack needs nearly all of it above the program: the pack
+    ; covers 0x10100000-0x10138FFF, where the board's radio firmware would be kept. The RP2350
+    ; boards keep that region clear (pico2/flash_layout.pico2); this one cannot, and says so.
+    Say("RK0: the Pico W image uses the flash where the radio's firmware would go; a Pico W running it cannot use its radio") : Eol()
     If DkPresent = 0
       Say("RK0: no pack in the flash at 0x10040000 - pack one with tools/rk_image.py") : Eol()
       Say("RK0: the ")                   ; what is there, so a board shows at once whether a UF2 landed

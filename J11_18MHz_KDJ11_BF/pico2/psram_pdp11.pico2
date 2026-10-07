@@ -54,17 +54,27 @@
 ;  decided them.
 ;
 ;  THE LAYOUT IN PSRAM
-;      $000000   RK0, 4872 blocks (2,494,464 bytes): a whole RK05
-;      $261000   RK1, 4000 blocks (2,048,000 bytes): the size of the V6
-;                source pack's file system. Blocks 4000-4871 of RK1 do not
-;                exist here: the controller reports a drive error for them,
-;                as for any block a pack does not hold. A pack for RK1 with
-;                more than 4000 blocks is not copied (RK1 is then absent).
-;      $455000   PDP-11 physical memory from 160000 (octal) up: byte pa is
-;                at $447000 + pa (#PS_MEM, cpu.pico2), to the end of the
-;                chip - pa $3B9000, 3812 KB (#PS_MEM_TOP): what the two
-;                packs leave of the 8 MB. (A PDP-11/84 can hold memory up
-;                to 17757777, 4088 KB: its technical manual, page 2-61.)
+;      $000000   PDP-11 physical memory from 160000 (octal) up: byte pa is
+;                at pa - $E000, so its address in the cached window is
+;                #PS_MEM + pa with #PS_MEM = $10FF2000 (cpu.pico2), up to
+;                pa $3B9000, 3812 KB (#PS_MEM_TOP): what the two packs
+;                leave of the 8 MB. (A PDP-11/84 can hold memory up to
+;                17757777, 4088 KB: its technical manual, page 2-61.)
+;      $3AB000   RK0, 4872 blocks (2,494,464 bytes): a whole RK05
+;      $60C000   RK1, 4000 blocks (2,048,000 bytes), to the end of the
+;                chip: the size of the V6 source pack's file system.
+;                Blocks 4000-4871 of RK1 do not exist here: the controller
+;                reports a drive error for them, as for any block a pack
+;                does not hold. A pack for RK1 with more than 4000 blocks
+;                is not copied (RK1 is then absent).
+;  WHY THE MEMORY IS FIRST. The memory is read through the 16 KB XIP cache,
+;  whose two ways are 8 KB each, and the same cache serves the firmware's
+;  code in flash. With the memory first, a PDP-11 address that is a multiple
+;  of 8 KB is a host address that is one too. Measured on a Feather RP2350
+;  (V6 `time od /rkunix`, timed from the host, compiler fb819cbcd): memory
+;  behind the packs at $447000 + pa 13.35 s; the same moved by 4 KB
+;  ($448000 + pa, 4 KB of memory given up) 13.16 s; memory first, nothing
+;  given up, 13.08 s - the figure of the 248 KB firmware before it.
 ;
 ;  THE PACK CHECKSUMS. The start-up line prints, for each pack region of
 ;  the flash, the checksum tools/pack_install.py printed when it put the
@@ -77,10 +87,11 @@ CompilerElse
 #PS_WIN        = #PSRAM_BASE
 CompilerEndIf
 #PS_BYTES      = $800000         ; the chip this is built for: 8 MB
-#PS_RK1        = $261000         ; RK1's place (RK0 is at 0), right behind RK0's 4872 blocks
+#PS_RK0        = $3AB000         ; RK0's place: right behind the PDP-11's memory (THE LAYOUT IN PSRAM)
+#PS_RK1        = $60C000         ; RK1's place: right behind RK0's 4872 blocks, to the end of the chip
 #PS_RK1_BLOCKS = 4000            ; RK1's size in the PSRAM
 #PS_MEM_TOP    = $3B9000         ; 3812 KB: #PS_MEM + #PS_MEM_TOP is the end of the chip
-#DISK_REGION1  = $2C0000         ; RK1's pack in the flash (8 MB boards; rk_image.py --drive1)
+#DISK_REGION1  = #FL_RK1          ; RK1's pack in the flash (flash_layout.pico2; rk_image.py --drive1)
 ; PsramOk, PsDrives, MemTop and #PS_MEM are declared in cpu.pico2, which the others read.
 Global PsramWhy.i                ; why not: see PsramWhyText
 Global PsramFound.i              ; bytes PsramBegin() found
@@ -303,9 +314,9 @@ Procedure PsramLoad()
     t0 = Micros()
     If n < 0
       PsramWhy = 4
-    ElseIf PsCopy(#DISK_REGION, 0, n, #RK_BLOCKS) = 0
+    ElseIf PsCopy(#DISK_REGION, #PS_RK0, n, #RK_BLOCKS) = 0
       PsramWhy = 5
-    ElseIf PsPatch(#DISK_REGION, 0, #RK_BLOCKS) = 0
+    ElseIf PsPatch(#DISK_REGION, #PS_RK0, #RK_BLOCKS) = 0
       PsramWhy = 6
     EndIf
     If PsramWhy = 0
@@ -459,9 +470,9 @@ Procedure.i PsDiskRead(d.i, blk.i)
     DkWhy = 1
     ProcedureReturn -1
   EndIf
-  a = #PS_WIN + blk * 512
+  a = #PS_WIN + #PS_RK0 + blk * 512
   If d = 1
-    a = a + #PS_RK1
+    a = #PS_WIN + #PS_RK1 + blk * 512
   EndIf
   For i = 0 To 127
     w = PeekL(a + i * 4)
@@ -479,9 +490,9 @@ Procedure.i PsDiskWrite(d.i, blk.i)
     DkWhy = 1
     ProcedureReturn -1
   EndIf
-  a = #PS_WIN + blk * 512
+  a = #PS_WIN + #PS_RK0 + blk * 512
   If d = 1
-    a = a + #PS_RK1
+    a = #PS_WIN + #PS_RK1 + blk * 512
   EndIf
   For i = 0 To 127
     PokeL(a + i * 4, DkBuf(i * 2) | (DkBuf(i * 2 + 1) << 16))

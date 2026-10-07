@@ -3,8 +3,8 @@
 ;  over USB serial, with no boot drive and no button.
 ;
 ;  WHAT IT IS FOR. The PDP-11 firmware (diag.pico2) reads its disk packs
-;  from the flash above the first 256 KB: RK0 from offset $040000, and on
-;  the 8 MB boards RK1 from $2C0000 (disk.pico2, tools/rk_image.py). The
+;  from the flash at the places flash_layout.pico2 gives: RK0 from offset
+;  $240000, and on the boards with 8 MB or more RK1 from $4C0000. The
 ;  compiler's uploader writes only the firmware. This program is uploaded
 ;  the same way, takes the packs from tools/pack_install.py over the USB
 ;  serial port and programs them with the compiler's flash library; then
@@ -51,9 +51,12 @@
 ;    OTHER       something else
 ;
 ;  WHAT IT REFUSES
-;    - a region that starts below #PI_KEEP (the first 256 KB: this program
-;      and the PDP-11 firmware live there; tools/pack_install.py refuses
-;      an installer image that is not smaller than that);
+;    - a region that starts below #PI_KEEP = #FL_PACKS (flash_layout.pico2:
+;      this program and the PDP-11 firmware live at the bottom of the
+;      flash, and above them, from #FL_RADIO_LO to #FL_RADIO_HI, is where a
+;      board with a radio keeps the radio chip's firmware);
+;    - a region that touches #FL_RADIO_LO to #FL_RADIO_HI at all, said in
+;      its own sentence. The rule is the same on a board without a radio;
 ;    - a region that runs past the flash chip. The size is MEASURED: the
 ;      chip decodes only the address bits it has, so on an 8 MB chip the
 ;      first sector reads again at 8 MB. It must also not exceed
@@ -70,7 +73,8 @@
 ; ======================================================================
 #PI_VERSION    = 1
 #PI_FLASH_CHIP = $400000     ; the board's flash: tools/pack_install.py builds with the board's size
-#PI_KEEP       = $40000      ; the first 256 KB are the programs': never a pack region
+XIncludeFile "flash_layout.pico2"
+#PI_KEEP       = #FL_PACKS   ; below this are the programs and the radio firmware's region: never a pack region
 #PI_XIP        = $10000000
 #PI_SECTOR     = 4096
 #PI_BYTE_US    = 3000000     ; the longest wait for the next byte of a sector
@@ -287,8 +291,16 @@ Procedure.i RegionOk(off.i, n.i)
     No("the offset and the length must be whole 4096-byte sectors, and the length not 0.")
     ProcedureReturn 0
   EndIf
+  If n > $1000000 Or off > $1000000
+    No("the region runs past the end of the flash chip found on this board (the size is in the answer to '?'). Use the pack layout for this board.")
+    ProcedureReturn 0
+  EndIf
+  If off < #FL_RADIO_HI And off + n > #FL_RADIO_LO
+    No("the region touches 200000-23FFFF hex, where a board with a radio keeps the radio chip's firmware. The PDP-11 never uses that part of the flash on any board. Packs start at 240000 hex or above.")
+    ProcedureReturn 0
+  EndIf
   If off < #PI_KEEP
-    No("the region starts inside the first 256 KB of the flash, where this program and the PDP-11 firmware live. Packs start at 040000 hex or above.")
+    No("the region starts below 240000 hex, where this program and the PDP-11 firmware live. Packs start at 240000 hex or above.")
     ProcedureReturn 0
   EndIf
   If n > $1000000 Or off > $1000000 Or off + n > PiFlash
@@ -576,9 +588,9 @@ Procedure Main()
     If PiSeen = 0 And Micros() - t0 > 2000000   ; idle, before the first command: say what is here
       t0 = Micros()
       Hello()
-      Say("RK0 ") : SayKind($40000) : Eol()
-      If PiFlash > $2C0000
-        Say("RK1 ") : SayKind($2C0000) : Eol()
+      Say("RK0 ") : SayKind(#FL_RK0) : Eol()
+      If PiFlash > #FL_RK1
+        Say("RK1 ") : SayKind(#FL_RK1) : Eol()
       EndIf
     EndIf
   ForEver

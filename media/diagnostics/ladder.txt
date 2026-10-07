@@ -15,6 +15,16 @@
 # for an 11/34 where the J-11 behaves differently by design (the listing expects
 # the 11/34); 15646=7 is MFPT (000007), which traps on an 11/34 and is an
 # instruction on the J-11. With them DFKAB types "END OF DFKAB" with no HALT.
+# 15_DFKAA's two patches are its test 145, "MOV R0,(R0)+" with R0 = 0: the
+# 11/34 stores the register as it was (0) and the tape wants Z set and a 0 in
+# the word; the J-11 stores the register already stepped (2): KDJ11-A CPU Module
+# User's Guide EK-KDJ1A-UG-002, appendix B, table B-1, item 1, page B-2. The two
+# BEQ that check for the 11/34's result (012120, 012154) become BNE.
+#
+# SINCE THAT CHANGE (2026-10-07, a Feather RP2350) these ran and passed: 07 to
+# 12, 15, 16, 17. Tapes 01 to 06 and 13 hold no instruction of the changed kind
+# (every word of each tape was checked for the forms) and were not run again.
+# 14, 18 and 19 hold some and have NOT been run again yet.
 #
 01_T1-D0AA | pcjs/tapes-diag/MAINDEC-11-D0AA-PB.json |  | 180
 02_T2-D0BA | pcjs/tapes-diag/MAINDEC-11-D0BA-PB.json |  | 120
@@ -30,7 +40,7 @@
 12_T12-D0LA | pcjs/tapes-diag/MAINDEC-11-D0LA-PB.json |  | 120
 13_T13-D0MA | pcjs/tapes-diag/MAINDEC-11-D0MA-PB.json |  | 120
 14_T15-D0OA | pcjs/tapes-diag/MAINDEC-11-D0OA-PB.json | --switches 200 | 120
-15_DFKAA | papertape/maindec-11-dfkaa-b1-pb.bin | --start 200 | 120
+15_DFKAA | papertape/maindec-11-dfkaa-b1-pb.bin | --start 200 --patch 12120=1004,12154=1004 | 120
 16_DFKAB | papertape/maindec-11-dfkab-c-pb.bin | --start 200 --patch 2236=210,2300=210,2350=210,2430=210,2476=210,2554=210,2700=210,10770=210,12350=3,12420=12407,12470=12455,12550=25257,13122=426,15646=7 | 120
 17_DFKAC | papertape/maindec-11-dfkac-a-pb.bin | --start 200 | 120
 18_DZQKC | papertape/maindec-11-dzqkc-e-pb.bin | --start 200 | 120

@@ -109,9 +109,18 @@ def main():
                  ["mknod", root, "/dev/rrk1", "c", "9", "1"],
                  ["mknod", root, "/dev/swap", "b", "0", "0"],
                  ["rm", root, "/unix"],
-                 ["ln", root, "/rkunix", "/unix"],
                  ["patch", root, "/rkunix", "_nswap", "112"]):
         run(v6 + args + ["-o", root])
+    # the 22-bit kernel: built on a board from the distribution's sources (docs/psram/build-rk70unix.txt),
+    # read back over the console (tools/od2bin.py) and kept in media/unix with its checksum. /unix, the
+    # name list ps reads, is linked to it: it is the kernel these boards boot.
+    k70 = os.path.join(REPO, "media", "unix", "rk70unix")
+    if os.path.exists(k70):
+        run(v6 + ["put", root, k70, "/rk70unix", "--mode", "777", "-o", root])
+        run(v6 + ["ln", root, "/rk70unix", "/unix", "-o", root])
+    else:
+        print("psram_build: media/unix/rk70unix is not there: the pack is built WITHOUT the 22-bit kernel")
+        run(v6 + ["ln", root, "/rkunix", "/unix", "-o", root])
     run(v6 + ["check", root])
 
     # 3. the image
@@ -120,6 +129,8 @@ def main():
            "--name", "v6root", "--autoboot", "rkunix", "--psram-patch", "rkunix,_nswap,872",
            "--drive1", src, "--firmware", fw, "--combined", os.path.join(out, "combined.uf2"),
            "-o", os.path.join(out, "v6root.uf2")]
+    if os.path.exists(k70):
+        cmd += ["--autoboot-psram", "rk70unix"]
     if a.desk:
         cmd += ["--desk", os.path.join(out, "desk.bin")]
     run(cmd)

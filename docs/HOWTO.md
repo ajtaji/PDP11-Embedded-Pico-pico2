@@ -164,7 +164,11 @@ Send it from any terminal program, or from a script that writes the text to the 
 
 ## 7. Build your own disk image
 
-`tools/rk_image.py` turns an RK05 disk image into a UF2 that writes the board's flash disk region (0x10040000 up) and leaves the firmware alone. All the Python tools are described in [TOOLS.md](TOOLS.md).
+`tools/rk_image.py` turns an RK05 disk image into a UF2 that writes the board's flash disk region and leaves the firmware alone.
+
+**Where things are in the flash.** On every RP2350 board the program is below 0x10200000, 0x10200000 to 0x1023FFFF is never used by the PDP-11 (a board with a radio keeps the radio chip's firmware there, and it survives a pack being installed), and the packs start at 0x10240000: RK0 there, RK1 at 0x104C0000 on the boards with 8 MB of flash or more. The addresses are in one file, `J11_18MHz_KDJ11_BF/pico2/flash_layout.pico2`, which the firmware and the pack installer are compiled with and the tools read. The Pico 2 W's 4 MB leave 1.75 MB for RK0, so a pack is stored mapped there (only the blocks in use). The Pico W (2 MB) keeps its pack at 0x10040000: the Pico W image uses the flash where the radio's firmware would go; a Pico W running it cannot use its radio.
+
+ All the Python tools are described in [TOOLS.md](TOOLS.md).
 
 1. **Get an RK05 image.** The Unix packs are in `media/unix/` (`v6root.gz` is gzipped; `mini-unix.rk05` is in the repository root). Unzip a `.gz` first.
 2. **Look at it.** `info` prints the size, the Unix file system (V6 or V7), the blocks in use and how many fit each chip:
@@ -197,7 +201,7 @@ Send it from any terminal program, or from a script that writes the text to the 
 
 5. **Flash it** as in sections 2 and 3. A pack-only UF2 goes onto a board that already has the firmware.
 
-Limits: RK05 packs only (up to 4872 blocks), drive 0 only, firmware under 256 KB, V6 only for `v6fs.py`. A complete worked example is in section 8.
+Limits: RK05 packs only (up to 4872 blocks), drive 0 only (RK1 as well on the PSRAM boards), the firmware below 0x10200000 (under 256 KB on the Pico W), V6 only for `v6fs.py`. A complete worked example is in section 8.
 
 Under Git Bash on Windows, put `MSYS_NO_PATHCONV=1` in front of any command with an argument that starts with `/` or `@/`, or Git Bash will turn it into a Windows path.
 
@@ -289,6 +293,8 @@ that; the long T-series tapes need a board (or a longer desk run) for their
 first bell.
 
 ## 10. The PSRAM boards
+
+**Read first (2026-10-07).** The source now has 22-bit memory on these boards and keeps the packs at 0x10240000 and 0x104C0000 (section 7). The files in `images/` are of the earlier layout and the current `tools/pack_install.py` refuses them, saying why. Until new images are put there, make the image the lines below name with `python tools/psram_build.py --board feather|picoplus2 --compiler PureMetalForge.exe --out DIR` and give `DIR/combined.uf2` to `--image`. The Feather was loaded this way with the current source; the Pimoroni has not been yet.
 
 The Pimoroni Pico Plus 2 W and the Adafruit Feather RP2350 HSTX run V6 with 248 KB of memory. Their images are `images/picoplus2/combined.uf2` and `images/feather/combined.uf2`.
 

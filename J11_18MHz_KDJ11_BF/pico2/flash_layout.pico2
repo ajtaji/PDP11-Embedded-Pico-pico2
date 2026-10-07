@@ -1,0 +1,41 @@
+; ======================================================================
+;  flash_layout.pico2 - where the PDP-11 keeps things in a board's flash.
+;  THE ONE PLACE: the firmware (disk.pico2, psram_pdp11.pico2), the pack
+;  installer (packinstall.pico2) and the host tools (tools/flash_layout.py,
+;  which reads THIS file) all take the addresses from here. Offsets are
+;  from the start of the flash; add $10000000 for the address.
+;
+;  THE RULE, for every RP2350 board the project builds for:
+;      $000000 - $1FFFFF   the program (the PDP-11 firmware, or the pack
+;                          installer). Today's firmware is about 140 KB.
+;      $200000 - $23FFFF   NEVER USED BY THE PDP-11. On a board with a
+;                          radio this is where the radio chip's firmware
+;                          is kept (the compiler's RP2350/Lib/cyw43.pico2
+;                          reads it from $10200000, about 227 KB), and it
+;                          must survive a pack being installed. A board
+;                          without a radio leaves it empty, so one image
+;                          family and one rule serve them all.
+;      $240000 - ...       the packs: RK0 first, then RK1 where the flash
+;                          is big enough for both.
+;  A pack region is one 4 KB header sector and then 512-byte blocks
+;  (disk.pico2, THE FLASH PACK).
+;      RK0  $240000   4872 blocks dense = $262000 bytes, ends $4A1FFF
+;      RK1  $4C0000   4000 blocks dense = $1F5000 bytes, ends $6B4FFF
+;  What each board holds:
+;      16 MB (Pimoroni Pico Plus 2 / 2 W)   RK0 and RK1
+;       8 MB (Adafruit Feather RP2350)      RK0 and RK1
+;       4 MB (Raspberry Pi Pico 2 W)        RK0 only, 1.75 MB of it: a
+;                                           pack is stored MAPPED (only
+;                                           the blocks in use) when it
+;                                           does not fit dense
+;  The installer refuses any region that starts below #FL_PACKS or
+;  touches #FL_RADIO_LO to #FL_RADIO_HI, on every board; tools/rk_image.py
+;  and tools/pack_install.py refuse the same before anything is sent.
+;
+;  Constants only: this file may be included by any program.
+; ======================================================================
+#FL_RADIO_LO = $200000       ; the radio firmware's region: first byte
+#FL_RADIO_HI = $240000       ; ... and the first byte after it
+#FL_PACKS    = $240000       ; no pack region starts below this
+#FL_RK0      = $240000       ; RK0's pack
+#FL_RK1      = $4C0000       ; RK1's pack (boards with 8 MB of flash or more)

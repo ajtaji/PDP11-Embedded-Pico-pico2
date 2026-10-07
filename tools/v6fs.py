@@ -9,9 +9,14 @@ USE
     python v6fs.py mknod IMAGE PATH b|c MAJOR MINOR [--mode OCTAL] -o OUT
     python v6fs.py ln    IMAGE EXISTING NEW -o OUT
     python v6fs.py rm    IMAGE PATH -o OUT
+    python v6fs.py put   IMAGE HOSTFILE PATH [--mode OCTAL] -o OUT
     python v6fs.py patch IMAGE FILE SYMBOL VALUE -o OUT
     python v6fs.py check IMAGE
 
+    put     writes the host file HOSTFILE into the file system as PATH (a
+            new name; --mode defaults to 755, owner 0). A file of more
+            than 8 blocks is written as a V6 large file, its i_addr naming
+            indirect blocks, as the kernel itself would write it.
     patch   writes VALUE (decimal, or 0o.. octal) into the data word of
             the a.out FILE named by SYMBOL (a V6 kernel's _nswap, say).
     check   walks the file system the way icheck does: every block is
@@ -227,6 +232,40 @@ def cmd_mknod(fs, a):
     print("v6fs: %s = inode %d, %s %d,%d mode %o" % (a.path, n, a.kind, a.major, a.minor, int(a.mode, 8)))
 
 
+def cmd_put(fs, a):
+    data = open(a.hostfile, "rb").read()
+    nb = (len(data) + BS - 1) // BS
+    if nb > 8 * 256:
+        fail("%s is %d bytes; a V6 file without a double-indirect block holds 1,048,576" % (a.hostfile, len(data)))
+    dn, name = fs.split(a.path)
+    for _, i, nm in fs.entries(dn):
+        if i and nm == name:
+            fail("%s already exists (rm it first)" % a.path)
+    n = fs.ialloc()
+    blocks = []
+    for k in range(nb):
+        b = fs.balloc()
+        fs.put(b, data[k * BS:(k + 1) * BS])
+        blocks.append(b)
+    mode = IALLOC | int(a.mode, 8)
+    addr = [0] * 8
+    if nb <= 8:
+        addr[:nb] = blocks
+    else:
+        mode |= ILARG
+        for k in range(0, nb, 256):
+            ib = fs.balloc()
+            part = blocks[k:k + 256]
+            fs.put(ib, struct.pack("<%dH" % len(part), *part))
+            addr[k // 256] = ib
+    fs.put_inode(n, {"mode": mode, "nlink": 1, "uid": 0, "gid": 0, "size": len(data), "addr": addr})
+    fs.link(dn, name, n)
+    if fs.read(n) != data:
+        fail("%s: the file reads back differently from %s" % (a.path, a.hostfile))
+    print("v6fs: %s = inode %d, %d bytes, %d blocks%s, mode %o" % (
+        a.path, n, len(data), nb, " (large file)" if mode & ILARG else "", mode & 0o7777))
+
+
 def cmd_ln(fs, a):
     n = fs.lookup(a.existing)
     if not n:
@@ -378,6 +417,8 @@ def main():
     p.add_argument("major", type=int); p.add_argument("minor", type=int); p.add_argument("--mode", default="640"); p.add_argument("-o", required=True)
     p = sub.add_parser("ln"); p.add_argument("image"); p.add_argument("existing"); p.add_argument("new"); p.add_argument("-o", required=True)
     p = sub.add_parser("rm"); p.add_argument("image"); p.add_argument("path"); p.add_argument("-o", required=True)
+    p = sub.add_parser("put"); p.add_argument("image"); p.add_argument("hostfile"); p.add_argument("path")
+    p.add_argument("--mode", default="755"); p.add_argument("-o", required=True)
     p = sub.add_parser("patch"); p.add_argument("image"); p.add_argument("file"); p.add_argument("symbol")
     p.add_argument("value"); p.add_argument("-o", required=True)
     a = ap.parse_args()
@@ -401,7 +442,7 @@ def main():
         return
     if a.cmd == "check":
         sys.exit(cmd_check(fs))
-    {"mknod": cmd_mknod, "ln": cmd_ln, "rm": cmd_rm, "patch": cmd_patch}[a.cmd](fs, a)
+    {"mknod": cmd_mknod, "ln": cmd_ln, "rm": cmd_rm, "patch": cmd_patch, "put": cmd_put}[a.cmd](fs, a)
     fs.save_sb()
     open(a.o, "wb").write(fs.d)
 

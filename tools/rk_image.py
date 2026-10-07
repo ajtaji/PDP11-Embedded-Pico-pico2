@@ -9,7 +9,7 @@ USE
     python rk_image.py pack IMAGE --chip pico|pico2 -o OUT.uf2
                        [--layout dense|mapped] [--blocks N] [--name TEXT]
                        [--swap auto|LO,N|none] [--boot-block FILE|@/PATH]
-                       [--autoboot KERNEL[,SWITCHES]]
+                       [--autoboot KERNEL[,SWITCHES]] [--autoboot-psram KERNEL]
                        [--psram-patch FILE,SYMBOL,VALUE] [--drive1 IMAGE]
                        [--firmware FW.bin [--desk OUT.bin] [--combined OUT.uf2]
                                           [--firmware-uf2 OUT.uf2]]
@@ -22,21 +22,35 @@ USE
         on the Pico W flash the two separately - see the README), and
         --firmware-uf2 the firmware alone as a UF2 (for the Pico W).
 
-THE FLASH REGION (disk.pico's header says the same)
-    Pico W   (RP2040, 2 MB flash):  0x10040000 - 0x101FFFFF
-    Pico 2 W (RP2350, 4 MB flash):  0x10040000 - 0x103FFFFF
+THE FLASH REGION
+    The RP2350 boards take their addresses from ONE file,
+    J11_18MHz_KDJ11_BF/pico2/flash_layout.pico2 (read here through
+    tools/flash_layout.py; the firmware and the pack installer are compiled
+    with it): the program below 0x10200000, 0x10200000 - 0x1023FFFF NEVER
+    USED (a board with a radio keeps the radio chip's firmware there), the
+    packs from 0x10240000 up.
+    Pico 2 W (RP2350, 4 MB flash):  RK0 0x10240000 - 0x103FFFFF (1.75 MB:
+               a whole RK05 does not fit dense; a pack is stored mapped)
     feather    (Adafruit Feather RP2350 with 8 MB PSRAM, 8 MB flash) and
     picoplus2  (Pimoroni Pico Plus 2 and Pico Plus 2 W, 16 MB flash, 8 MB
-               PSRAM): the PSRAM builds (both ran on 2026-10-07). RK0 from
-               0x10040000, RK1 from 0x102C0000 (--drive1), both dense
-    The firmware lives below 0x10040000 (256 KB); this tool refuses a
-    firmware bigger than that.
+               PSRAM): the PSRAM builds. RK0 from 0x10240000, RK1 from
+               0x104C0000 (--drive1), both dense
+    Pico W   (RP2040, 2 MB flash):  0x10040000 - 0x101FFFFF (pico/disk.pico;
+               this tool refuses a firmware bigger than 256 KB there). The
+               Pico W image uses the flash where the radio's firmware would
+               go (0x10100000 - 0x10138FFF); a Pico W running it cannot use
+               its radio. Mini-Unix has 3,061 blocks in use and 2 MB cannot
+               hold them clear of that region; the tool says so when it packs.
+    This tool refuses a firmware that reaches the radio's region or the
+    packs, and a pack region that touches the radio's region.
         +0      4 KB header: "PDP11RK1", u32 version 1, u32 layout (0 dense,
                 1 mapped), u32 blocks stored, u32 slots used, u32 map
                 sectors, u32 flags, 32-byte name, then at +64 u32 swap
                 start and u32 swap blocks (the RAM overlay's area, below),
                 at +72 u32 auto-boot (bit 16 on, bits 15-0 the switch
-                register) and at +80 the kernel's name, NUL-terminated
+                register) and at +80 the kernel's name, NUL-terminated; at
+                +96 the PSRAM patch and at +128 the kernel's name for a
+                board whose PSRAM is working (both below)
         +4 KB   mapped layout only: 3 sectors, one u16 per RK05 block,
                 0 = not stored (reads as zeros), n = slot n - 1
         then    512-byte slots
@@ -45,7 +59,8 @@ LAYOUTS
     dense    block n in slot n, for blocks 0 .. N-1 (N = --blocks, or the
              whole image). Blocks past N read as zeros and refuse writes
              (the firmware says so). For a pack that fits: a full RK05
-             pack (4872 blocks, 2,494,464 bytes) fits the Pico 2 W.
+             pack (4872 blocks, 2,494,464 bytes) fits the 8 MB and 16 MB
+             boards, not the Pico 2 W's 1.75 MB.
     mapped   only the blocks that hold something get a slot; a block
              written later gets the next free slot. For a pack whose
              block numbers run past the room but whose USED blocks fit:
@@ -83,6 +98,9 @@ THE PSRAM BUILD (--chip feather or picoplus2; pico2/psram_pdp11.pico2)
     kernel patched for the RAM disk. The word's present value is recorded
     too, and the firmware changes nothing unless it finds it.
     --drive1 IMAGE packs a second RK05 image for RK1 (dense, whole).
+    --autoboot-psram KERNEL names the kernel the auto-boot types when the
+    PSRAM is working (header +128): a kernel that needs the PSRAM's memory,
+    such as the 22-bit /rk70unix. The fallback types --autoboot's.
 
 AUTO-BOOT
     --autoboot rkunix (or rkunix,173030) asks the firmware to boot this
@@ -103,8 +121,20 @@ FAMILY = {"pico": 0xE48BFF56, "pico2": 0xE48BFF59,            # rp2040; rp2350 A
 FLASH = {"pico": 0x200000, "pico2": 0x400000, "feather": 0x800000, "picoplus2": 0x1000000}
 PSRAM_CHIPS = ("feather", "picoplus2")   # the boards with PSRAM (psram.pico2)
 XIP = 0x10000000
-REGION = 0x40000
-REGION1 = 0x2C0000       # RK1 on the 8 MB boards (psram.pico2 #DISK_REGION1)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import flash_layout
+REGION_PICO = 0x40000    # the Pico W (RP2040): pico/disk.pico #DISK_REGION, 256 KB in
+REGION1 = flash_layout.RK1       # RK1 on the boards with 8 MB of flash or more
+
+
+def region_of(chip):
+    """Where RK0's pack starts in this chip's flash."""
+    return REGION_PICO if chip == "pico" else flash_layout.RK0
+
+
+def program_room(chip):
+    """The bytes the firmware may fill from the start of the flash."""
+    return REGION_PICO if chip == "pico" else flash_layout.RADIO_LO
 SECTOR = 4096
 RK_BLOCKS = 4872
 MAP_SECTORS = (RK_BLOCKS * 2 + SECTOR - 1) // SECTOR     # 3
@@ -116,7 +146,7 @@ def fail(msg):
 
 
 def capacity(chip, mapped):
-    data = REGION + SECTOR + (MAP_SECTORS * SECTOR if mapped else 0)
+    data = region_of(chip) + SECTOR + (MAP_SECTORS * SECTOR if mapped else 0)
     return (FLASH[chip] - data) // 512, data
 
 
@@ -232,6 +262,7 @@ SWAP = (0, 0)
 
 
 AUTOBOOT = (0, b"")      # (switches | 1 << 16, kernel name) or (0, "") for none
+AUTOBOOT_PSRAM = b""     # the kernel's name when the PSRAM is working, or "" for the same one
 PSPATCH = None           # (block, byte offset, old word, new word) for the PSRAM copy
 
 
@@ -244,6 +275,7 @@ def header(layout, stored, slots, name):
     struct.pack_into("<II", h, 64, SWAP[0], SWAP[1])
     struct.pack_into("<I", h, 72, AUTOBOOT[0])
     h[80:80 + len(AUTOBOOT[1])] = AUTOBOOT[1]
+    h[128:128 + len(AUTOBOOT_PSRAM)] = AUTOBOOT_PSRAM
     if PSPATCH:
         struct.pack_into("<IIIII", h, 96, 1, *PSPATCH)
     return bytes(h)
@@ -264,7 +296,7 @@ def build(img, chip, layout, nblocks, name):
                  "(%d bytes from 0x%08X to 0x%08X). Use --layout mapped, or --blocks N with N "
                  "no more than %d." % (stored, chip, cap, cap * 512, XIP + data, XIP + FLASH[chip] - 1, cap))
         body = img[:stored * 512] + bytes(max(0, stored * 512 - len(img)))
-        parts[REGION] = header(0, stored, stored, name)
+        parts[region_of(chip)] = header(0, stored, stored, name)
         parts[data] = body
         return parts, "dense, %d blocks (%d bytes) of %d that fit" % (stored, stored * 512, cap)
     used, fs = used_blocks(img)
@@ -278,8 +310,8 @@ def build(img, chip, layout, nblocks, name):
     for slot, b in enumerate(used):
         struct.pack_into("<H", m, b * 2, slot + 1)
         body += img[b * 512:(b + 1) * 512]
-    parts[REGION] = header(1, len(used), len(used), name)
-    parts[REGION + SECTOR] = bytes(m)
+    parts[region_of(chip)] = header(1, len(used), len(used), name)
+    parts[region_of(chip) + SECTOR] = bytes(m)
     parts[data] = bytes(body)
     return parts, "mapped, %d blocks stored, %d slots left for blocks written later (%d bytes)" % (
         len(used), cap - len(used), (cap - len(used)) * 512)
@@ -316,6 +348,7 @@ def main():
     ap.add_argument("--swap", default="auto")
     ap.add_argument("--boot-block")
     ap.add_argument("--autoboot")
+    ap.add_argument("--autoboot-psram")
     ap.add_argument("--combined")
     ap.add_argument("--firmware-uf2")
     a = ap.parse_args()
@@ -369,10 +402,17 @@ def main():
             fail("--autoboot: the kernel's name is 1 to 15 printable characters, the switches 0-177777.")
         AUTOBOOT = (sw | 1 << 16, kern.encode("ascii"))
         print("rk_image: auto-boot: RK0, switches %06o, then %s at the @ prompt" % (sw, kern))
-    global PSPATCH
-    if a.psram_patch or a.drive1:
+    global PSPATCH, AUTOBOOT_PSRAM
+    if a.psram_patch or a.drive1 or a.autoboot_psram:
         if a.chip not in PSRAM_CHIPS:
-            fail("--psram-patch and --drive1 are for --chip feather or picoplus2 (the PSRAM builds).")
+            fail("--psram-patch, --drive1 and --autoboot-psram are for --chip feather or picoplus2 (the PSRAM builds).")
+    if a.autoboot_psram:
+        k = a.autoboot_psram
+        if not a.autoboot or len(k) > 15 or not k.isascii() or not k.isprintable() or not k:
+            fail("--autoboot-psram: a kernel's name of 1 to 15 printable characters, and --autoboot as well "
+                 "(the kernel for a board whose PSRAM is not working).")
+        AUTOBOOT_PSRAM = k.encode("ascii")
+        print("rk_image: auto-boot with the PSRAM working: %s at the @ prompt" % k)
     if a.psram_patch:
         try:
             pf, psym, pval = a.psram_patch.split(",")
@@ -397,23 +437,32 @@ def main():
         n1 = blocks_of(img1)
         if REGION1 + SECTOR + RK_BLOCKS * 512 > FLASH[a.chip]:
             fail("RK1 does not fit the %s's flash." % a.chip)
-        if REGION + SECTOR + max(len(d) for d in parts.values()) > REGION1:
+        if max(off + len(d) for off, d in parts.items()) > REGION1:
             fail("RK0 runs into RK1's region at 0x%08X." % (XIP + REGION1))
-        keep = (SWAP, AUTOBOOT, PSPATCH)
-        SWAP, AUTOBOOT, PSPATCH = (0, 0), (0, b""), None
+        keep = (SWAP, AUTOBOOT, PSPATCH, AUTOBOOT_PSRAM)
+        SWAP, AUTOBOOT, PSPATCH, AUTOBOOT_PSRAM = (0, 0), (0, b""), None, b""
         parts[REGION1] = header(0, n1, n1, os.path.basename(a.drive1))
-        SWAP, AUTOBOOT, PSPATCH = keep
+        SWAP, AUTOBOOT, PSPATCH, AUTOBOOT_PSRAM = keep
         parts[REGION1 + SECTOR] = img1
         print("rk_image: RK1 <- %s, dense, %d blocks, at 0x%08X" % (a.drive1, n1, XIP + REGION1))
+    if a.chip == "pico":
+        print("rk_image: the Pico W image uses the flash where the radio's firmware would go; a Pico W running "
+              "it cannot use its radio (2 MB of flash: the pack covers 0x10100000-0x10138FFF and cannot avoid it).")
+    else:
+        for off in sorted(parts):
+            why = flash_layout.check_region(off, len(parts[off]), "the pack data")
+            if why:
+                fail(why)
     open(a.o, "wb").write(uf2(parts, a.chip))
-    print("rk_image: %s -> %s for the %s at 0x%08X: %s" % (a.image, a.o, a.chip, XIP + REGION, summary))
+    print("rk_image: %s -> %s for the %s at 0x%08X: %s" % (a.image, a.o, a.chip, XIP + region_of(a.chip), summary))
     if (a.desk or a.combined or a.firmware_uf2) and not a.firmware:
         fail("--desk, --combined and --firmware-uf2 need --firmware FW.bin.")
     if a.firmware:
         fw = open(a.firmware, "rb").read()
-        if len(fw) > REGION:
-            fail("the firmware is %d bytes and the disk region starts %d bytes in: it would be "
-                 "overwritten. Move the region (disk.pico #DISK_REGION and REGION here) first." % (len(fw), REGION))
+        if len(fw) > program_room(a.chip):
+            fail("the firmware is %d bytes and only the first %d bytes of the %s's flash are the program's "
+                 "(above them: %s). It does not fit." % (len(fw), program_room(a.chip), a.chip,
+                 "the pack" if a.chip == "pico" else "the region kept for a radio's firmware, then the packs"))
         if a.desk:
             end = max(off + len(d) for off, d in parts.items())
             flat = bytearray(b"\xff" * end)

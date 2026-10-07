@@ -276,6 +276,7 @@ Global AutoSw.i = -1                     ; -1: the pack does not ask
 Global AutoWindow.i, AutoCancel.i, AutoPending.i
 Global Dim AutoName.a(#AUTO_NAME_MAX + 1)
 Global AutoLen.i
+Global AutoAt.i                          ; where in the pack's header the name is taken from (80 or 128)
 Global LastCr.i                          ; the last console byte was a CR (a CR LF counts once)
 
 ; The boot block has printed its '@': type the kernel's name.
@@ -856,7 +857,7 @@ Procedure DiskBanner()
     Define i.i
     Define c.i
     If DkPresent = 0
-      Say("RK0: no pack in the flash at 0x10040000 - pack one with tools/rk_image.py") : Eol()
+      Say("RK0: no pack in the flash at 0x10240000 - pack one with tools/rk_image.py") : Eol()
       Say("RK0: the ")                   ; what is there, so a board shows at once whether a UF2 landed
       If DkInitWhy = 1
         Say("magic")
@@ -865,7 +866,7 @@ Procedure DiskBanner()
       Else
         Say("size")
       EndIf
-      Say(" check failed; 0x10040000 reads")
+      Say(" check failed; 0x10240000 reads")
       For i = 0 To 15
         c = LlXip16(#DISK_REGION + (i & ~1))
         If i & 1
@@ -902,8 +903,16 @@ Procedure DiskBanner()
     If (DkHeader32(72) >> 16) & 1        ; the pack asks to be booted at power-up
       AutoSw = DkHeader32(72) & $FFFF
       AutoLen = 0
+      AutoAt = 80                        ; the kernel's name; with the PSRAM working, the name at +128 if
+      CompilerIf #PSRAM = 1
+      If PsramOk                         ; the pack gives one there: a kernel that needs the PSRAM's memory
+        If (LlXip16(#DISK_REGION + 128) & $FF) <> 0   ; (rk_image.py --autoboot-psram). The fallback boots +80's.
+          AutoAt = 128
+        EndIf
+      EndIf
+      CompilerEndIf
       For i = 0 To #AUTO_NAME_MAX - 1
-        c = LlXip16(#DISK_REGION + 80 + (i & ~1))
+        c = LlXip16(#DISK_REGION + AutoAt + (i & ~1))
         If i & 1
           c = c >> 8
         EndIf

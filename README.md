@@ -128,6 +128,15 @@ What remains is Unix's own, on any PDP-11:
 
 ## PSRAM boards
 
+**State of the source now (2026-10-07).** The PSRAM boards' firmware has **22-bit memory management and 3812 KB of PDP-11 memory** (00000000-16707777: 56 KB in SRAM, 3756 KB in PSRAM), the Unibus map of a PDP-11/84 and the RK11 through it. V6's own 11/70 kernel, built on a board from the distribution's sources (`docs/psram/build-rk70unix.txt`), boots there and prints `mem = 18857`. **V6 prints that figure in tenths of 1024 words: 18857 is 3771 KB free of the 3812 KB** (the 18-bit kernel's `mem = 1036` is 207 KB free of 248 KB). That kernel lives in PSRAM only: a reset puts the pack back as the flash holds it, and putting the kernel into the pack image is not done yet (the tools for it are in [docs/TOOLS.md](docs/TOOLS.md), not yet run on a board). RK1 is stored as 4000 blocks, the size of the V6 source pack's file system; blocks 4000 to 4871 of RK1 answer with a drive error.
+
+Two things changed after the runs recorded below, both run on the Feather on 2026-10-07:
+
+- **The packs moved in the flash** to keep clear of the region a board with a radio keeps its radio firmware in: the program is below 0x10200000, 0x10200000 to 0x1023FFFF is never used, RK0 is at 0x10240000 and RK1 at 0x104C0000 (one file, `J11_18MHz_KDJ11_BF/pico2/flash_layout.pico2`). Installed on the Feather with `tools/pack_install.py`: the file, the installer and the firmware's start-up line all give `RK0 21C285A3 5CA82BF0 RK1 1215D2AC 967B3EC6`. **The Pimoroni has not been moved yet, and the image files in `images/` are builds of the earlier layout** (packs from 0x10040000): the current tools refuse them by name; build an image for the current source with `tools/psram_build.py`.
+- **The PDP-11's memory is first in the PSRAM**, before the two packs. With it behind the packs the 22-bit firmware took 13.35 s for `time od /rkunix >/dev/null` where the 248 KB firmware took 13.08 s; with the memory first it takes 13.08 s (Feather, the 18-bit kernel, timed from the host, two runs each, one compiler build). The reason is in `pico2/psram_pdp11.pico2`.
+
+The table and the lines below are the record of the 248 KB firmware of the same day (the boards' transcripts are in [docs/psram/](docs/psram/), the 22-bit ones included).
+
 Two boards with 8 MB of QSPI PSRAM run V6 with **248 KB of PDP-11 memory** (V6 prints `mem = 1036`, against 76 on the Pico 2 W), both RK05 packs writable in PSRAM with the whole swap area, and the flash never written. Both ran on 2026-10-07; the images are in [images/](images/README.md) and the transcripts in [docs/psram/](docs/psram/).
 
 | | Pimoroni Pico Plus 2 W | Adafruit Feather RP2350 HSTX |
@@ -167,9 +176,26 @@ RK0: v6root, 4872 blocks, running from its PSRAM copy: writable, every write los
 - **Nothing is saved across a power cycle.** Every disk write, the swap area included, goes to RAM; the next power-up starts from the pack as flashed. `sync` does no harm but saves nothing. (The flash-wear warnings in [disk_boot_readme.md](disk_boot_readme.md) concern emulators that write the flash; this firmware never does.)
 - **V6 on the Pico 2 W:** `ps` works; `df` with no argument looks for V6's built-in `/dev/rk2` and `/dev/rp0`, which this machine does not have, so type **`df /dev/rk0`**. `dc` is too large for the 56 KB machine.
 - **Seventh Edition (V7) is not supported.** Its kernel alone needs about 74 KB of memory (text 32,704 + data 1,854 + bss 39,812 bytes) and the emulated machine has 56 KB. The V7 tape (`media/unix/v7.tap.gz`), `tools/v7ld.py` and `tools/rkuboot.py` are kept as archive and reference only.
-- **Packs:** RK05 only (up to 4872 blocks), drive 0 only; the firmware must be under 256 KB.
+- **Packs:** RK05 only (up to 4872 blocks), drive 0 only (RK1 as well on the PSRAM boards). On the RP2350 boards the pack starts at 0x10240000, so the Pico 2 W's 4 MB hold 1.75 MB of pack: the V6 root pack is stored mapped (2,891 blocks in use). That build has not run on a board yet; `images/pico2w-v6/combined.uf2` is the earlier layout.
+- **The Pico W image uses the flash where the radio's firmware would go; a Pico W running it cannot use its radio.** Its 2 MB cannot hold Mini-Unix (3,061 blocks in use) clear of that region; the firmware says so at start-up and `tools/rk_image.py` when it packs. The RP2040 source of this commit compiles and has not run on a Pico W.
 - **Mini-Unix:** a refused swap write can restart the shell.
 - **Year 2000:** the `date` command takes a two-digit year.
+
+## The emulated processor, and where it is known to differ from a real J-11
+
+The processor is a J-11 as far as the software run on it needs: the instruction set without floating point, the three modes, memory management with 18-bit and 22-bit mapping, the CPU error and maintenance registers, and on the PSRAM boards the Unibus map of a PDP-11/84. It boots the Unix systems named above and passes the diagnostic ladder as [media/diagnostics/ladder.txt](media/diagnostics/ladder.txt) states it. **It is not claimed to be an exact KDJ11.** No diagnostic written for the KDJ11 has been run on it (none is in the diagnostic image here); the diagnostics that have been run are for other processors (the 11/20 family, the 11/34, the 11/44, the F-11 of the 11/23), judged against the published manuals.
+
+One behaviour was corrected from those runs: with a register as the source and memory as the destination, the register is read after the destination's address has been worked out, so `MOV R0,(R0)+` stores R0 already stepped and `MOV PC,X(R)` stores the address of the instruction plus 4 (KDJ11-A CPU Module User's Guide, EK-KDJ1A-UG-002, appendix B, table B-1, items 1 to 3). The F-11 CPU diagnostic CJKDBD0 halted at its test 264 before the change and runs to its test 405 after it; the 11/34 diagnostic DFKAA tests the 11/34's opposite behaviour in its test 145 and carries two patches in the ladder for that reason.
+
+Known differences, found by those tapes and left as they are:
+
+- **MMR0 after a reference in the illegal processor mode (10):** the emulator sets bits 15 and 14; a J-11 sets bit 15 (KDJ11-B CPU Module User's Guide, EK-KDJ1B-UG-001, table 1-10, page 1-21). Seen by the 11/44 memory-management diagnostic CKKTB, test 3 (140103 where 100103 is wanted).
+- **MMR1 and MMR2 are kept only while relocation is on.** A real J-11 loads MMR2 with the address of every instruction fetched and records register changes in MMR1 whether or not MMR0 bit 0 is set (the same guide, 1.4.7.2 and 1.4.7.3, page 1-20). Seen by CKKTA tests 14 and 16 and CKKTB test 7.
+- **MMR0 bits 3 to 1 are written only at an abort.** The 11/44 tape wants them to follow every reference (CKKTB test 12); the J-11's guide gives them a meaning only at an abort, so whether a J-11 differs from the emulator here is not settled by the manual.
+- **A memory-management abort and an odd address in one instruction** (CKKTB test 13: the stacked PC is 4 higher than the 11/44 tape wants) and **the address errors of CKKTB test 34:** not settled by the manuals read.
+- **PDR bit 15 does not read back** (CKKTA test 31). On the KDJ11 it is the bit that bypasses the cache; the emulated machine has no cache.
+- **Tests of the F-11 tape that a J-11 must fail:** test 405 wants no trap from a word reference to an odd address (the F-11 has none; the J-11 traps: table B-1, item 21) and test 410 wants MFPT to answer 3 (the J-11 answers 5). The emulator behaves as the J-11 there; the tape was not run further.
+- **Not modelled at all:** floating point (the kernel for the PSRAM boards is built with the distribution's switch for a machine without it), the cache and its registers beyond what Unix reads, memory on the Unibus itself, the red stack trap, and the registers the KDJ11-B's boot ROM uses.
 
 ## Repository layout
 
