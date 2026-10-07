@@ -1,0 +1,54 @@
+# The 22-bit kernel, built on the board from the distribution's own sources (tools/board_session.py).
+# The steps are those of the distribution's /usr/sys/run for an 11/45 or 11/70 kernel, with:
+#   - .fpp = 0 in conf/m45.s (the distribution's switch for a machine without floating point);
+#   - ONE changed line in ken/main.c: the "mem =" figure is computed without the 16-bit overflow
+#     (the original multiplies the number of 64-byte blocks by 5 before dividing by 16);
+#   - devices rk, tm, tc, as /usr/sys/run configures the RK kernel.
+# The kernel is installed as /rk70unix beside /rkunix, /unix (the name list ps reads) is linked to it
+# as an administrator of the time did for the kernel in use, and it is booted without resetting the board
+# (the packs live in PSRAM: a reset or a power cycle puts the pack back as the flash holds it).
+!boot
+!timeout 200
+stty -lcase
+chdir /usr/sys/ken
+!line ed main.c
+!line /mem = /s/maxmem\*5\/16/((maxmem>>4)\&07777)*5+(maxmem\&017)*5\/16/p
+!line w
+!line q
+!wait 1
+cc -c -O main.c
+ar r ../lib1 main.o
+rm main.o
+chdir ../conf
+!line ed m45.s
+!line /^.fpp = 1/s/1/0/p
+!line w
+!line q
+!wait 1
+as m45.s
+mv a.out m45.o
+cc mkconf.c
+mv a.out mkconf
+!line mkconf
+!line rk
+!line tm
+!line tc
+!line done
+!wait 2
+cc -c c.c
+as data.s l.s
+ld -x -r -d a.out m45.o c.o ../lib1 ../lib2
+nm -ug a.out
+sysfix a.out x
+mv x /rk70unix
+rm /unix
+ln /rk70unix /unix
+ls -l /rk70unix /rkunix
+sum /rk70unix
+sync
+sync
+!kernel rk70unix
+!expect mem = 18
+stty -lcase
+ps a
+!stats

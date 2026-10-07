@@ -1,0 +1,90 @@
+
+# stty -lcase
+# 
+[host: 0.13 s]
+# ps a
+TTY  PID COMMAND
+       2 -
+       6 ps a
+# 
+[host: 1.16 s]
+# df /dev/rk0
+/dev/rk0 895
+# 
+[host: 0.28 s]
+# /etc/mount /dev/rk1 /usr/source
+# 
+[host: 0.23 s]
+# ls /usr/source
+as
+c
+cref
+fort
+iolib
+m6
+mdec
+rat
+run
+s1
+s2
+s3
+s4
+s5
+s7
+salloc
+sno
+tmg
+yacc
+# 
+[host: 0.36 s]
+# cat >h.c
+main() { int i; i = 6*7; printf("hello from cc: %d\n", i); }
+# cc h.c
+# 
+[host: 3.03 s]
+# a.out
+hello from cc: 42
+# 
+[host: 0.11 s]
+# cat >h.s
+0
+# as h.s
+# 
+[host: 0.49 s]
+# a.out
+Bus error -- Core dumped
+# 
+[host: 0.17 s]
+# echo unix is still up
+unix is still up
+# 
+[host: 0.17 s]
+# time od /rkunix >/dev/null
+
+real       13.0
+user       12.4
+sys         0.4
+# 
+[host: 13.13 s]
+# time od /rkunix >/dev/null
+
+real       13.0
+user       12.4
+sys         0.4
+# 
+[host: 13.12 s]
+# === PDP-11 emulator stats: RP2350 (Pico 2 W), Cortex-M33, clk_sys 150.0 MHz (measured at start-up)
+CPU     J-11 (KDJ11-BF), MMU on, 22-bit, PSW 030000, PC 021526 (WAIT)
+speed   745950 instructions/s over the last second; 292677 average since BOOT (36996712 instructions)
+memory  3812 KB (00000000-16707777): 56 KB in SRAM, 39 KB of it in non-zero words; 3756 KB in PSRAM
+disk    RK11: 4122 blocks read, 2045 written
+        PSRAM: 4122 blocks read, 2045 written; both packs writable there, swap blocks 4000-4871
+        flash: 0 erases, 0 pages programmed - never written; the packs were copied from it at start-up in 1669 ms
+clock   KW11-L: 9878 ticks at 60 Hz, 0 dropped, interrupts on
+uptime  0:03:10 since power-up, 126 s since BOOT
+cores   core 0: the PDP-11 CPU and its device registers; core 1: USB, console, disk storage, 60 Hz, this block
+typed   755 characters from the port since BOOT, 762 read by the PDP-11, 0 waiting, 0 lost; the host was held back 0 times
+usb     longest gap between USB services since the banner: 456 us, during input
+===
+
+[board_session: exit 0]

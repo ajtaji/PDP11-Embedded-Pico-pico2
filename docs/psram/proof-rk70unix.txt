@@ -1,0 +1,29 @@
+# The session on the 22-bit kernel, run right after docs/psram/build-rk70unix.txt on the same
+# running system (no upload or reset in between): the system is up under /rk70unix.
+!boot
+!timeout 60
+stty -lcase
+ps a
+df /dev/rk0
+/etc/mount /dev/rk1 /usr/source
+ls /usr/source
+!line cat >h.c
+!line main() { int i; i = 6*7; printf("hello from cc: %d\n", i); }
+!eof
+!wait 1
+!timeout 120
+cc h.c
+a.out
+!expect hello from cc: 42
+# a user program whose first word is 0, a HALT: Unix must report the trap and go on
+!line cat >h.s
+!line 0
+!eof
+!wait 1
+as h.s
+a.out
+echo unix is still up
+!expect unix is still up
+time od /rkunix >/dev/null
+time od /rkunix >/dev/null
+!stats

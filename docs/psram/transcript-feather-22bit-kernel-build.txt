@@ -1,0 +1,127 @@
+PDP-11 J-11 on Pico 2: serial tape reader ready
+PSRAM: 8 MB on GPIO8, ID 0D 5D 53, clock 75000 kHz; packs copied and checked in 1669 ms (copy 881, check 303), memory cleared in 483 ms; memory 3812 KB; RK0 (whole, 4872 blocks) and RK1 (4000 blocks stored, 4000 exist: blocks 4000-4871 of RK1 answer with a drive error) writable in PSRAM, never written to flash; the PSRAM copy's kernel patch applied (block 1517 +90)
+PSRAM windows: packs uncached, memory cached
+pack checksums: RK0 21C285A3 5CA82BF0 RK1 42B553C5 4E5DE38C
+RK0: v6root, 4872 blocks, running from its PSRAM copy: writable, every write lost at power-off, the whole swap area (4000-4871); the flash is never written
+auto-boot: RK0, switches 173030, then "rkunix" at the @ prompt. Press Esc within 2 s for the diagnostic console.
+booting RK0, switches 173030
+@rkunix
+mem = 1036
+
+# S#T TY -LCASE
+# 
+[host: 0.15 s]
+# chdir /usr/sys/ken
+# 
+[host: 0.06 s]
+# ed main.c
+/mem = /s/maxmem\*5\/16/((maxmem>>4)\&07777)*5+(maxmem\&017)*5\/16/p
+4369
+w
+        printf("mem = %l\n", ((maxmem>>4)&07777)*5+(maxmem&017)*5/16);
+4397
+q
+# cc -c -O main.c
+# 
+[host: 9.34 s]
+# ar r ../lib1 main.o
+# 
+[host: 2.52 s]
+# rm main.o
+# 
+[host: 0.16 s]
+# chdir ../conf
+# 
+[host: 0.05 s]
+# ed m45.s
+/^.fpp = 1/s/1/0/p
+w
+10479
+.fpp = 0
+q
+10479
+# as m45.s
+# 
+[host: 2.57 s]
+# mv a.out m45.o
+# 
+[host: 0.19 s]
+# cc mkconf.c
+# 
+[host: 17.56 s]
+# mv a.out mkconf
+# 
+[host: 0.18 s]
+# mkconf
+rk
+tm
+tc
+done
+# cc -c c.c
+# 
+[host: 2.64 s]
+# as data.s l.s
+# 
+[host: 0.83 s]
+# ld -x -r -d a.out m45.o c.o ../lib1 ../lib2
+# 
+[host: 6.77 s]
+# nm -ug a.out
+# 
+[host: 0.70 s]
+# sysfix a.out x
+# 
+[host: 2.42 s]
+# mv x /rk70unix
+# 
+[host: 0.19 s]
+# rm /unix
+# 
+[host: 0.14 s]
+# ln /rk70unix /unix
+# 
+[host: 0.15 s]
+# ls -l /rk70unix /rkunix
+-rw-rw-rw-  2 root    28432 Aug 14 22:05 /rk70unix
+-rwxrwxrwx  1 root    28636 Aug 14 22:05 /rkunix
+# 
+[host: 0.35 s]
+# sum /rk70unix
+6972 56
+# 
+[host: 0.47 s]
+# sync
+# 
+[host: 0.14 s]
+# sync
+# 
+[host: 0.13 s]
+# #BOOT RK0
+@rk70unix
+mem = 18857
+# 
+[host: 18.30 s]
+# STTY -LCASE
+# 
+[host: 0.13 s]
+# ps a
+TTY  PID COMMAND
+       2 -
+       4 ps a
+# 
+[host: 1.16 s]
+# === PDP-11 emulator stats: RP2350 (Pico 2 W), Cortex-M33, clk_sys 150.0 MHz (measured at start-up)
+CPU     J-11 (KDJ11-BF), MMU on, 22-bit, PSW 030000, PC 021526 (WAIT)
+speed   630606 instructions/s over the last second; 597166 average since BOOT (11728876 instructions)
+memory  3812 KB (00000000-16707777): 56 KB in SRAM, 36 KB of it in non-zero words; 3756 KB in PSRAM
+disk    RK11: 3399 blocks read, 1742 written
+        PSRAM: 3399 blocks read, 1742 written; both packs writable there, swap blocks 4000-4871
+        flash: 0 erases, 0 pages programmed - never written; the packs were copied from it at start-up in 1669 ms
+clock   KW11-L: 3472 ticks at 60 Hz, 0 dropped, interrupts on
+uptime  0:01:23 since power-up, 19 s since BOOT
+cores   core 0: the PDP-11 CPU and its device registers; core 1: USB, console, disk storage, 60 Hz, this block
+typed   493 characters from the port since BOOT, 500 read by the PDP-11, 0 waiting, 0 lost; the host was held back 0 times
+usb     longest gap between USB services since the banner: 456 us, during input
+===
+
+[board_session: exit 0]

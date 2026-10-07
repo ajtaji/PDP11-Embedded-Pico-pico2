@@ -26,6 +26,11 @@ THE SCRIPT, one step per line:
     !wait N           N seconds, reading
     !expect TEXT      the transcript so far must contain TEXT, else the
                       session stops with exit 1
+    !kernel NAME      boot RK0 again WITHOUT resetting the board (the
+                      firmware's B frame: drive 0, switches 173030), type
+                      NAME at the boot block's "@" and wait for the prompt.
+                      The packs in PSRAM keep what was written to them, so
+                      a kernel just built can be booted. Type "sync" first.
     # at the start    a comment
 After each timed step the transcript gets a line "[host: N.NN s]": the time
 from the Return to the prompt, as the host saw it.
@@ -119,6 +124,20 @@ def main():
             pump(0.3)
         elif line.startswith("!wait "):
             pump(float(line.split()[1]))
+        elif line.startswith("!kernel "):
+            body = bytes([ord("B"), 3, 0, 0, 0o173030 & 255, 0o173030 >> 8])
+            s.write(bytes([0xF5]) + body + bytes([(-sum(body)) & 255]))
+            if not pump(10.0, "@"):
+                emit("\n[board_session: no @ from the boot block within 10 s of !kernel]\n")
+                rc = 1
+                break
+            t0 = time.time()
+            s.write(line[8:].strip().encode("ascii") + b"\r")
+            if not pump(timeout, prompt):
+                emit("\n[board_session: no prompt within %.0f s of booting %s]\n" % (timeout, line[8:].strip()))
+                rc = 1
+                break
+            emit("\n[host: %.2f s]\n%s" % (time.time() - t0, prompt))
         elif line.startswith("!expect "):
             if line[8:] not in text[0]:
                 emit("\n[board_session: EXPECTED TEXT NOT SEEN: %s]\n" % line[8:])
