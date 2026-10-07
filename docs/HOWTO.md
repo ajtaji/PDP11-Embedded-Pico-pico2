@@ -11,6 +11,7 @@ Step-by-step instructions for the [PDP-11 emulator for the Pico W and Pico 2 W](
 | Your own disk | [7. Build your own disk image](#7-build-your-own-disk-image) |
 | Your own firmware | [8. Build the firmware and images with PureMetal Forge](#8-build-the-firmware-and-images-with-puremetal-forge) |
 | Run the DEC diagnostics | [9. Run the diagnostic ladder](#9-run-the-diagnostic-ladder) |
+| A board with PSRAM | [10. The PSRAM boards](#10-the-psram-boards) |
 
 ## 1. What you need
 
@@ -286,3 +287,43 @@ runs until it halts or rings a bell, or for 3 s of emulated time, whichever
 is first, then the next starts: DFKAB prints `END OF DFKAB` well inside
 that; the long T-series tapes need a board (or a longer desk run) for their
 first bell.
+
+## 10. The PSRAM boards
+
+The Pimoroni Pico Plus 2 W and the Adafruit Feather RP2350 HSTX run V6 with 248 KB of memory. Their images are `images/picoplus2/combined.uf2` and `images/feather/combined.uf2`.
+
+**With the boot drive.** Hold BOOT while plugging the board in and copy the board's `combined.uf2` to the drive, as in section 2.
+
+**With no button and no drive** (the way the boards here were loaded). The board must be running a program with PureMetal's USB serial (any PureMetal example, or this firmware). The board is named by the USB hub port it is plugged into (`--hub-port N`) or by its USB serial number (`--usb-serial TEXT`), never by a COM number.
+
+1. First time on a board, test one flash sector and read the flash chip's ID:
+
+   ```
+   python tools/pack_install.py --board picoplus2 --image images/picoplus2/combined.uf2 --hub-port 9 --compiler PureMetalForge.exe --probe
+   ```
+
+   It builds the installer (`pico2/packinstall.pico2`), uploads it through the compiler, and prints the chip (`JEDEC ID EF 40 18 ... 16 MB; size measured by address wrap: 16 MB`) and `test sector at 0x4B4000: programmed, read back the same, erased again, reads blank`. The installer needs `FlashJedecIdRead()` in the compiler's `RP2350/Lib/flashid.pico2`.
+2. Send the packs (the installer is running, so no `--compiler`):
+
+   ```
+   python tools/pack_install.py --board picoplus2 --image images/picoplus2/combined.uf2 --hub-port 9
+   ```
+
+   About 12 s a pack. Each ends `flash checksum 21C285A3 5CA82BF0 = the file's`. A run that stops part way leaves the region marked; run the line again and only the missing sectors are sent.
+3. Build the firmware and upload it through the compiler:
+
+   ```
+   python tools/psram_build.py --board picoplus2 --compiler PureMetalForge.exe --hub-port 9
+   ```
+
+   A firmware upload writes only the firmware's own sectors: the packs stay. The start-up line `pack checksums: RK0 ... RK1 ...` must show the values of step 2 (`pack_install.py --sums` prints the file's).
+
+**The proof session.** `tools/board_session.py` types a script at the Unix prompt on one open of the port and times each step:
+
+```
+python tools/board_session.py --hub-port 9 --script docs/psram/proof.txt --out transcript.txt
+```
+
+`docs/psram/proof.txt` checks `mem = 1036`, runs `ps`, `df /dev/rk0`, mounts RK1, types and compiles a C program and runs it, times `od /rkunix` twice and takes the statistics block. `docs/psram/swap.txt` keeps twelve 30 KB processes alive at once. The transcripts of both boards are beside them.
+
+**V6 notes for these boards.** `stty -lcase` first if you type C: in upper-case mode `\n` in a string arrives as `N`. `#` and `@` are V6's erase and kill characters. Everything written is lost at power-off.

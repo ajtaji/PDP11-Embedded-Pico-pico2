@@ -1,0 +1,141 @@
+PDP-11 J-11 on Pico 2: serial tape reader ready
+PSRAM: 8 MB on GPIO8, ID 0D 5D 53, clock 75000 kHz; packs copied and checked in 1258 ms (copy 903, check 330); memory 248 KB; RK0 and RK1 (4000 blocks) writable in PSRAM, never written to flash; the PSRAM copy's kernel patch applied (block 1517 +90)
+PSRAM windows: packs uncached, memory cached
+pack checksums: RK0 21C285A3 5CA82BF0 RK1 1215D2AC 967B3EC6
+RK0: v6root, 4872 blocks, running from its PSRAM copy: writable, every write lost at power-off, the whole swap area (4000-4871); the flash is never written
+auto-boot: RK0, switches 173030, then "rkunix" at the @ prompt. Press Esc within 2 s for the diagnostic console.
+booting RK0, switches 173030
+@rkunix
+mem = 1036
+
+# S#T TY -LCASE
+# 
+[host: 0.15 s]
+# cat >big.c
+char a[30000];
+main() { a[29999] = 1; sleep(45); }
+# cc big.c
+# 
+[host: 3.31 s]
+# a.out&
+10
+# 
+[host: 0.05 s]
+# a.out&
+11
+# 
+[host: 0.21 s]
+# a.out&
+12
+# 
+[host: 0.21 s]
+# a.out&
+13
+# 
+[host: 0.21 s]
+# a.out&
+14
+# 
+[host: 0.21 s]
+# a.out&
+15
+# 
+[host: 0.21 s]
+# a.out&
+16
+# 
+[host: 0.08 s]
+# a.out&
+17
+# 
+[host: 0.08 s]
+# a.out&
+18
+# 
+[host: 0.22 s]
+# a.out&
+19
+# 
+[host: 0.22 s]
+# a.out&
+20
+# 
+[host: 0.08 s]
+# a.out&
+21
+# 
+[host: 0.22 s]
+# ps l
+TTY F S UID   PID PRI ADDR  SZ  WCHAN COMMAND
+8:  0 W   0     2  4010364   9  62722 -
+8:  0 W   0    10  90 7764  64  62374 a.out
+8:  0 W   0    11  9010164  64  62374 a.out
+8:  0 W   0    12  9010064  64  62374 a.out
+8:  0 W   0    13  9010264  64  62374 a.out
+8:  0 W   0    14  9010375  64  62374 a.out
+8:  0 W   0    15  9010475  64  62374 a.out
+8:  0 W   0    16  9010575  64  62374 a.out
+8:  1 W   0    17  90 2604  64  62374 a.out
+8:  1 W   0    18  90 4632  64  62374 a.out
+8:  1 W   0    19  90 5625  64  62374 a.out
+8:  1 W   0    20  90 1461  64  62374 a.out
+8:  1 W   0    21  90 3577  64  62374 a.out
+8:  1 R   0    22 101 7230  17        ps l
+# 
+[host: 3.27 s]
+# === PDP-11 emulator stats: RP2350 (Pico 2 W), Cortex-M33, clk_sys 150.0 MHz (measured at start-up)
+CPU     J-11 (KDJ11-BF), MMU on, 18-bit, PSW 030000, PC 002502 (WAIT)
+speed   488195 instructions/s over the last second; 293701 average since BOOT (5723674 instructions)
+memory  248 KB (000000-757777): 56 KB in SRAM, 34 KB of it in non-zero words; 192 KB in PSRAM
+disk    RK11: 1129 blocks read, 715 written
+        PSRAM: 1129 blocks read, 715 written; both packs writable there, swap blocks 4000-4871
+        flash: 0 erases, 0 pages programmed - never written; the packs were copied from it at start-up in 1258 ms
+clock   KW11-L: 681 ticks at 60 Hz, 0 dropped, interrupts on
+uptime  0:00:19 since power-up, 19 s since BOOT
+cores   core 0: the PDP-11 CPU and its device registers; core 1: USB, console, disk storage, 60 Hz, this block
+typed   174 characters from the port since BOOT, 181 read by the PDP-11, 0 waiting, 0 lost; the host was held back 0 times
+usb     longest gap between USB services since the banner: 347 us, during input
+===
+ps l
+TTY F S UID   PID PRI ADDR  SZ  WCHAN COMMAND
+8:  1 W   0     2  40 6736   9  62722 -
+8:  0 W   0    10  90 7764  64  62374 a.out
+8:  0 W   0    11  9010164  64  62374 a.out
+8:  0 W   0    12  9010064  64  62374 a.out
+8:  0 W   0    13  9010264  64  62374 a.out
+8:  0 W   0    14  9010375  64  62374 a.out
+8:  0 W   0    15  9010475  64  62374 a.out
+8:  0 W   0    16  9010575  64  62374 a.out
+8:  1 W   0    17  90 2604  64  62374 a.out
+8:  1 W   0    18  90 4632  64  62374 a.out
+8:  1 W   0    19  90 5625  64  62374 a.out
+8:  1 W   0    20  90 1461  64  62374 a.out
+8:  1 W   0    21  90 3577  64  62374 a.out
+8:  1 R   0    23 108 7046  17        ps l
+# 
+[host: 2.52 s]
+# ps
+TTY  PID COMMAND
+       2 -
+      24 ps
+# 
+[host: 1.82 s]
+# df /dev/rk0
+/dev/rk0 1090
+# 
+[host: 0.35 s]
+# === PDP-11 emulator stats: RP2350 (Pico 2 W), Cortex-M33, clk_sys 150.0 MHz (measured at start-up)
+CPU     J-11 (KDJ11-BF), MMU on, 18-bit, PSW 030000, PC 002502 (WAIT)
+speed   381431 instructions/s over the last second; 130710 average since BOOT (9055588 instructions)
+memory  248 KB (000000-757777): 56 KB in SRAM, 37 KB of it in non-zero words; 192 KB in PSRAM
+disk    RK11: 1976 blocks read, 1031 written
+        PSRAM: 1976 blocks read, 1031 written; both packs writable there, swap blocks 4000-4871
+        flash: 0 erases, 0 pages programmed - never written; the packs were copied from it at start-up in 1258 ms
+clock   KW11-L: 3669 ticks at 60 Hz, 0 dropped, interrupts on
+uptime  0:01:09 since power-up, 69 s since BOOT
+cores   core 0: the PDP-11 CPU and its device registers; core 1: USB, console, disk storage, 60 Hz, this block
+typed   194 characters from the port since BOOT, 201 read by the PDP-11, 0 waiting, 0 lost; the host was held back 0 times
+usb     longest gap between USB services since the banner: 347 us, during input
+===
+
+[board_session: exit 0]

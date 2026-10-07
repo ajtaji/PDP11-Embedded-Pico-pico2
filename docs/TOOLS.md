@@ -148,6 +148,36 @@ python tools/mmu_gen.py --check
 Run it after any change to `instructions.pico`; `--check` fails if the
 generated files are out of date.
 
+## `psram_build.py` - the PSRAM boards' image
+
+```
+python tools/psram_build.py --board feather|picoplus2 --compiler PureMetalForge.exe [--out DIR] [--desk]
+```
+
+Compiles `pico2/diag.pico2` with the board's three constants (`#PSRAM = 1`, the chip-select pin, the flash size), makes the V6 root pack with `/dev/rk1`, and packs firmware, RK0 and RK1 into one `combined.uf2`.
+
+## `pack_install.py` - the packs into a board's flash over USB serial
+
+```
+python tools/pack_install.py --board feather|picoplus2 --image combined.uf2 (--hub-port N | --usb-serial TEXT)
+                             [--compiler PureMetalForge.exe [--board-file FILE]] [--region all|rk0|rk1]
+                             [--max-seconds 240] [--probe] [--status] [--sums]
+```
+
+For a board with no boot drive at hand. With `--compiler` it builds and uploads the installer (`pico2/packinstall.pico2`); then it sends each pack region of the image a sector at a time, every sector answered with a checksum, the header sector last, and the whole region read back and compared at the end. `--probe` tests one sector first; `--status` only asks what the flash holds (`PACK`, `UNFINISHED`, `BLANK`, `OTHER`); `--sums` prints the image's region checksums, the ones the firmware prints at start-up. The installer refuses a region inside the first 256 KB, past the flash size it measured, or past the size it was built for. It runs on Windows (the hub port from the device's location path) and reads the same from sysfs on Linux, where it has not been run.
+
+## `board_session.py` - a scripted session at the Unix prompt
+
+```
+python tools/board_session.py (--hub-port N | --usb-serial TEXT) --script FILE [--out TRANSCRIPT] [--max-seconds 240]
+```
+
+One open of the port; each line of the script is typed and timed from the Return to the next prompt; `!boot`, `!stats`, `!eof`, `!line`, `!expect`, `!timeout`, `!wait` steps (the file's header lists them). The scripts used on the PSRAM boards are in `docs/psram/`.
+
+## `psram_desk_check.py` - the PSRAM image on the emulator
+
+Six cases per board on the PureMetal ARM emulator's PSRAM model (the chip present, left in QPI mode, absent, no model, a 4 MB chip, the other board's pin). Not run since the firmware moved to the compiler's PSRAM library; see its header.
+
 ## `v7ld.py` - a V7 link editor (archive and reference only)
 
 V7 is not supported on this emulator (its kernel needs about 74 KB; the
@@ -181,9 +211,6 @@ python tools/rkuboot.py --test-pack OUT NAME=FILE ...
 
 These exist outside the repository and would be worth adding:
 
-- a board session script: flashes a board through BOOTSEL (the reboot text,
-  then the copy), opens the port once, boots Unix, runs commands and takes
-  statistics, and saves the transcript;
 - a screenshot renderer: turns a transcript into 80-column terminal images;
 
 (A UF2 merge script used before is replaced by `rk_image.py --combined`.)

@@ -1,0 +1,20 @@
+# the PSRAM proof session: memory size, both drives, the C compiler, a job timed, the statistics
+!boot
+!expect mem = 1036
+!timeout 60
+stty -lcase
+ps
+df /dev/rk0
+/etc/mount /dev/rk1 /usr/source
+ls /usr/source
+!line cat >h.c
+!line main() { int i; i = 6*7; printf("hello from cc: %d\n", i); }
+!eof
+!wait 1
+!timeout 120
+cc h.c
+a.out
+!expect hello from cc: 42
+time od /rkunix >/dev/null
+time od /rkunix >/dev/null
+!stats

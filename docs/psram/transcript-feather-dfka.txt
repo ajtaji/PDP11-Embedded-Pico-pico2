@@ -1,0 +1,8 @@
+15_DFKAA: #GO 000200
+15_DFKAA                     PASS       | END OF DFKAA-B
+16_DFKAB: #GO 000200
+16_DFKAB                     PASS       | END OF DFKAB 
+17_DFKAC: #GO 000200
+17_DFKAC                     PASS       | END PASS
+report: self-test: R0=55 steps=23 PASS
+tape_ladder: 3 of 3 PASS

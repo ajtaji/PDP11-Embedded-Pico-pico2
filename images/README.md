@@ -55,8 +55,46 @@ and the kernel's swap sized to the firmware's 112-block swap RAM disk. `ps`
 works; use `df /dev/rk0` (plain `df` looks for V6's built-in `/dev/rk2` and
 `/dev/rp0`). V6's `dc` is too large for the 56 KB machine.
 
-The PSRAM boards' images, not yet run on a board, are in
-[untested/](untested/README.md).
+**This file is the build of commit `f358dcd`.** The Pico 2 W source has changed since (the memory
+management unit's fast windows hold host addresses; README, PSRAM boards), and that build has not run on a
+Pico 2 W, so this file was not replaced. The unchanged source built for a Pico 2 W ran on an Adafruit Feather
+RP2350 (the same RP2350A): `mem = 76`, `od /rkunix` in 13.04 s, DFKAA, DFKAB and DFKAC pass, no clock tick
+dropped. That is supporting evidence, not a Pico 2 W run. The Pico W image is unaffected: its source did not
+change and it still reproduces from HEAD.
+
+## PSRAM boards: Pimoroni Pico Plus 2 W and Adafruit Feather RP2350 HSTX (V6, 248 KB)
+
+| Board | File | Size | SHA-256 |
+|---|---|---|---|
+| Pimoroni Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w)): RP2350B, PSRAM chip select GPIO47, 16 MB flash | `picoplus2/combined.uf2` | 9,378,816 | `62789e35ee5c6c8e54eecee3b8767a62c3ef67646f5e73b0d4e4f55419c5aa27` |
+| Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM ([6130](https://www.adafruit.com/product/6130)): RP2350A, GPIO8, 8 MB flash | `feather/combined.uf2` | 9,378,816 | `cebc0629fda95a4975144c330f84a7baf9ac5b1219e5e6392b043d0653a8d722` |
+
+Each is one UF2 with the firmware, RK0 (the V6 root pack, as in `pico2w-v6/`,
+plus `/dev/rk1`) and RK1 (V6's source pack, `../media/unix/v6src.gz`). Both
+boards ran these bytes on 2026-10-07: `mem = 1036`, the C compiler, the
+second drive, a swap test and the DEC diagnostics DFKAA, DFKAB and DFKAC.
+What each printed is in [../README.md](../README.md#psram-boards) and the
+transcripts are in `../docs/psram/`.
+
+How the bytes reached the boards: the packs over USB serial with
+`tools/pack_install.py` and the firmware through the compiler's uploader
+(HOWTO section 10), not by copying these files to a boot drive. The
+firmware inside each file has the SHA-256 of the firmware the board ran
+(`picoplus2` `d2dc4c94...758e5`, `feather` `d651c785...4101`), and the pack
+regions have the checksums the boards print at start-up
+(`RK0 21C285A3 5CA82BF0 RK1 1215D2AC 967B3EC6`).
+
+The `picoplus2` image is for the Pico Plus 2 and the Pico Plus 2 W (same
+chip, pin and flash by the makers' board files); the board that ran it is
+the Pico Plus 2 W. The radio is not used.
+
+Built with PureMetal Forge main `681bc04ed` (compiler exes of `a55d11720`):
+
+```
+python tools/tape2pico.py --empty
+python tools/psram_build.py --board picoplus2 --compiler PureMetalForge.exe
+python tools/psram_build.py --board feather   --compiler PureMetalForge.exe
+```
 
 ## Pico W (RP2040): Mini-Unix
 

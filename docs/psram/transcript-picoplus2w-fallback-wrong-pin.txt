@@ -1,0 +1,43 @@
+PDP-11 J-11 on Pico 2: serial tape reader ready
+PSRAM: not in use - the PSRAM library found none (its error 5: no chip answered the ID read on this pin). Running as the Pico 2 build: 56 KB, the pack read-only in flash.
+pack checksums: RK0 21C285A3 5CA82BF0 RK1 1215D2AC 967B3EC6
+RK0: v6root, 4872 blocks, swap 4000-4111 on a RAM disk, READ-ONLY: the flash is never written
+auto-boot: RK0, switches 173030, then "rkunix" at the @ prompt. Press Esc within 2 s for the diagnostic console.
+booting RK0, switches 173030
+@rkunix
+mem = 76
+
+# S#T TY -LCASE
+# 
+[host: 0.16 s]
+# time od /rkunix >/dev/null
+
+real       13.0
+user       12.4
+sys         0.3
+# 
+[host: 13.09 s]
+# time od /rkunix >/dev/null
+
+real       13.0
+user       12.2
+sys         0.5
+# 
+[host: 13.08 s]
+# === PDP-11 emulator stats: RP2350 (Pico 2 W), Cortex-M33, clk_sys 150.0 MHz (measured at start-up)
+CPU     J-11 (KDJ11-BF), MMU on, 18-bit, PSW 030000, PC 002502 (WAIT)
+speed   751615 instructions/s over the last second; 607787 average since BOOT (20100477 instructions)
+memory  56 KB (000000-157777), 38 KB in non-zero words
+disk    RK11: 464 blocks read, 106 written
+        cache: 154 reads from RAM, 310 from flash (XIP)
+        swap RAM disk: blocks 4000-4111, 38 of 112 used so far
+        file-write overlay: 4 of 36 blocks
+        flash: 0 erases, 0 pages programmed - READ-ONLY build, never written
+clock   KW11-L: 1597 ticks at 60 Hz, 0 dropped, interrupts on
+uptime  0:00:33 since power-up, 33 s since BOOT
+cores   core 0: the PDP-11 CPU and its device registers; core 1: USB, console, disk storage, 60 Hz, this block
+typed   67 characters from the port since BOOT, 74 read by the PDP-11, 0 waiting, 0 lost; the host was held back 0 times
+usb     longest gap between USB services since the banner: 315 us, during input
+===
+
+[board_session: exit 0]

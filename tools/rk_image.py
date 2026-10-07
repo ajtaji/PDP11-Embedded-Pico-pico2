@@ -27,7 +27,7 @@ THE FLASH REGION (disk.pico's header says the same)
     Pico 2 W (RP2350, 4 MB flash):  0x10040000 - 0x103FFFFF
     feather    (Adafruit Feather RP2350 with 8 MB PSRAM, 8 MB flash) and
     picoplus2  (Pimoroni Pico Plus 2 and Pico Plus 2 W, 16 MB flash, 8 MB
-               PSRAM): the PSRAM builds, UNTESTED ON HARDWARE. RK0 from
+               PSRAM): the PSRAM builds (both ran on 2026-10-07). RK0 from
                0x10040000, RK1 from 0x102C0000 (--drive1), both dense
     The firmware lives below 0x10040000 (256 KB); this tool refuses a
     firmware bigger than that.
@@ -72,7 +72,7 @@ SWAP
     (Mini-Unix: 4000,872, SWPLO and NSWAP in its /usr/sys/param.h). Check
     it against the kernel's own configuration; --swap none turns it off.
 
-THE PSRAM BUILD (--chip feather or picoplus2; psram.pico2 - UNTESTED ON HARDWARE)
+THE PSRAM BUILD (--chip feather or picoplus2; pico2/psram_pdp11.pico2)
     The firmware copies the packs into the PSRAM at start-up and runs them
     from there, writable, with the whole swap area - or, if the PSRAM is
     not there or fails its checks, runs RK0 from the flash exactly as the

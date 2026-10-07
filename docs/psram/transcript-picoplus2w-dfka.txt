@@ -1,0 +1,17 @@
+59:#PSRAM = 1                   ; 1 = a board with QSPI PSRA
+60:#PSRAM_CS_PIN = 47            ; its chip select: GPIO8 on
+61:#FLASH_CHIP = $1000000        ; the flash: 4 MB on the Pi
+ROM_TOTAL_RP2350|138612|4194304
+pmfc: wrote C:\pmfw\pdp11\out\pim\diag_c2.bin
+pmfc: uploading diag_c2.bin (RP2350) through COM37
+pmfc: uploaded.
+pmfc: OK
+exit=0 board=pim hub=9 port=COM37 sha=c1e96c393ef1dd6b
+15_DFKAA: #GO 000200
+15_DFKAA                     PASS       | END OF DFKAA-B
+16_DFKAB: #GO 000200
+16_DFKAB                     PASS       | END OF DFKAB 
+17_DFKAC: #GO 000200
+17_DFKAC                     PASS       | END PASS
+report: self-test: R0=55 steps=23 PASS
+tape_ladder: 3 of 3 PASS

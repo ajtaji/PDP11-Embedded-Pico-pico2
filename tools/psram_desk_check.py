@@ -9,8 +9,15 @@ back to running exactly as the Pico 2 W build does.
 
 desk.bin comes from tools/psram_build.py --desk. arm_run is the PureMetal ARM
 emulator with the QSPI PSRAM model (its psram= and flash= options; compiler
-branch pdp11-psram-support, or a later main). The image is UNTESTED ON
-HARDWARE; this is the proof that exists.
+branch pdp11-psram-support, or a later main). Both boards have run the
+image (2026-10-07); this check covers the cases a real board cannot show:
+no chip, a 4 MB chip, a chip left in QPI mode.
+
+NOT RUN SINCE THE FIRMWARE MOVED TO THE COMPILER'S PSRAM LIBRARY
+(2026-10-07): the patterns below were changed to the new start-up lines by
+hand, with boards connected and so with no emulator. Run it once on a desk
+with no board attached before relying on it; the emulator's chip model
+answers ID 0D 5D 40 and may need to learn the library's bring-up.
 
 EACH CASE boots the image to V6's "#" with nothing typed and checks the
 banner, the RK0 line and V6's own memory size line:
@@ -39,10 +46,10 @@ BOARDS = {"feather": (8, "8M", 47), "picoplus2": (47, "16M", 8)}   # pin, flash,
 def cases(board):
     pin, flash, other = BOARDS[board]
     base = ["flash=" + flash]
-    use = [r"PSRAM \(UNTESTED ON HARDWARE\): 8 MB on GPIO%d, ID 0D 5D 40" % pin,
+    use = [r"PSRAM: 8 MB on GPIO%d, ID 0D 5D 40" % pin,
            r"RK0: v6root, 4872 blocks, running from its PSRAM copy: writable.*the whole swap area \(4000-4871\)",
            r"mem = 1036\s*#"]
-    fall = [r"PSRAM \(UNTESTED ON HARDWARE\): not in use - ",
+    fall = [r"PSRAM: not in use - ",
             r"RK0: v6root, 4872 blocks, swap 4000-4111 on a RAM disk, READ-ONLY",
             r"mem = 76\s*#"]
     pin_opt = "" if pin == 8 else ",cs=%d" % pin
@@ -51,7 +58,7 @@ def cases(board):
         ("warm", base + ["psram=8M%s,qpi" % pin_opt], use),
         ("none", base + ["psram=0" + pin_opt], fall),
         ("absent", base, fall),
-        ("small", base + ["psram=4M" + pin_opt], fall + [r"the write test failed"]),
+        ("small", base + ["psram=4M" + pin_opt], fall + [r"the chip found has 4 MB"]),
         ("wrong_pin", base + ["psram=8M" + ("" if other == 8 else ",cs=%d" % other)], fall),
     ]
 

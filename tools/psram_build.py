@@ -4,17 +4,22 @@ psram_build.py - build the PSRAM boards' V6 image from this repository.
 
     python tools/psram_build.py --board feather   [--compiler EXE] [--out DIR] [--desk]
     python tools/psram_build.py --board picoplus2 [--compiler EXE] [--out DIR] [--desk]
+    add --hub-port N or --usb-serial TEXT to upload the firmware as well, through the
+    compiler's own uploader, to the running board found there (tools/pack_install.py
+    finds boards the same way; the packs are its job)
 
-UNTESTED ON HARDWARE. These images have run only on the desk, in the
-PureMetal ARM emulator with its PSRAM model (arm_run ... flash=8M psram=8M,
-or flash=16M psram=8M,cs=47).
+Both boards ran these builds on 2026-10-07 (V6 reports mem = 1036; the
+README's PSRAM section has what each printed). The same image runs on the
+desk in the PureMetal ARM emulator with its PSRAM model (arm_run ...
+flash=8M psram=8M, or flash=16M psram=8M,cs=47).
 
 THE BOARDS
     feather    Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM
                (RP2350A, 8 MB flash, APS6404L PSRAM on QMI CS1 = GPIO8)
     picoplus2  Pimoroni Pico Plus 2 and Pico Plus 2 W
                (RP2350B, 16 MB flash, APS6404L PSRAM on QMI CS1 = GPIO47;
-               the W's radio is not used)
+               the W's radio is not used). The board that ran it is the
+               Pico Plus 2 W.
 
 WHAT IT DOES
     1. Compiles J11_18MHz_KDJ11_BF/pico2/diag.pico2 with the board's three
@@ -31,7 +36,9 @@ WHAT IT DOES
 
 OUTPUT (in --out, default build_<board>/ at the repository root)
     diag.bin        the firmware
-    combined.uf2    firmware and both packs, one UF2 - the file to flash
+    combined.uf2    firmware and both packs, one UF2: for the board's boot
+                    drive, or for tools/pack_install.py (the packs over USB
+                    serial, then the firmware through the compiler's uploader)
     desk.bin        with --desk: the flat image for arm_run
 """
 import argparse, gzip, os, shutil, subprocess, sys
@@ -62,6 +69,8 @@ def main():
     ap.add_argument("--compiler", default="PureMetalForge.exe")
     ap.add_argument("--out")
     ap.add_argument("--desk", action="store_true")
+    ap.add_argument("--hub-port", type=int)
+    ap.add_argument("--usb-serial")
     a = ap.parse_args()
     pin, flash = BOARDS[a.board]
     out = os.path.abspath(a.out or os.path.join(REPO, "build_" + a.board))
@@ -77,8 +86,13 @@ def main():
     tmp = os.path.join(SRC, "diag_%s.pico2" % a.board)
     fw = os.path.join(out, "diag.bin")
     open(tmp, "wb").write(text.encode("utf-8"))
+    cmd = [a.compiler, "--compile", tmp, "-t", "rp2350", "-o", fw]
+    if a.hub_port is not None or a.usb_serial:
+        sys.path.insert(0, HERE)
+        import pack_install                  # the board by where it is plugged in, or by its serial number
+        cmd += ["--port", pack_install.find_port(a)]
     try:
-        run([a.compiler, "--compile", tmp, "-t", "rp2350", "-o", fw], cwd=SRC)
+        run(cmd, cwd=SRC)
     finally:
         os.remove(tmp)
 
@@ -111,7 +125,7 @@ def main():
     run(cmd)
     for f in (root, src, os.path.join(out, "v6root.uf2")):
         os.remove(f)
-    print("psram_build: %s done - %s (UNTESTED ON HARDWARE)" % (a.board, os.path.join(out, "combined.uf2")))
+    print("psram_build: %s done - %s" % (a.board, os.path.join(out, "combined.uf2")))
 
 
 if __name__ == "__main__":

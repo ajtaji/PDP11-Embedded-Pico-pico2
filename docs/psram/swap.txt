@@ -1,0 +1,31 @@
+# twelve 30 KB processes alive at once: more than the 207 KB of user memory, so V6 must swap
+!boot
+!timeout 60
+stty -lcase
+!line cat >big.c
+!line char a[30000];
+!line main() { a[29999] = 1; sleep(45); }
+!eof
+!wait 1
+!timeout 120
+cc big.c
+a.out&
+a.out&
+a.out&
+a.out&
+a.out&
+a.out&
+a.out&
+a.out&
+a.out&
+a.out&
+a.out&
+a.out&
+ps l
+!stats
+!wait 3
+ps l
+!wait 40
+ps
+df /dev/rk0
+!stats

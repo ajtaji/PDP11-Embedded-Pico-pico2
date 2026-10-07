@@ -126,9 +126,36 @@ What remains is Unix's own, on any PDP-11:
 - On the Pico W the RAM for disk writes is small (Known limits, below): a
   session of about ten commands fills it, whatever was pasted.
 
-## PSRAM boards (untested on hardware)
+## PSRAM boards
 
-Images for the Adafruit Feather RP2350 (8 MB PSRAM) and the Pimoroni Pico Plus 2 and Pico Plus 2 W are in [images/untested/](images/untested/README.md). They have run only in the PureMetal ARM emulator and are not yet tested on hardware; do not treat them as ready to flash until one has run on the board it names. With the PSRAM found, V6 reports `mem = 1036` instead of 76 and gets its whole swap area. Without it, they run as the Pico 2 W build does.
+Two boards with 8 MB of QSPI PSRAM run V6 with **248 KB of PDP-11 memory** (V6 prints `mem = 1036`, against 76 on the Pico 2 W), both RK05 packs writable in PSRAM with the whole swap area, and the flash never written. Both ran on 2026-10-07; the images are in [images/](images/README.md) and the transcripts in [docs/psram/](docs/psram/).
+
+| | Pimoroni Pico Plus 2 W | Adafruit Feather RP2350 HSTX |
+|---|---|---|
+| Chip, PSRAM chip select | RP2350B, GPIO47 | RP2350A, GPIO8 |
+| Flash (JEDEC ID read on the board) | Winbond W25Q128JV, 16 MB (EF 40 18) | Winbond W25Q64JV, 8 MB (EF 40 17) |
+| Image | `images/picoplus2/combined.uf2` | `images/feather/combined.uf2` |
+| V6 start-up | `mem = 1036` | `mem = 1036` |
+| `time od /rkunix >/dev/null`, timed from the host | 13.08 s | 13.08 s |
+| `cc` of a small C file | 3.5 s | 3.5 s |
+| Packs copied from flash into PSRAM at start-up | 1258 ms | 1258 ms |
+| DEC diagnostics DFKAA, DFKAB, DFKAC | 3 of 3 pass | 3 of 3 pass |
+
+What a board prints at start-up:
+
+```
+PSRAM: 8 MB on GPIO47, ID 0D 5D 53, clock 75000 kHz; packs copied and checked in 1258 ms (copy 903, check 330); memory 248 KB; RK0 and RK1 (4000 blocks) writable in PSRAM, never written to flash; the PSRAM copy's kernel patch applied (block 1517 +90)
+PSRAM windows: packs uncached, memory cached
+pack checksums: RK0 21C285A3 5CA82BF0 RK1 1215D2AC 967B3EC6
+RK0: v6root, 4872 blocks, running from its PSRAM copy: writable, every write lost at power-off, the whole swap area (4000-4871); the flash is never written
+```
+
+- **What V6 gains:** the C compiler runs (`cc`), `/etc/mount /dev/rk1 /usr/source` mounts V6's source pack, and twelve 30 KB processes stayed alive at once with seven swapped out. Every write is lost at power-off, as on the other boards.
+- **The chip is set up by the compiler's own library** (`RP2350/Lib/psram.pico2`); `pico2/psram_pdp11.pico2` holds what the PDP-11 does with the memory.
+- **A program in PSRAM runs as fast as one in SRAM.** The memory management unit's fast windows hold a host address for each page, in SRAM or in PSRAM alike. Before that change the same `od` job took 46.2 s with the program in PSRAM.
+- **Which window, measured on V6 itself:** the PDP-11's memory goes through the XIP cache (13.08 s for the `od` job; 18.56 s through the uncached window); the packs go through the uncached window, so a block transfer evicts nothing.
+- **If the PSRAM is not found**, or is not a working 8 MB chip, the pin is given back and the board runs as the Pico 2 W build does (56 KB, the pack read-only in flash, `mem = 76`), and the first line says why. Shown on a board by building the Pimoroni image with the Feather's pin: `PSRAM: not in use - the PSRAM library found none (its error 5: no chip answered the ID read on this pin). Running as the Pico 2 build: 56 KB, the pack read-only in flash.` A 4 MB chip and a chip that fails its test could not be shown on these boards; `tools/psram_desk_check.py` covers them on the emulator and has not been run again since the firmware moved to the library.
+- **Getting it onto a board:** copy `combined.uf2` to the board's boot drive (hold BOOT while plugging in), or, with no button and no drive, send the packs over USB serial with `tools/pack_install.py` and upload the firmware with the compiler: [docs/HOWTO.md, section 10](docs/HOWTO.md#10-the-psram-boards). The boards here were loaded the second way; the firmware and pack bytes on them are the ones in the image files (the firmware's SHA-256 and the pack checksums were compared), but the files themselves were not copied to a boot drive.
 
 ## Known limits
 
@@ -148,13 +175,13 @@ Images for the Adafruit Feather RP2350 (8 MB PSRAM) and the Pimoroni Pico Plus 2
 
 | Path | What it is |
 |---|---|
-| `images/` | Ready-to-flash UF2 files: `pico2w-v6/combined.uf2`, `picow-mini-unix/firmware.uf2` and `minix.uf2`, with sizes and SHA-256 values in [images/README.md](images/README.md) |
+| `images/` | Ready-to-flash UF2 files: `pico2w-v6/combined.uf2`, `picow-mini-unix/firmware.uf2` and `minix.uf2`, `picoplus2/combined.uf2`, `feather/combined.uf2`, with sizes and SHA-256 values in [images/README.md](images/README.md) |
 | `media/unix/` | Unix distributions from the Unix Heritage Society archive: V6 root and source packs, the V7 tape (archive only), Mini-Unix tapes, 1BSD and 2BSD |
 | `media/diagnostics/` | DEC MAINDEC and XXDP diagnostics, the ladder plan `ladder.txt` and `INDEX.md` |
 | `media/papertape/` | DEC Absolute Loader and Single-User BASIC paper tape images, with a SIM-H configuration file |
 | `media/README.md` | Sources and descriptions of everything in `media/` |
 | `mini-unix.rk05` | The Mini-Unix RK05 disk image the Pico W pack is built from |
-| `tools/` | Python host tools: `rk_image.py`, `tape2pico.py`, `tape_ladder.py`, `v6fs.py`, `rk_desk.py`, `rk11_model.py`, `pdp11asm.py`, `mmu_gen.py`, `v7ld.py`, `rkuboot.py` ([docs/TOOLS.md](docs/TOOLS.md)) |
+| `tools/` | Python host tools: `rk_image.py`, `tape2pico.py`, `tape_ladder.py`, `v6fs.py`, `rk_desk.py`, `rk11_model.py`, `pdp11asm.py`, `mmu_gen.py`, `psram_build.py`, `pack_install.py`, `board_session.py`, `psram_desk_check.py`, `v7ld.py`, `rkuboot.py` ([docs/TOOLS.md](docs/TOOLS.md)) |
 | `J11_18MHz_KDJ11_BF/pico/`, `pico2/` | The firmware source for the RP2040 and the RP2350 (PureMetal; build with PureMetal Forge, which is not in this repository) |
 | `docs/HOWTO.md`, `docs/TOOLS.md` | The how-to and the tool reference |
 | `disk_boot_readme.md` | Notes on RK05 disk storage and starting Unix, from the original emulator |
