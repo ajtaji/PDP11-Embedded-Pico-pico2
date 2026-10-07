@@ -6,6 +6,9 @@ through a reader, loaded, started and judged, all on ONE open of the port.
 
 USE
     python tape_ladder.py --port COM29 --plan ladder.txt
+    python tape_ladder.py --hub-port 9 --plan ladder.txt      (or --usb-serial TEXT: the board
+                 by the USB hub port it is plugged into or by its USB serial number, as
+                 tools/pack_install.py finds it, instead of a port name)
     python tape_ladder.py --port COM29 <tape> [--start OCTAL] [--switches OCTAL]
                           [--patch A=W,...] [--seconds N]
     python tape_ladder.py --dump tape_image.pico --plan ladder.txt
@@ -184,6 +187,8 @@ def main():
     ap = argparse.ArgumentParser(description="Run PDP-11 tapes over the J-11 emulator's serial port.")
     ap.add_argument("tape", nargs="?")
     ap.add_argument("--port")
+    ap.add_argument("--hub-port", type=int)
+    ap.add_argument("--usb-serial")
     ap.add_argument("--plan")
     ap.add_argument("--tapes")
     ap.add_argument("--start")
@@ -203,6 +208,9 @@ def main():
     if a.dump:
         dump(a, entries, a.dump)
         return
+    if not a.port and (a.hub_port is not None or a.usb_serial):
+        import pack_install                      # the board by where it is plugged in, or by its serial number
+        a.port = pack_install.find_port(a)
     if not a.port:
         tape2pico.fail("give --port with the board's COM port, or --dump for the desk.")
     try:

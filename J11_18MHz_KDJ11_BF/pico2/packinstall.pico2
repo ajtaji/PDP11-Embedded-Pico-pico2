@@ -1,0 +1,587 @@
+; ======================================================================
+;  packinstall.pico2 - puts the RK05 disk packs into the board's flash
+;  over USB serial, with no boot drive and no button.
+;
+;  WHAT IT IS FOR. The PDP-11 firmware (diag.pico2) reads its disk packs
+;  from the flash above the first 256 KB: RK0 from offset $040000, and on
+;  the 8 MB boards RK1 from $2C0000 (disk.pico2, tools/rk_image.py). The
+;  compiler's uploader writes only the firmware. This program is uploaded
+;  the same way, takes the packs from tools/pack_install.py over the USB
+;  serial port and programs them with the compiler's flash library; then
+;  the PDP-11 firmware is uploaded over it. A firmware upload writes only
+;  the sectors the firmware fills, so the packs stay.
+;
+;  The flash is written here, once, at install time. The PDP-11 firmware
+;  itself never writes it.
+;
+;  THE CHECKSUM (the same in this program, in tools/pack_install.py and in
+;  the PDP-11 firmware's start-up line): over the bytes taken as 32-bit
+;  words, low byte first,   a = a + word : b = b + a   both modulo 2^32,
+;  starting from 0. Printed as two numbers of eight hex digits, a then b.
+;  b depends on the order of the words, so two sectors exchanged show.
+;
+;  THE LINES IT ANSWERS (each ends with a line feed; numbers are hex)
+;    ?                      what this is, the flash size found, the flash
+;                           chip's JEDEC ID, what is kept
+;    T off                  test one sector at off, before anything else is
+;                           written to a board for the first time: a pattern
+;                           is programmed, read back and compared, and the
+;                           sector erased again and checked blank
+;    S off                  what the flash holds at offset off (see below)
+;    B off len a b          begin a region: len bytes at off, whose checksum
+;                           will be a b. The region's first sector is
+;                           erased and marked "transfer started".
+;    W index                then 4096 bytes: sector index of the region
+;                           begun. Answer: its checksum as received, and
+;                           what was done (same, programmed, erased).
+;                           The tool sends sector 0, the pack's header,
+;                           LAST: until then the mark stays.
+;    V off len              the checksum of len bytes of flash at off
+;    C index                the checksum of sector index of the region begun,
+;                           as the flash holds it now (the tool skips a sector
+;                           that is already right, so a second run is short)
+;  Every answer is one line: "OK ..." or "NO " and a sentence.
+;
+;  A TRANSFER THAT STOPPED PART WAY leaves the mark in the region's first
+;  sector, and "S off" (and the lines printed while idle) say so:
+;    PACK        a complete pack header ("PDP11RK1") - its blocks and name
+;    UNFINISHED  a transfer was started and did not finish - run it again
+;    BLANK       erased flash
+;    OTHER       something else
+;
+;  WHAT IT REFUSES
+;    - a region that starts below #PI_KEEP (the first 256 KB: this program
+;      and the PDP-11 firmware live there; tools/pack_install.py refuses
+;      an installer image that is not smaller than that);
+;    - a region that runs past the flash chip. The size is MEASURED: the
+;      chip decodes only the address bits it has, so on an 8 MB chip the
+;      first sector reads again at 8 MB. It must also not exceed
+;      #PI_FLASH_CHIP, the size of the board this was built for;
+;    - an offset or length that is not whole 4096-byte sectors;
+;    - a sector outside the region begun, or with no region begun.
+;
+;  THE WAY BACK. The USB serial library answers the uploader's reboot
+;  request (the 1200-baud touch and the phrase) whenever UsbSerialTask()
+;  runs, and every wait here calls it. Interrupts are off only inside one
+;  erase or program call (about 50 ms for a sector).
+;
+;  RUN ON SILICON: see the repository's README (PSRAM boards).
+; ======================================================================
+#PI_VERSION    = 1
+#PI_FLASH_CHIP = $400000     ; the board's flash: tools/pack_install.py builds with the board's size
+#PI_KEEP       = $40000      ; the first 256 KB are the programs': never a pack region
+#PI_XIP        = $10000000
+#PI_SECTOR     = 4096
+#PI_BYTE_US    = 3000000     ; the longest wait for the next byte of a sector
+
+XIncludeFile "RP2350/Lib/clocks.pico2"
+XIncludeFile "RP2350/Lib/timer.pico2"
+XIncludeFile "RP2350/Lib/uart.pico2"
+XIncludeFile "RP2350/Lib/usb_serial.pico2"
+XIncludeFile "RP2350/Lib/safety.pico2"
+XIncludeFile "RP2350/Lib/flashid.pico2"
+XIncludeFile "RP2350/Lib/flash.pico2"
+EnableExplicit
+
+Global Dim PiBuf.a[4096]         ; one sector, as received
+Global Dim PiLine.a[96]          ; one command line
+Global PiLen.i                   ; characters in PiLine
+Global PiPos.i                   ; the parser's place in PiLine
+Global PiBad.i                   ; the parser met something that is not a hex number
+Global PiFlash.i                 ; the flash size found
+Global PiJedec.i                 ; the flash chip's JEDEC ID, -1 if it could not be read
+Global PiOff.i, PiSize.i         ; the region begun (PiSize 0 = none)
+Global PiA.i, PiB.i              ; a checksum, as last computed
+Global PiSeen.i                  ; a command has arrived: the idle lines stop
+
+Procedure Ch(c.i)
+  UsbSerialWrite(c)
+EndProcedure
+
+Procedure Say(*s.i)
+  Define p.i
+  Define c.i
+  p = *s
+  c = PeekA(p) & 255
+  While c <> 0
+    Ch(c)
+    p = p + 1
+    c = PeekA(p) & 255
+  Wend
+EndProcedure
+
+Procedure Hex8(v.i)                      ; eight hex digits
+  Define k.i
+  Define d.i
+  For k = 28 To 0 Step -4
+    d = (v >> k) & 15
+    If d < 10
+      Ch(48 + d)
+    Else
+      Ch(55 + d)
+    EndIf
+  Next
+EndProcedure
+
+Procedure Num(v.i)
+  Define n.i
+  Define p.i
+  n = v
+  p = 1
+  While n / p >= 10
+    p = p * 10
+  Wend
+  While p > 0
+    Ch(48 + (n / p) % 10)
+    p = p / 10
+  Wend
+EndProcedure
+
+Procedure Eol()
+  Ch(13)
+  Ch(10)
+  UsbSerialFlush()
+  UsbSerialTask()
+EndProcedure
+
+; The checksum of n bytes (a multiple of 4) at address adr, into PiA and PiB.
+Procedure Sum(adr.i, n.i)
+  Define i.i
+  Define a.i
+  Define b.i
+  a = 0
+  b = 0
+  i = 0
+  While i < n
+    a = a + PeekL(adr + i)
+    b = b + a
+    i = i + 4
+    If (i & $FFFF) = 0
+      UsbSerialTask()                    ; a whole pack takes a while: USB stays served
+    EndIf
+  Wend
+  PiA = a
+  PiB = b
+EndProcedure
+
+; The flash chip's size, measured: the first 256 bytes of the flash (this
+; program's own start) read again at the chip's size, because the chip has
+; no address bits above it. Nothing repeats below 16 MB: 16 MB.
+Procedure.i FlashFound()
+  Define n.i
+  Define i.i
+  Define same.i
+  n = $100000
+  While n < $1000000
+    same = 1
+    For i = 0 To 252 Step 4
+      If PeekL(#PI_XIP + n + i) <> PeekL(#PI_XIP + i)
+        same = 0
+        Break
+      EndIf
+    Next
+    If same
+      ProcedureReturn n
+    EndIf
+    n = n << 1
+  Wend
+  ProcedureReturn $1000000
+EndProcedure
+
+; What the flash holds at offset off: 1 a pack, 2 the mark of a transfer
+; that did not finish, 3 erased, 0 something else.
+Procedure.i Kind(off.i)
+  Define i.i
+  If PeekL(#PI_XIP + off) = $31504450 And PeekL(#PI_XIP + off + 4) = $314B5231
+    ProcedureReturn 1                    ; "PDP11RK1"
+  EndIf
+  If PeekL(#PI_XIP + off) = $31504450 And PeekL(#PI_XIP + off + 4) = $534E4931
+    ProcedureReturn 2                    ; "PDP11INS"
+  EndIf
+  For i = 0 To 252 Step 4
+    If PeekL(#PI_XIP + off + i) <> $FFFFFFFF
+      ProcedureReturn 0
+    EndIf
+  Next
+  ProcedureReturn 3
+EndProcedure
+
+Procedure SayKind(off.i)
+  Define k.i
+  Define i.i
+  Define c.i
+  k = Kind(off)
+  Hex8(off) : Ch(32)
+  If k = 1
+    Say("PACK blocks ") : Num(PeekL(#PI_XIP + off + 16))
+    Say(" layout ") : Num(PeekL(#PI_XIP + off + 12))
+    Say(" name ")
+    For i = 0 To 31
+      c = PeekA(#PI_XIP + off + 32 + i) & 255
+      If c = 0
+        Break
+      EndIf
+      If c > 32 And c < 127
+        Ch(c)
+      Else
+        Ch(95)
+      EndIf
+    Next
+  ElseIf k = 2
+    Say("UNFINISHED a transfer of ") : Num(PeekL(#PI_XIP + off + 12))
+    Say(" bytes to this region was started and did not finish: run the install again")
+  ElseIf k = 3
+    Say("BLANK erased flash")
+  Else
+    Say("OTHER neither a pack, nor a transfer's mark, nor erased flash")
+  EndIf
+EndProcedure
+
+Procedure Hello()
+  Say("PACKINSTALL ") : Num(#PI_VERSION)
+  Say(" flash ") : Hex8(PiFlash)
+  Say(" jedec ") : Hex8(PiJedec)
+  Say(" built-for ") : Hex8(#PI_FLASH_CHIP)
+  Say(" keep ") : Hex8(#PI_KEEP)
+  Eol()
+EndProcedure
+
+Procedure No(*s.i)
+  Say("NO ") : Say(*s) : Eol()
+EndProcedure
+
+; The next hex number of the line; PiBad is set if there is none.
+Procedure.i Arg()
+  Define v.i
+  Define c.i
+  Define n.i
+  v = 0
+  n = 0
+  While PiPos < PiLen And PiLine[PiPos] = 32
+    PiPos = PiPos + 1
+  Wend
+  While PiPos < PiLen And PiLine[PiPos] <> 32
+    c = PiLine[PiPos]
+    If c >= 48 And c <= 57
+      v = (v << 4) | (c - 48)
+    ElseIf c >= 65 And c <= 70
+      v = (v << 4) | (c - 55)
+    ElseIf c >= 97 And c <= 102
+      v = (v << 4) | (c - 87)
+    Else
+      PiBad = 1
+    EndIf
+    n = n + 1
+    PiPos = PiPos + 1
+  Wend
+  If n = 0 Or n > 8
+    PiBad = 1
+  EndIf
+  ProcedureReturn v
+EndProcedure
+
+; Is [off, off + n) a place a pack may go? 1, or 0 after saying why not.
+Procedure.i RegionOk(off.i, n.i)
+  If (off & (#PI_SECTOR - 1)) <> 0 Or (n & (#PI_SECTOR - 1)) <> 0 Or n <= 0 Or off < 0
+    No("the offset and the length must be whole 4096-byte sectors, and the length not 0.")
+    ProcedureReturn 0
+  EndIf
+  If off < #PI_KEEP
+    No("the region starts inside the first 256 KB of the flash, where this program and the PDP-11 firmware live. Packs start at 040000 hex or above.")
+    ProcedureReturn 0
+  EndIf
+  If n > $1000000 Or off > $1000000 Or off + n > PiFlash
+    No("the region runs past the end of the flash chip found on this board (the size is in the answer to '?'). Use the pack layout for this board.")
+    ProcedureReturn 0
+  EndIf
+  If off + n > #PI_FLASH_CHIP
+    No("the region runs past the flash size this installer was built for. Build it for this board (tools/pack_install.py --board).")
+    ProcedureReturn 0
+  EndIf
+  ProcedureReturn 1
+EndProcedure
+
+; Does the flash sector at off hold exactly PiBuf? / is it erased?
+Procedure.i SectorSame(off.i)
+  Define i.i
+  For i = 0 To #PI_SECTOR - 4 Step 4
+    If PeekL(#PI_XIP + off + i) <> PeekL(@PiBuf + i)
+      ProcedureReturn 0
+    EndIf
+  Next
+  ProcedureReturn 1
+EndProcedure
+
+Procedure.i SectorBlank(off.i)
+  Define i.i
+  For i = 0 To #PI_SECTOR - 4 Step 4
+    If PeekL(#PI_XIP + off + i) <> $FFFFFFFF
+      ProcedureReturn 0
+    EndIf
+  Next
+  ProcedureReturn 1
+EndProcedure
+
+; Put PiBuf into the flash sector at off. 0 same already, 1 programmed,
+; 2 erased and programmed; -1 the erase was refused, -2 the program was
+; refused, -3 it did not read back.
+Procedure.i SectorPut(off.i)
+  Define did.i
+  If SectorSame(off)
+    ProcedureReturn 0
+  EndIf
+  did = 1
+  If SectorBlank(off) = 0
+    If FlashRangeErase(off, #PI_SECTOR) = 0
+      ProcedureReturn -1
+    EndIf
+    did = 2
+  EndIf
+  If FlashRangeProgram(off, @PiBuf, #PI_SECTOR) = 0
+    ProcedureReturn -2
+  EndIf
+  If SectorSame(off) = 0
+    ProcedureReturn -3
+  EndIf
+  ProcedureReturn did
+EndProcedure
+
+Procedure DoBegin()
+  Define off.i
+  Define n.i
+  Define a.i
+  Define b.i
+  Define i.i
+  Define r.i
+  off = Arg() : n = Arg() : a = Arg() : b = Arg()
+  If PiBad
+    No("B needs four hex numbers: offset, length, and the two halves of the checksum.")
+    ProcedureReturn
+  EndIf
+  PiSize = 0
+  If RegionOk(off, n) = 0
+    ProcedureReturn
+  EndIf
+  ; the mark: "PDP11INS", then the offset, the length and the checksum
+  For i = 0 To #PI_SECTOR - 1
+    PiBuf[i] = 255
+  Next
+  PokeL(@PiBuf, $31504450)
+  PokeL(@PiBuf + 4, $534E4931)
+  PokeL(@PiBuf + 8, off)
+  PokeL(@PiBuf + 12, n)
+  PokeL(@PiBuf + 16, a)
+  PokeL(@PiBuf + 20, b)
+  r = SectorPut(off)
+  If r < 0
+    Say("NO the mark could not be written to the region's first sector (step ") : Num(0 - r)
+    Say(", flash_error ") : Num(flash_error) : Say("). Nothing else was changed.") : Eol()
+    ProcedureReturn
+  EndIf
+  PiOff = off
+  PiSize = n
+  Say("OK B ") : Hex8(off) : Ch(32) : Hex8(n) : Eol()
+EndProcedure
+
+Procedure DoWrite()
+  Define idx.i
+  Define got.i
+  Define t0.i
+  Define c.i
+  Define r.i
+  idx = Arg()
+  ; the 4096 bytes follow the line whatever it said: take them first, so
+  ; a refusal leaves the port at the start of the next line
+  got = 0
+  t0 = Micros()
+  While got < #PI_SECTOR
+    UsbSerialTask()
+    c = UsbSerialRead()
+    If c >= 0
+      PiBuf[got] = c
+      got = got + 1
+      t0 = Micros()
+    ElseIf Micros() - t0 > #PI_BYTE_US
+      Say("NO only ") : Num(got) : Say(" of the sector's 4096 bytes arrived within 3 s. Nothing was written. Send the sector again.") : Eol()
+      ProcedureReturn
+    EndIf
+  Wend
+  If PiBad
+    No("W needs one hex number, the sector's index in the region.")
+    ProcedureReturn
+  EndIf
+  If PiSize = 0
+    No("no region has been begun: send B first.")
+    ProcedureReturn
+  EndIf
+  If idx < 0 Or idx >= PiSize / #PI_SECTOR
+    No("that sector is outside the region begun.")
+    ProcedureReturn
+  EndIf
+  Sum(@PiBuf, #PI_SECTOR)
+  r = SectorPut(PiOff + idx * #PI_SECTOR)
+  If r < 0
+    Say("NO sector ") : Hex8(idx) : Say(" was not written (step ") : Num(0 - r)
+    Say(": 1 the erase was refused, 2 the program was refused, 3 it did not read back; flash_error ")
+    Num(flash_error) : Say("). Send it again.") : Eol()
+    ProcedureReturn
+  EndIf
+  Say("OK W ") : Hex8(idx) : Ch(32) : Hex8(PiA) : Ch(32) : Hex8(PiB) : Ch(32)
+  If r = 0
+    Say("same")
+  ElseIf r = 1
+    Say("programmed")
+  Else
+    Say("erased")
+  EndIf
+  Eol()
+EndProcedure
+
+Procedure DoVerify()
+  Define off.i
+  Define n.i
+  off = Arg() : n = Arg()
+  If PiBad
+    No("V needs two hex numbers: offset and length.")
+    ProcedureReturn
+  EndIf
+  If RegionOk(off, n) = 0
+    ProcedureReturn
+  EndIf
+  Sum(#PI_XIP + off, n)
+  Say("OK V ") : Hex8(off) : Ch(32) : Hex8(n) : Ch(32) : Hex8(PiA) : Ch(32) : Hex8(PiB) : Eol()
+EndProcedure
+
+Procedure DoTest()
+  Define off.i
+  Define i.i
+  Define r.i
+  off = Arg()
+  If PiBad
+    No("T needs one hex number: the offset of the sector to test.")
+    ProcedureReturn
+  EndIf
+  If RegionOk(off, #PI_SECTOR) = 0
+    ProcedureReturn
+  EndIf
+  If Kind(off) = 1 Or Kind(off) = 2
+    No("that sector holds a pack's header or a transfer's mark; the test would destroy it. Test a sector that holds no pack.")
+    ProcedureReturn
+  EndIf
+  For i = 0 To #PI_SECTOR - 4 Step 4
+    PokeL(@PiBuf + i, (off + i) ! ((off + i) << 11) ! $9E3779B9)
+  Next
+  r = SectorPut(off)
+  If r < 0
+    Say("NO the test sector was not written (step ") : Num(0 - r)
+    Say(": 1 the erase was refused, 2 the program was refused, 3 it did not read back; flash_error ")
+    Num(flash_error) : Say(").") : Eol()
+    ProcedureReturn
+  EndIf
+  If FlashRangeErase(off, #PI_SECTOR) = 0
+    Say("NO the test sector was programmed and read back, but the erase after it was refused (flash_error ")
+    Num(flash_error) : Say(").") : Eol()
+    ProcedureReturn
+  EndIf
+  If SectorBlank(off) = 0
+    No("the test sector was programmed and read back, but it does not read as erased after the erase.")
+    ProcedureReturn
+  EndIf
+  Say("OK T ") : Hex8(off)
+  If r = 2
+    Say(" erased first,")
+  EndIf
+  Say(" programmed, read back the same, erased again, reads blank") : Eol()
+EndProcedure
+
+Procedure DoCheck()
+  Define idx.i
+  idx = Arg()
+  If PiBad
+    No("C needs one hex number, the sector's index in the region.")
+    ProcedureReturn
+  EndIf
+  If PiSize = 0
+    No("no region has been begun: send B first.")
+    ProcedureReturn
+  EndIf
+  If idx < 0 Or idx >= PiSize / #PI_SECTOR
+    No("that sector is outside the region begun.")
+    ProcedureReturn
+  EndIf
+  Sum(#PI_XIP + PiOff + idx * #PI_SECTOR, #PI_SECTOR)
+  Say("OK C ") : Hex8(idx) : Ch(32) : Hex8(PiA) : Ch(32) : Hex8(PiB) : Eol()
+EndProcedure
+
+Procedure DoStatus()
+  Define off.i
+  off = Arg()
+  If PiBad <> 0 Or (off & (#PI_SECTOR - 1)) <> 0 Or off < 0 Or off >= PiFlash
+    No("S needs one hex number: a sector's offset inside the flash.")
+    ProcedureReturn
+  EndIf
+  Say("OK S ") : SayKind(off) : Eol()
+EndProcedure
+
+Procedure DoLine()
+  Define c.i
+  PiPos = 1
+  PiBad = 0
+  PiSeen = 1
+  If PiLen = 0
+    ProcedureReturn
+  EndIf
+  c = PiLine[0]
+  If c = 63                              ; ?
+    Hello()
+  ElseIf c = 83                          ; S
+    DoStatus()
+  ElseIf c = 66                          ; B
+    DoBegin()
+  ElseIf c = 87                          ; W
+    DoWrite()
+  ElseIf c = 86                          ; V
+    DoVerify()
+  ElseIf c = 67                          ; C
+    DoCheck()
+  ElseIf c = 84                          ; T
+    DoTest()
+  Else
+    No("not a line this program knows: ?, S, T, B, W, C or V.")
+  EndIf
+EndProcedure
+
+Procedure Main()
+  Define c.i
+  Define t0.i
+  SafetyBoot()
+  ClockInitKhz(150000)
+  PiJedec = FlashJedecIdRead()           ; before USB starts: the flash is unreadable for its length
+  UsbSerialInit()
+  UsbSerialRxHold(1)                     ; the host is held back while a sector is being written
+  SafetyOk()
+  PiFlash = FlashFound()
+  PiLen = 0
+  t0 = Micros()
+  Repeat
+    UsbSerialTask()
+    c = UsbSerialRead()
+    If c = 10
+      DoLine()
+      PiLen = 0
+    ElseIf c >= 32 And c < 127
+      If PiLen < 95
+        PiLine[PiLen] = c
+        PiLen = PiLen + 1
+      EndIf
+    EndIf
+    If PiSeen = 0 And Micros() - t0 > 2000000   ; idle, before the first command: say what is here
+      t0 = Micros()
+      Hello()
+      Say("RK0 ") : SayKind($40000) : Eol()
+      If PiFlash > $2C0000
+        Say("RK1 ") : SayKind($2C0000) : Eol()
+      EndIf
+    EndIf
+  ForEver
+EndProcedure

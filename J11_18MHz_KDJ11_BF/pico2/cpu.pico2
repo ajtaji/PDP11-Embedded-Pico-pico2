@@ -178,10 +178,14 @@
 ; ---- machine state ---------------------------------------------------
 Global Dim Reg.i(8)         ; R0-R7, R6 = SP, R7 = PC. 16-bit values.
 Global Dim Mem.u(#RAM_WORDS)
-CompilerIf #PSRAM = 1                ; a board with PSRAM (psram.pico2) - UNTESTED ON HARDWARE
-#PS_MEM = $11500000                  ; physical byte pa >= #RAM_BYTES is at #PS_MEM + pa (cached M1)
+CompilerIf #PSRAM = 1                ; a board with PSRAM (psram_pdp11.pico2)
+CompilerIf #PS_MEM_UNCACHED = 1
+#PS_MEM = $15500000                  ; physical byte pa >= #RAM_BYTES is at #PS_MEM + pa: the uncached window
+CompilerElse
+#PS_MEM = $11500000                  ; ... or the window through the XIP cache
+CompilerEndIf
 Global MemTop.i = #RAM_BYTES         ; the end of physical memory: #RAM_BYTES, or 248 KB with the PSRAM
-Global PsramOk.i                     ; the PSRAM is found, tested and in use (psram.pico2)
+Global PsramOk.i                     ; the PSRAM is found, tested and in use (psram_pdp11.pico2)
 Global PsDrives.i                    ; bit d: RK drive d lives in the PSRAM
 CompilerEndIf
 
@@ -211,10 +215,11 @@ Global Dim Pdr.i(64)        ; the registers, by entry
 Global Dim Par.i(64)
 Global Dim MapReg.i(64)     ; the registers an entry uses (a D entry uses I's when D space is off)
 Global Dim MapBase.i(64)    ; physical = virtual + MapBase, before the 18/22-bit mask
+Global Dim MapHost.i(64)    ; the fast windows' memory: virtual byte va is at host address va + MapHost
 Global Dim MapLo.i(64)      ; the virtual bytes the page length allows: MapLo <= va < MapHi
 Global Dim MapHi.i(64)
 Global Dim MapAcf.i(64)     ; 0 not resident, 1 read-only, 3 read/write
-Global Dim MapRLo.i(64)     ; THE FAST WINDOWS: readable and all in RAM ...
+Global Dim MapRLo.i(64)     ; THE FAST WINDOWS: readable and all in one memory (SRAM, or the PSRAM) ...
 Global Dim MapRHi.i(64)
 Global Dim MapWLo.i(64)     ; ... and writable with W already set
 Global Dim MapWHi.i(64)
@@ -525,10 +530,16 @@ EndProcedure
 ;  or PDR; MmuRecompute: MMR3, all of them), the physical offset (MapBase), the
 ;  virtual bytes the length allows (MapLo/MapHi) and the access - and the
 ;  FAST WINDOWS: the virtual range that is readable (MapRLo/MapRHi), or
-;  writable with W already set (MapWLo/MapWHi), and lies wholly in RAM. A
-;  mapped access in that window is two compares and a load (MMReadWordE and
+;  writable with W already set (MapWLo/MapWHi), and lies wholly in ONE of
+;  the two memories: the 56 KB in SRAM (Mem), or, on a board with PSRAM,
+;  the memory above it (psram_pdp11.pico2). MapHost is where that memory's
+;  bytes are for the entry: virtual byte va is at host address va + MapHost.
+;  Both memories hold a word low byte first, so one load or store serves
+;  either, and a page in PSRAM is reached exactly as a page in SRAM is. A
+;  mapped access in the window is two compares and a load (MMReadWordE and
 ;  friends, below); anything else - outside the window, odd, the I/O page,
-;  an abort, the first write to a page - goes through MmuPhys.
+;  an abort, the first write to a page, a page that lies across the end of
+;  the SRAM - goes through MmuPhys.
 ; ======================================================================
 ; One entry of the map, from its registers (a D entry uses the I
 ; registers while its mode's D space is off).
@@ -574,8 +585,20 @@ ProcedureRAM MmuMapEntry(e.i)
   MapRHi(e) = 0
   MapWLo(e) = #MAP_NONE
   MapWHi(e) = 0
-  If bs + hi > #RAM_BYTES          ; only what lies in RAM is fast
-    hi = #RAM_BYTES - bs
+  MapHost(e) = @Mem(0) + bs
+  If bs + lo < #RAM_BYTES          ; the page starts in the SRAM: what lies in it is fast
+    If bs + hi > #RAM_BYTES
+      hi = #RAM_BYTES - bs
+    EndIf
+  Else
+    CompilerIf #PSRAM = 1          ; it starts in the PSRAM: what lies below MemTop is fast
+      If bs + hi > MemTop          ; (MemTop is #RAM_BYTES when no PSRAM is in use: no window)
+        hi = MemTop - bs
+      EndIf
+      MapHost(e) = #PS_MEM + bs
+    CompilerElse
+      hi = lo                      ; no memory there
+    CompilerEndIf
   EndIf
   If acf <> 0 And hi > lo And bs + lo >= 0 And ((Par(r) << 6) + $2000) <= MapMask
     MapRLo(e) = lo
@@ -1313,7 +1336,7 @@ Macro MMReadWordE(mDest, mAdr, mBase)
   If mAdr >= MapRLo(MmE)
     If mAdr < MapRHi(MmE)
       If (mAdr & 1) = 0
-        mDest = Mem((mAdr + MapBase(MmE)) >> 1)
+        mDest = PeekU(mAdr + MapHost(MmE))
       Else
         mDest = MmuReadWord(mAdr, MmE)
       EndIf
@@ -1330,7 +1353,7 @@ Macro MMWriteWordE(mAdr, mVal, mBase)
   If mAdr >= MapWLo(MmE)
     If mAdr < MapWHi(MmE)
       If (mAdr & 1) = 0
-        Mem((mAdr + MapBase(MmE)) >> 1) = mVal
+        PokeU(mAdr + MapHost(MmE), mVal)
       Else
         MmuWriteWord(mAdr, MmE, mVal)
       EndIf
@@ -1346,11 +1369,7 @@ Macro MMReadByteE(mDest, mAdr, mBase)
   MmE = (mBase) + (mAdr >> 13)
   If mAdr >= MapRLo(MmE)
     If mAdr < MapRHi(MmE)
-      If mAdr & 1
-        mDest = (Mem((mAdr + MapBase(MmE)) >> 1) >> 8) & $FF
-      Else
-        mDest = Mem((mAdr + MapBase(MmE)) >> 1) & $FF
-      EndIf
+      mDest = PeekA(mAdr + MapHost(MmE)) & $FF
     Else
       mDest = MmuReadByte(mAdr, MmE)
     EndIf
@@ -1363,11 +1382,7 @@ Macro MMWriteByteE(mAdr, mVal, mBase)
   MmE = (mBase) + (mAdr >> 13)
   If mAdr >= MapWLo(MmE)
     If mAdr < MapWHi(MmE)
-      If mAdr & 1
-        Mem((mAdr + MapBase(MmE)) >> 1) = (Mem((mAdr + MapBase(MmE)) >> 1) & $00FF) | ((mVal & $FF) << 8)
-      Else
-        Mem((mAdr + MapBase(MmE)) >> 1) = (Mem((mAdr + MapBase(MmE)) >> 1) & $FF00) | (mVal & $FF)
-      EndIf
+      PokeA(mAdr + MapHost(MmE), mVal & $FF)
     Else
       MmuWriteByte(mAdr, MmE, mVal)
     EndIf
@@ -1527,10 +1542,11 @@ ProcedureRAM.i PopM()
 EndProcedure
 
 ; THE FETCH WINDOW. The mapped loop fetches every instruction through three
-; Globals: PC in [FetchLo, FetchHi) is at PC + FetchBase in RAM. The window
-; is the fast window of the page the PC is in, joined with its neighbours'
-; while they touch and share the same offset - so an identity-mapped kernel
-; fetches from all of RAM through one window. It is found again after a
+; Globals: the word at PC in [FetchLo, FetchHi) is at host address PC +
+; FetchBase. The window is the fast window of the page the PC is in, joined
+; with its neighbours' while they touch and share the same host offset - so
+; an identity-mapped kernel fetches from all of RAM through one window, and
+; a program in PSRAM from all of its text through another. It is found again after a
 ; fetch outside it (FetchWordM) and emptied whenever the map or the mode
 ; changes.
 ProcedureRAM MmuFetchWindow(va.i)
@@ -1543,13 +1559,13 @@ ProcedureRAM MmuFetchWindow(va.i)
   EndIf
   lo = MapRLo(e)
   hi = MapRHi(e)
-  bs = MapBase(e)
-  While (e & 7) > 0 And MapRHi(e - 1) = lo And MapBase(e - 1) = bs
+  bs = MapHost(e)
+  While (e & 7) > 0 And MapRHi(e - 1) = lo And MapHost(e - 1) = bs
     e = e - 1
     lo = MapRLo(e)
   Wend
   e = CurI + (va >> 13)
-  While (e & 7) < 7 And MapRLo(e + 1) = hi And MapBase(e + 1) = bs
+  While (e & 7) < 7 And MapRLo(e + 1) = hi And MapHost(e + 1) = bs
     e = e + 1
     hi = MapRHi(e)
   Wend

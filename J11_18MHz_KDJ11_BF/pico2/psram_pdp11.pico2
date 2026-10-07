@@ -1,0 +1,463 @@
+; ======================================================================
+;  psram_pdp11.pico2 - what the PDP-11 does with a board's QSPI PSRAM
+;  (#PSRAM = 1 in the main file): the RK05 packs and the memory above
+;  56 KB live in it.
+;
+;  THE CHIP ITSELF - finding it, its timing, its two address windows - is
+;  the compiler's library, RP2350/Lib/psram.pico2 (PsramBegin and the
+;  rest). Nothing here talks to the QSPI interface. Read that file's
+;  header for the chip's rules and the errors PsramBegin can give.
+;
+;  THE BOARDS (APS6404L, 8 MB, on each)
+;      Adafruit Feather RP2350 HSTX              RP2350A  CS on GPIO8   8 MB flash
+;      Pimoroni Pico Plus 2 / Pico Plus 2 W      RP2350B  CS on GPIO47  16 MB flash
+;  #PSRAM_CS_PIN and #FLASH_CHIP pick the board; tools/psram_build.py sets
+;  them (--board feather or picoplus2) and builds the image.
+;
+;  WHAT IT GIVES THE PDP-11 (when PsramOk = 1)
+;    * both RK05 packs in PSRAM, copied from the flash at start-up, and
+;      writable: every write stays in PSRAM and is lost at power-off, as
+;      with the RAM overlay - the flash is never written;
+;    * the whole swap area of the pack (V6: 872 blocks);
+;    * physical memory up to 248 KB: 000000-157777 stays in SRAM (the fast
+;      path, untouched), 160000-757777 is PSRAM, reached through the memory
+;      management unit's slow path (cpu.pico2, MmuReadWord and friends) and
+;      the RK11's DMA (rk11.pico2, RkMemRead/RkMemWrite).
+;
+;  THE FALLBACK. Anything short of a fully working 8 MB chip leaves
+;  PsramOk = 0, and then NOTHING here is used: the firmware runs exactly
+;  as the Pico 2 build does - the pack read-only in flash, the RAM overlay,
+;  the 112-block swap RAM disk, 56 KB of memory. It falls back when:
+;      PsramBegin() finds no chip, or one that is not an APS6404L, or one
+;        that does not keep a word written (its error, 1 to 8, is printed);
+;      the chip found is smaller than 8 MB;
+;      the address test finds one wrong word (a different word every
+;        32 KB across the whole chip);
+;      the pack header is not a dense pack this code can copy;
+;      the copy does not read back with the checksum of the flash words it
+;        was made from, or a block the pack does not store does not read
+;        back as zeros.
+;  Every one of those also gives the CS pin back (PsramEnd), so the pin is
+;  not left driven. The banner says which.
+;
+;  WHICH WINDOW. The library gives two views of the same bytes: one
+;  through the 16 KB XIP cache the flash also uses ($11000000) and one
+;  that goes to the chip on every access ($15000000). The packs and the
+;  memory are separate address ranges, and each range is only ever used
+;  through ONE window, so a cached write can never be hidden from an
+;  uncached read. Which window each uses is set in the main file:
+;      #PS_DISK_UNCACHED   the packs: the start-up copy and every block
+;      #PS_MEM_UNCACHED    the PDP-11 memory above 56 KB
+;  The README's PSRAM section has the figures measured on the boards that
+;  decided them.
+;
+;  THE LAYOUT IN PSRAM
+;      $000000   RK0, 4872 blocks (2,494,464 bytes)
+;      $280000   RK1, 4872 blocks
+;      $500000   PDP-11 physical memory: byte pa at $500000 + pa, used
+;                for pa from 160000 (octal) to MemTop
+;
+;  THE PACK CHECKSUMS. The start-up line prints, for each pack region of
+;  the flash, the checksum tools/pack_install.py printed when it put the
+;  pack there and prints for the image file (--sums): over the region's
+;  bytes as 32-bit words, low byte first, a = a + word : b = b + a.
+; ======================================================================
+CompilerIf #PS_DISK_UNCACHED = 1
+#PS_WIN        = #PSRAM_BASE_UNCACHED
+CompilerElse
+#PS_WIN        = #PSRAM_BASE
+CompilerEndIf
+#PS_BYTES      = $800000         ; the chip this is built for: 8 MB
+#PS_RK1        = $280000         ; RK1's place (RK0 is at 0)
+#PS_MEM_TOP    = $3E000          ; 248 KB: up to the 18-bit I/O page
+#DISK_REGION1  = $2C0000         ; RK1's pack in the flash (8 MB boards; rk_image.py --drive1)
+; PsramOk, PsDrives, MemTop and #PS_MEM are declared in cpu.pico2, which the others read.
+Global PsramWhy.i                ; why not: see PsramWhyText
+Global PsramFound.i              ; bytes PsramBegin() found
+Global PsramBad.i                ; the address test's first wrong offset
+Global PsramCopyUs.i             ; the start-up copy and its check, us
+Global PsCopyUs.i, PsCheckUs.i   ; its two parts: flash to PSRAM, and the read back
+Global PsRk1Blocks.i
+Global PsReads.i, PsWrites.i     ; blocks read and written in PSRAM
+Global PsSumA.i, PsSumB.i        ; the checksum being added up
+Global PsRk0A.i, PsRk0B.i, PsRk1A.i, PsRk1B.i   ; the pack regions' checksums ...
+Global PsRk0Sum.i, PsRk1Sum.i    ; ... and whether each has been added up
+
+Procedure PsramInit()
+  Define i.i
+  Define a.i
+  Define v.i
+  PsramOk = 0
+  PsramWhy = 0
+  PsramFound = PsramBegin(#PSRAM_CS_PIN)
+  If PsramFound = 0
+    PsramWhy = 1                         ; PsramError() says which of its eight reasons
+    ProcedureReturn
+  EndIf
+  If PsramFound < #PS_BYTES
+    PsramWhy = 2
+    PsramEnd()
+    ProcedureReturn
+  EndIf
+  ; THE ADDRESS TEST, uncached: one word every 32 KB across the whole
+  ; chip, each different, then all read back. A stuck address line
+  ; overwrites an early word; a bad data line shows as a wrong bit.
+  For i = 0 To 255
+    a = i << 15
+    PokeL(#PSRAM_BASE_UNCACHED + a, (i * $01010101) ! $5AC3F00F ! a)
+  Next
+  For i = 0 To 255
+    a = i << 15
+    v = (i * $01010101) ! $5AC3F00F ! a
+    If PeekL(#PSRAM_BASE_UNCACHED + a) <> v
+      PsramWhy = 3
+      PsramBad = a
+      PsramEnd()
+      ProcedureReturn
+    EndIf
+  Next
+  ; and the halfword and byte stores the PDP-11's memory uses
+  PokeU(#PSRAM_BASE_UNCACHED + $500000, $A55A)
+  PokeA(#PSRAM_BASE_UNCACHED + $500002, $3C)
+  PokeA(#PSRAM_BASE_UNCACHED + $500003, $C3)
+  If PeekL(#PSRAM_BASE_UNCACHED + $500000) <> $C33CA55A
+    PsramWhy = 3
+    PsramBad = $500000
+    PsramEnd()
+    ProcedureReturn
+  EndIf
+  PsramOk = 1                            ; the packs still have to copy (PsramLoad)
+EndProcedure
+
+; ---- the packs, from flash into PSRAM, and checked --------------------------
+; A region's header: "PDP11RK1", version 1, dense. The number of blocks
+; stored, or -1 if it is not a pack this can copy.
+Procedure.i PsPackBlocks(region.i)
+  If PeekL($10000000 + region) <> $31504450 Or PeekL($10000000 + region + 4) <> $314B5231
+    ProcedureReturn -1
+  EndIf
+  If PeekL($10000000 + region + 8) <> 1 Or PeekL($10000000 + region + 12) <> 0
+    ProcedureReturn -1                   ; not version 1, or not the dense layout
+  EndIf
+  If PeekL($10000000 + region + 16) > #RK_BLOCKS
+    ProcedureReturn -1
+  EndIf
+  ProcedureReturn PeekL($10000000 + region + 16)
+EndProcedure
+
+; Add n bytes of flash at adr (whole 32-bit words) to the checksum.
+Procedure PsSum(adr.i, n.i)
+  Define i.i
+  Define a.i
+  Define b.i
+  a = PsSumA
+  b = PsSumB
+  i = 0
+  While i < n
+    a = a + PeekL(adr + i)
+    b = b + a
+    i = i + 4
+  Wend
+  PsSumA = a
+  PsSumB = b
+EndProcedure
+
+; The checksum of a pack region as the flash holds it, into PsSumA and
+; PsSumB: its header sector, then its blocks to the end of their last
+; 4096-byte sector - the bytes tools/pack_install.py wrote.
+Procedure PsRegionSum(region.i, blocks.i)
+  PsSumA = 0
+  PsSumB = 0
+  PsSum($10000000 + region, 4096 + ((blocks * 512 + 4095) & ~4095))
+EndProcedure
+
+; Copy one pack: its stored blocks, then zeros to the end of the RK05.
+; 1 = copied and read back right. The flash is read ONCE: each word goes
+; into the PSRAM and into the region's checksum (left in PsSumA, PsSumB:
+; the header sector, the blocks, and the rest of the blocks' last sector).
+; The PSRAM copy is then read back and must give the same checksum as the
+; flash words it was made from, and the zeros must read as zeros. Two
+; passes, timed apart: PsCopyUs (flash to PSRAM) and PsCheckUs (the read
+; back).
+Procedure.i PsCopy(region.i, dst.i, blocks.i)
+  Define p.i
+  Define q.i
+  Define e.i
+  Define w.i
+  Define a.i
+  Define b.i
+  Define sa.i
+  Define sb.i
+  Define ea.i
+  Define eb.i
+  Define t0.i
+  t0 = Micros()
+  PsSumA = 0
+  PsSumB = 0
+  PsSum($10000000 + region, 4096)        ; the header sector
+  a = PsSumA
+  b = PsSumB
+  sa = a
+  sb = b
+  p = $10000000 + region + 4096          ; dense: the data follows the header sector
+  e = p + blocks * 512
+  q = #PS_WIN + dst
+  While p < e
+    w = PeekL(p)
+    PokeL(q, w)
+    a = a + w
+    b = b + a
+    p = p + 4
+    q = q + 4
+  Wend
+  ea = a
+  eb = b
+  PsSumA = a
+  PsSumB = b
+  PsSum(p, ((blocks * 512 + 4095) & ~4095) - blocks * 512)   ; the flash to the end of the last sector
+  e = #PS_WIN + dst + #RK_BLOCKS * 512
+  While q < e                            ; the blocks the pack does not store read as zeros
+    PokeL(q, 0)
+    q = q + 4
+  Wend
+  PsCopyUs = PsCopyUs + (Micros() - t0)
+  t0 = Micros()
+  a = sa                                 ; the read back, from the same starting sum
+  b = sb
+  q = #PS_WIN + dst
+  e = q + blocks * 512
+  While q < e
+    a = a + PeekL(q)
+    b = b + a
+    q = q + 4
+  Wend
+  w = 0
+  e = #PS_WIN + dst + #RK_BLOCKS * 512
+  While q < e
+    w = w | PeekL(q)
+    q = q + 4
+  Wend
+  PsCheckUs = PsCheckUs + (Micros() - t0)
+  If a <> ea Or b <> eb Or w <> 0
+    ProcedureReturn 0
+  EndIf
+  ProcedureReturn 1
+EndProcedure
+
+; THE PSRAM KERNEL PATCH (the header's +96, rk_image.py --psram-patch): a
+; word of the pack changed in the PSRAM copy only - V6's _nswap back to the
+; whole swap area, which only the PSRAM can hold. The flash copy, and so
+; the fallback, keeps the pack exactly as packed. The old value must
+; match, or the copy is not used.
+;   +96 u32 1 = a patch   +100 u32 block   +104 u32 byte offset (even)
+;   +108 u32 the old word +112 u32 the new word
+Procedure.i PsPatch(region.i, dst.i)
+  Define a.i
+  If PeekL($10000000 + region + 96) <> 1
+    ProcedureReturn 1
+  EndIf
+  a = PeekL($10000000 + region + 100) * 512 + PeekL($10000000 + region + 104)
+  If (a & 1) <> 0 Or a >= #RK_BLOCKS * 512
+    ProcedureReturn 0
+  EndIf
+  If PeekU(#PS_WIN + dst + a) <> (PeekL($10000000 + region + 108) & $FFFF)
+    ProcedureReturn 0
+  EndIf
+  PokeU(#PS_WIN + dst + a, PeekL($10000000 + region + 112) & $FFFF)
+  ProcedureReturn 1
+EndProcedure
+
+Procedure PsramLoad()
+  Define t0.i
+  Define n.i
+  Define n1.i
+  Define i.i
+  n = PsPackBlocks(#DISK_REGION)
+  n1 = PsPackBlocks(#DISK_REGION1)
+  If PsramOk
+    t0 = Micros()
+    If n < 0
+      PsramWhy = 4
+    ElseIf PsCopy(#DISK_REGION, 0, n) = 0
+      PsramWhy = 5
+    ElseIf PsPatch(#DISK_REGION, 0) = 0
+      PsramWhy = 6
+    EndIf
+    If PsramWhy = 0
+      PsRk0A = PsSumA                    ; PsCopy added the region up as it read it
+      PsRk0B = PsSumB
+      PsRk0Sum = 1
+      PsDrives = 1
+      If n1 >= 0                         ; RK1: optional, and a bad one is simply absent
+        If PsCopy(#DISK_REGION1, #PS_RK1, n1)
+          PsRk1A = PsSumA
+          PsRk1B = PsSumB
+          PsRk1Sum = 1
+          If PsPatch(#DISK_REGION1, #PS_RK1)
+            PsDrives = 3
+            PsRk1Blocks = n1
+          EndIf
+        EndIf
+      EndIf
+      For i = #RAM_BYTES To #PS_MEM_TOP - 4 Step 4   ; the extra memory starts clear
+        PokeL(#PS_MEM + i, 0)
+      Next
+      MemTop = #PS_MEM_TOP
+    Else
+      PsramOk = 0
+      PsDrives = 0
+      PsramEnd()
+    EndIf
+    PsramCopyUs = Micros() - t0
+  EndIf
+  ; the checksums the start-up line prints, where a copy did not make them
+  If PsRk0Sum = 0 And n >= 0
+    PsRegionSum(#DISK_REGION, n)
+    PsRk0A = PsSumA
+    PsRk0B = PsSumB
+    PsRk0Sum = 1
+  EndIf
+  If PsRk1Sum = 0 And n1 >= 0
+    PsRegionSum(#DISK_REGION1, n1)
+    PsRk1A = PsSumA
+    PsRk1B = PsSumB
+    PsRk1Sum = 1
+  EndIf
+EndProcedure
+
+Procedure PsHex(v.i)                     ; two hex digits
+  Define k.i
+  k = (v >> 4) & 15
+  If k < 10
+    Ch(48 + k)
+  Else
+    Ch(55 + k)
+  EndIf
+  k = v & 15
+  If k < 10
+    Ch(48 + k)
+  Else
+    Ch(55 + k)
+  EndIf
+EndProcedure
+
+Procedure PsHex8(v.i)                    ; eight hex digits
+  PsHex(v >> 24) : PsHex(v >> 16) : PsHex(v >> 8) : PsHex(v)
+EndProcedure
+
+Procedure PsramWhyText()
+  Select PsramWhy
+    Case 1
+      Say("the PSRAM library found none (its error ") : Num(PsramError())
+      Select PsramError()
+        Case 1 : Say(": the pin cannot be the QSPI chip select 1 on this chip")
+        Case 2 : Say(": the system clock could not be measured")
+        Case 3 : Say(": the system clock is too low for the chip")
+        Case 4 : Say(": the QSPI interface did not answer")
+        Case 5 : Say(": no chip answered the ID read on this pin")
+        Case 6 : Say(": a chip answered that is not an APS6404L or is marked bad")
+        Case 7 : Say(": a word written did not read back")
+        Case 8 : Say(": less than 4 MB found")
+      EndSelect
+      Say(")")
+    Case 2 : Say("the chip found has ") : Num(PsramFound / 1048576) : Say(" MB; this needs 8 MB")
+    Case 3 : Say("the address test failed at offset ") : Num(PsramBad)
+    Case 4 : Say("the RK0 pack is not a dense pack that can be copied")
+    Case 5 : Say("the copy of RK0 did not read back as the flash holds it")
+    Case 6 : Say("the pack's PSRAM kernel patch did not find its old value")
+  EndSelect
+EndProcedure
+
+; The banner's PSRAM lines (core 1, before the pack's own line).
+Procedure PsramBanner()
+  Say("PSRAM: ")
+  If PsramOk
+    Say("8 MB on GPIO") : Num(#PSRAM_CS_PIN) : Say(", ID ") : PsHex(PsramIdByte(0))
+    Ch(32) : PsHex(PsramIdByte(1)) : Ch(32) : PsHex(PsramIdByte(2))
+    Say(", clock ") : Num(PsramClockKhz()) : Say(" kHz")
+    Say("; packs copied and checked in ") : Num(PsramCopyUs / 1000) : Say(" ms (copy ")
+    Num(PsCopyUs / 1000) : Say(", check ") : Num(PsCheckUs / 1000) : Say(")")
+    Say("; memory ") : Num(MemTop / 1024) : Say(" KB; RK0")
+    If PsDrives & 2
+      Say(" and RK1 (") : Num(PsRk1Blocks) : Say(" blocks)")
+    EndIf
+    Say(" writable in PSRAM, never written to flash")
+    If PeekL($10000000 + #DISK_REGION + 96) = 1
+      Say("; the PSRAM copy's kernel patch applied (block ") : Num(PeekL($10000000 + #DISK_REGION + 100))
+      Say(" +") : Num(PeekL($10000000 + #DISK_REGION + 104)) : Say(")")
+    EndIf
+    Eol()
+    Say("PSRAM windows: packs ")
+    CompilerIf #PS_DISK_UNCACHED = 1
+      Say("uncached")
+    CompilerElse
+      Say("cached")
+    CompilerEndIf
+    Say(", memory ")
+    CompilerIf #PS_MEM_UNCACHED = 1
+      Say("uncached")
+    CompilerElse
+      Say("cached")
+    CompilerEndIf
+    Eol()
+  Else
+    Say("not in use - ") : PsramWhyText()
+    If PsramIdByte(0) <> 0 Or PsramIdByte(1) <> 0
+      Say(" (ID ") : PsHex(PsramIdByte(0)) : Ch(32) : PsHex(PsramIdByte(1)) : Ch(32) : PsHex(PsramIdByte(2)) : Ch(41)
+    EndIf
+    Say(". Running as the Pico 2 build: 56 KB, the pack read-only in flash.") : Eol()
+  EndIf
+  Say("pack checksums: RK0 ")
+  If PsRk0Sum
+    PsHex8(PsRk0A) : Ch(32) : PsHex8(PsRk0B)
+  Else
+    Say("no pack")
+  EndIf
+  Say(" RK1 ")
+  If PsRk1Sum
+    PsHex8(PsRk1A) : Ch(32) : PsHex8(PsRk1B)
+  Else
+    Say("no pack")
+  EndIf
+  Eol()
+EndProcedure
+
+; ---- the disk, when PsramOk (disk.pico2 calls these) -----------------------
+Procedure.i PsDiskRead(d.i, blk.i)
+  Define a.i
+  Define i.i
+  Define w.i
+  If ((PsDrives >> d) & 1) = 0 Or blk < 0 Or blk >= #RK_BLOCKS
+    DkWhy = 1
+    ProcedureReturn -1
+  EndIf
+  a = #PS_WIN + blk * 512
+  If d = 1
+    a = a + #PS_RK1
+  EndIf
+  For i = 0 To 127
+    w = PeekL(a + i * 4)
+    DkBuf(i * 2) = w & $FFFF
+    DkBuf(i * 2 + 1) = (w >> 16) & $FFFF
+  Next
+  PsReads = PsReads + 1
+  ProcedureReturn 1
+EndProcedure
+
+Procedure.i PsDiskWrite(d.i, blk.i)
+  Define a.i
+  Define i.i
+  If ((PsDrives >> d) & 1) = 0 Or blk < 0 Or blk >= #RK_BLOCKS
+    DkWhy = 1
+    ProcedureReturn -1
+  EndIf
+  a = #PS_WIN + blk * 512
+  If d = 1
+    a = a + #PS_RK1
+  EndIf
+  For i = 0 To 127
+    PokeL(a + i * 4, DkBuf(i * 2) | (DkBuf(i * 2 + 1) << 16))
+  Next
+  PsWrites = PsWrites + 1
+  ProcedureReturn 1
+EndProcedure

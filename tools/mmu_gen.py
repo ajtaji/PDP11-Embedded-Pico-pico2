@@ -283,10 +283,7 @@ ASM_FETCH_M = """    ldr r3, =global_fw
     bge __ul_cpurunm_slowfetchm
 %s    str r0, [r3, #12]
     ldr r1, [r3, #8]
-    adds r1, r1, r0
-    bic r1, r1, #1
-    ldr r2, =global_mem
-    ldrh r2, [r2, r1]
+    ldrh r2, [r1, r0]
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
@@ -333,8 +330,14 @@ def pico2_tails(text):
         code, sep, comment = line.partition(";")
         for a, b in (("FetchLo", "Fw(0)"), ("FetchHi", "Fw(1)"), ("FetchBase", "Fw(2)")):
             code = re.sub(r"\b%s\b" % a, b, code)
+        # the Pico 2's fetch window holds a host address (cpu.pico2, MapHost): the word at
+        # the PC is at PC + Fw(2), in SRAM or in PSRAM alike
+        code = code.replace("Op = Mem((PC + Fw(2)) >> 1)", "Op = PeekU(PC + Fw(2))")
         out.append(code + sep + comment)
-    return "\n".join(out)
+    text = "\n".join(out)
+    if "Mem((PC + Fw(2))" in text:
+        fail("pico2_tails: a mapped fetch still indexes Mem; teach tools/mmu_gen.py its form.")
+    return text
 
 
 def specialise(text):

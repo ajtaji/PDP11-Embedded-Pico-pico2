@@ -56,9 +56,11 @@
 #DISK_FLASH_MODEL = 0        ; 1 = the desk model of the flash chip (disk.pico2)
 #DESK_PROBE = 0            ; 1 = the desk measurement build (see DESK PROBE)
 #STAT_CHIP = 2350            ; for the stats block's title
-#PSRAM = 0                   ; 1 = a board with QSPI PSRAM on QMI CS1 (psram.pico2) - UNTESTED ON HARDWARE
+#PSRAM = 0                   ; 1 = a board with QSPI PSRAM on QMI CS1 (psram_pdp11.pico2)
 #PSRAM_CS_PIN = 8            ; its chip select: GPIO8 on the Adafruit Feather RP2350, GPIO47 on the Pimoroni Pico Plus 2
-#FLASH_CHIP = $400000        ; the flash: 4 MB on the Pico 2 W; 8 MB on the Feather RP2350 (#PSRAM = 1)
+#FLASH_CHIP = $400000        ; the flash: 4 MB on the Pico 2 W; 8 MB on the Feather RP2350, 16 MB on the Pico Plus 2 (#PSRAM = 1)
+#PS_DISK_UNCACHED = 1        ; the packs in PSRAM: 1 = through the uncached window, 0 = through the XIP cache
+#PS_MEM_UNCACHED = 0         ; the PDP-11 memory in PSRAM: the same choice (psram_pdp11.pico2, WHICH WINDOW)
 EnableExplicit
 XIncludeFile "RP2350/Lib/clocks.pico2"
 XIncludeFile "RP2350/Lib/timer.pico2"
@@ -73,7 +75,8 @@ XIncludeFile "disk.pico2"
 XIncludeFile "kw11.pico2"
 XIncludeFile "rk11.pico2"
 CompilerIf #PSRAM = 1
-XIncludeFile "psram.pico2"
+XIncludeFile "RP2350/Lib/psram.pico2"
+XIncludeFile "psram_pdp11.pico2"
 CompilerEndIf
 XIncludeFile "tape_image.pico2"
 XIncludeFile "tapeload.pico2"
@@ -619,11 +622,32 @@ Procedure StatsBlock()
     Num(PerSecond(Total, t * 1000000 + k))
   EndIf
   Say(" average since BOOT (") : Num(Total) : Say(" instructions)")
-  StatLine("memory  ") : Num(#RAM_BYTES / 1024) : Say(" KB (000000-") : Oct(#RAM_BYTES - 1) : Say("), ")
-  Num(nz * 2 / 1024) : Say(" KB in non-zero words")
+  CompilerIf #PSRAM = 1
+    If PsramOk                           ; the memory runs on into the PSRAM (psram_pdp11.pico2)
+      StatLine("memory  ") : Num(MemTop / 1024) : Say(" KB (000000-") : Oct(MemTop - 1) : Say("): ")
+      Num(#RAM_BYTES / 1024) : Say(" KB in SRAM, ") : Num(nz * 2 / 1024) : Say(" KB of it in non-zero words; ")
+      Num((MemTop - #RAM_BYTES) / 1024) : Say(" KB in PSRAM")
+    Else
+      StatLine("memory  ") : Num(#RAM_BYTES / 1024) : Say(" KB (000000-") : Oct(#RAM_BYTES - 1) : Say("), ")
+      Num(nz * 2 / 1024) : Say(" KB in non-zero words")
+    EndIf
+  CompilerElse
+    StatLine("memory  ") : Num(#RAM_BYTES / 1024) : Say(" KB (000000-") : Oct(#RAM_BYTES - 1) : Say("), ")
+    Num(nz * 2 / 1024) : Say(" KB in non-zero words")
+  CompilerEndIf
   Service()
   StatLine("disk    RK11: ") : Num(RkReads) : Say(" blocks read, ") : Num(RkWrites) : Say(" written")
+  CompilerIf #PSRAM = 1
+    If PsramOk                           ; the packs are in the PSRAM: no cache, no RAM disk, no overlay in use
+      StatLine("        PSRAM: ") : Num(PsReads) : Say(" blocks read, ") : Num(PsWrites)
+      Say(" written; both packs writable there, swap blocks ") : Num(DkSwapLo) : Say("-") : Num(#RK_BLOCKS - 1)
+      StatLine("        flash: ") : Num(DkErases) : Say(" erases, ") : Num(DkPages)
+      Say(" pages programmed - never written; the packs were copied from it at start-up in ")
+      Num(PsramCopyUs / 1000) : Say(" ms")
+    EndIf
+  CompilerEndIf
   CompilerIf #DISK_BACKEND = 2
+   If PsramOff()                         ; the flash pack's own lines, when the packs are not in the PSRAM
     StatLine("        cache: ") : Num(DkHits) : Say(" reads from RAM, ") : Num(DkMisses) : Say(" from flash (XIP)")
     If DkSwapN > 0
       StatLine("        swap RAM disk: blocks ") : Num(DkSwapLo) : Say("-") : Num(DkSwapLo + DkSwapN - 1)
@@ -651,6 +675,7 @@ Procedure StatsBlock()
     CompilerIf #DISK_READ_ONLY = 1
       Say(" - READ-ONLY build, never written")
     CompilerEndIf
+   EndIf
   CompilerEndIf
   Service()
   StatLine("clock   KW11-L: ") : Num(KwTicks) : Say(" ticks at 60 Hz, ") : Num(KwLost + KwMissed) : Say(" dropped")
@@ -757,6 +782,16 @@ Procedure StartProgram(start.i, switches.i)  ; core 1
   ProgStart = Micros()
   ProgUpSec = UpSec
   ProgUpAcc = UpAcc
+EndProcedure
+
+; 1 while the packs are NOT in the PSRAM (always, on a board without it).
+Procedure.i PsramOff()
+  CompilerIf #PSRAM = 1
+    If PsramOk
+      ProcedureReturn 0
+    EndIf
+  CompilerEndIf
+  ProcedureReturn 1
 EndProcedure
 
 ; ---- THE DISK: the counters, and BOOT ------------------------------------

@@ -68,10 +68,7 @@ Macro NextSyncedM()
     bne __ul_cpurunm_slowfetchm
     str r0, [r3, #12]
     ldr r1, [r3, #8]
-    adds r1, r1, r0
-    bic r1, r1, #1
-    ldr r2, =global_mem
-    ldrh r2, [r2, r1]
+    ldrh r2, [r1, r0]
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
@@ -95,7 +92,7 @@ Macro NextSyncedM()
     If PC < Fw(1)
       If (PC & 1) = 0
         MmuInstrStart(PC)
-        Op = Mem((PC + Fw(2)) >> 1)
+        Op = PeekU(PC + Fw(2))
         PC = PC + 2
         Goto OpTableM(Op >> 3)
       EndIf
@@ -123,10 +120,7 @@ Macro NextNativeM()
     bge __ul_cpurunm_slowfetchm
     str r0, [r3, #12]
     ldr r1, [r3, #8]
-    adds r1, r1, r0
-    bic r1, r1, #1
-    ldr r2, =global_mem
-    ldrh r2, [r2, r1]
+    ldrh r2, [r1, r0]
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
@@ -145,7 +139,7 @@ Macro NextNativeM()
   If PC >= Fw(0)                       ; the fetch, through the fetch window (cpu)
     If PC < Fw(1)
       MmuInstrStart(PC)
-      Op = Mem((PC + Fw(2)) >> 1)
+      Op = PeekU(PC + Fw(2))
       PC = PC + 2
       Goto OpTableM(Op >> 3)
     EndIf
@@ -188,7 +182,7 @@ FetchM:
     If PC < Fw(1)
       If (PC & 1) = 0
         MmuInstrStart(PC)
-        Op = Mem((PC + Fw(2)) >> 1)
+        Op = PeekU(PC + Fw(2))
         PC = PC + 2
         Goto OpTableM(Op >> 3)
       EndIf
