@@ -91,9 +91,14 @@
 ;      250 - see THE MEMORY MANAGEMENT UNIT. While it is off nothing of it is
 ;      on the path an instruction takes; while it is on, a second run loop
 ;      (instructions_mmu, generated from instructions by tools/mmu_gen.py)
-;      runs instead. Physical memory is still the 56 KB of RAM and the I/O
-;      page: a mapped address past RAM and below the I/O page is a bus
-;      error (trap to 4), as on a machine with 56 KB fitted.
+;      runs instead. Physical memory is the 56 KB of RAM and the I/O page
+;      at the top of the 18- or 22-bit space: a mapped address past RAM and
+;      below the I/O page is a bus error (trap to 4), as on a machine with
+;      56 KB fitted.
+;    * the Unibus map (the KDJ11-B with its Unibus adapter, the PDP-11/84
+;      arrangement): 17770200-17770376, switched on by MMR3 bit 5. The
+;      RK11's 18-bit bus addresses reach all of memory through it - see
+;      THE UNIBUS MAP.
 ;    * a bus error or odd address found inside an instruction is taken
 ;      AFTER that instruction finishes (the real J-11 aborts it), but with
 ;      the PSW it had before the instruction (see BusError), so the
@@ -134,6 +139,18 @@
 #MMR1_ADDR   = $FF7C        ; 177574
 #MMR2_ADDR   = $FF7E        ; 177576
 #MMR3_ADDR   = $F54E        ; 172516
+#UBMAP_ADDR  = $F080        ; 170200-170376: the Unibus map, 32 registers of two words
+#UBMAP_END   = $F100
+#UB_IOPAGE   = $3E000       ; 760000: the 18-bit bus's own I/O page
+#UB_NONE     = $7FFFFFFF    ; UbPhys: no memory answers this bus address
+#CPUERR_ADDR = $FFF6        ; 177766 CPU error register
+#MAINT_ADDR  = $FFE8        ; 177750 maintenance register
+#MAINT_FIXED = $0225        ; its fixed bits: 9 Unibus system, 7-4 module type 2 (KDJ11-BF), 2-1 power-up code 2, 0 BPOK
+#CPUE_HALT   = $80          ; CPU error register bits: HALT in user or supervisor mode,
+#CPUE_ODD    = $40          ; a word at an odd address,
+#CPUE_NXM    = $20          ; a memory address nothing answers,
+#CPUE_IO     = $10          ; an I/O page address nothing answers,
+#CPUE_YELLOW = $08          ; the yellow stack trap
 #MAP_NONE    = $10000       ; a fast window that holds nothing
 #MAP_COST_ENTRY = 8         ; the run budget one map entry's rework costs (MmuCharge)
 #MAP_COST_ALL   = 128       ; ... and the whole map's
@@ -209,6 +226,9 @@ Global Dim MapRHi.i(64)
 Global Dim MapWLo.i(64)     ; ... and writable with W already set
 Global Dim MapWHi.i(64)
 Global MapMask.i            ; $3FFFF (18-bit) or $3FFFFF (22-bit)
+Global Dim UbMap.i(32)      ; THE UNIBUS MAP: each register's 22-bit address (bit 0 always 0)
+Global CpuErr.i             ; the CPU error register (THE CPU ERROR AND MAINTENANCE REGISTERS)
+Global MaintTrap.i          ; the maintenance register's bit 3: a kernel HALT traps through 4
 Global CurI.i, CurD.i       ; the current mode's entry bases
 Global PrvBase.i            ; the previous mode's (mode * 16), for MFPI/MFPD/MTPI/MTPD
 Global TrapHeld.i            ; a trap a trap sequence left pending, across the mapped slow fetch
@@ -494,7 +514,9 @@ EndProcedure
 ;                 aborted instruction made: amount in 7-3, register in 2-0,
 ;                 a second change in the high byte
 ;    MMR2 177576  the virtual address of the instruction
-;    MMR3 172516  4 22-bit mapping, 2-0 D space for kernel/supervisor/user
+;    MMR3 172516  5 the Unibus map relocates, 4 22-bit mapping, 3 (CSM
+;                 enable: kept, CSM itself traps as reserved), 2-0 D space
+;                 for kernel/supervisor/user
 ;    PDR/PAR      kernel 172300-172376, supervisor 172200-172276, user
 ;                 177600-177676: I PDRs, D PDRs, I PARs, D PARs, 8 each.
 ;                 PDR: 14-8 page length (64-byte blocks), 6 W (written), 3
@@ -712,6 +734,98 @@ Procedure MmuRegWrite(a.i, v.i)
 EndProcedure
 
 ; ======================================================================
+;  THE UNIBUS MAP. The RK11 is a Unibus controller: it makes 18-bit bus
+;  addresses (RKBA and the two MEX bits). On a 22-bit machine the bus
+;  reaches memory through the map: 32 registers of two words at
+;  17770200-17770376 (low word: address bits 15-1, bit 0 reads 0; high
+;  word: bits 21-16 in its bits 5-0). Bus address bits 17-13 pick a
+;  register and bits 12-0 are added to it; 760000-777777 is the bus's own
+;  I/O page and no register maps it (the 32nd can be written and read and
+;  maps nothing). MMR3 bit 5 switches the relocation on; while it is off a
+;  bus address IS the physical address (the low 248 KB).
+;  Unix V6 uses it exactly so (the pack's /usr/sys/conf/m45.s sets MMR3 to
+;  000065 and takes the machine for an 11/70 if bit 5 stays set; main.c
+;  then loads the registers one to one, UBMAP 0170200; dmr/bio.c mapalloc
+;  points registers 16 up at a buffer above 248 KB for raw I/O and swap).
+;  SOURCE: PDP-11/84 System Technical and Reference Manual,
+;  EK-1184E-TM-001 (December 1987), section 2.13 "UNIBUS Mapping", pages
+;  2-55 to 2-58: the 248 KB of bus addresses below the bus's I/O page go
+;  through the map (figure 2-33); with relocation disabled "the UNIBUS map
+;  appends four leading zeros"; with it enabled bus address bits 17-13
+;  select one of 31 pairs and the pair's content is added to bits 12-0
+;  (also 2.3.7, page 2-23, and figure 2-8); the high register holds bits
+;  21-16 and the low register bits 15-01 (figures 2-34 and 2-35); table
+;  2-26 gives the addresses, and of pair 37 says "Can be read or written
+;  into, but not used for mapping". MMR3 bit 05 "enables the I/O map for
+;  the UNIBUS adapter" (table 2-4, page 2-23). Page 2-61: with no memory
+;  on the Unibus itself (the machine modelled), the processor sees its
+;  memory in one run from 00000000, up to 17757777 if that much is fitted,
+;  and "all UNIBUS DMA devices access PMI memory through the UNIBUS map".
+;  The manual does not say what a RESET does to the map registers; they
+;  are cleared at power-up only (CpuReset), as simh does (pdp11_cpu.c).
+;  NOT MODELLED: memory on the Unibus itself and the adapter's memory
+;  configuration register (17777734), and the adapter's DMA cache - the
+;  manual's appendix B.2 says of those registers that they "are not
+;  normally used by system-level software"; the boot ROM uses them, and
+;  no boot ROM is modelled.
+;
+;  THE CPU ERROR AND MAINTENANCE REGISTERS (the same manual, 2.5.3 and
+;  2.5.5, pages 2-35 to 2-39).
+;    177766 CPU error: "identifies the source of any abort or trap that
+;      caused a trap through location 4"; bit 7 illegal HALT (HALT in user
+;      or supervisor mode), 6 address error (a word at an odd address), 5
+;      nonexistent memory, 4 I/O bus timeout (the I/O page), 3 yellow stack
+;      violation, 2 red stack violation (the red zone is not modelled: bit
+;      2 is never set). "Cleared when it is written ... also cleared at
+;      power-up or by console start. It is unaffected by a RESET".
+;    177750 maintenance: bit 9 Unibus system (1), 8 FPA available (0: no
+;      floating point is modelled), 7-4 module type 2 (KDJ11-BF), 3
+;      halt/trap option (read/write: set, a kernel-mode HALT traps through
+;      4 and does not halt; cleared at power-up), 2-1 power-up code 2,
+;      0 BPOK (1).
+;    The KDJ11-B CPU Module User's Guide EK-KDJ1B-UG-001 says the same of
+;    both registers (1.2.7 and table 1-4, page 1-6; table 1-22, page
+;    1-44), of HALT outside kernel mode ("the HALT instruction causes a
+;    trap through location 4", 1.2.2, page 1-3; so does the KDJ11-E guide
+;    EK-KDJ1E-UG-001, 1.2.2, page 1-4), and of MMR3 bit 5: read/write and
+;    "not interpreted by the KDJ11-B" (table 1-11, page 1-22) - the Unibus
+;    adapter is what uses it.
+;  The 11/84 has no system size registers (17777760, 17777762), no system
+;  ID register and no stack limit register (appendix B.3, page B-4): a
+;  program finds the memory size by reading until a trap through 4.
+; ======================================================================
+Procedure.i UbRegRead(a.i)                  ; a is even, #UBMAP_ADDR <= a < #UBMAP_END
+  Protected r.i
+  r = (a - #UBMAP_ADDR) >> 2
+  If a & 2
+    ProcedureReturn (UbMap(r) >> 16) & $3F
+  EndIf
+  ProcedureReturn UbMap(r) & $FFFE
+EndProcedure
+
+Procedure UbRegWrite(a.i, v.i)
+  Protected r.i
+  r = (a - #UBMAP_ADDR) >> 2
+  If a & 2
+    UbMap(r) = (UbMap(r) & $FFFE) | ((v & $3F) << 16)
+  Else
+    UbMap(r) = (UbMap(r) & $3F0000) | (v & $FFFE)
+  EndIf
+EndProcedure
+
+; The physical address a controller's 18-bit bus address reaches, or
+; #UB_NONE when no memory answers there (the bus's I/O page).
+ProcedureRAM.i UbPhys(ba.i)
+  If ba >= #UB_IOPAGE
+    ProcedureReturn #UB_NONE
+  EndIf
+  If Mmr3 & $20
+    ProcedureReturn (UbMap(ba >> 13) + (ba & $1FFF)) & $3FFFFF
+  EndIf
+  ProcedureReturn ba
+EndProcedure
+
+; ======================================================================
 ;  THE I/O PAGE - reached only from the four procedures below, and only
 ;  for an address past the end of RAM, so none of it is on the path a RAM
 ;  access takes.
@@ -784,7 +898,14 @@ ProcedureRAM.i IoRead(a.i)                  ; a is even and past the end of RAM
     ProcedureReturn KwRead()
   ElseIf MmuIsReg(a)
     ProcedureReturn MmuRegRead(a)
+  ElseIf a >= #UBMAP_ADDR And a < #UBMAP_END   ; THE UNIBUS MAP
+    ProcedureReturn UbRegRead(a)
+  ElseIf a = #CPUERR_ADDR                ; THE CPU ERROR AND MAINTENANCE REGISTERS
+    ProcedureReturn CpuErr
+  ElseIf a = #MAINT_ADDR
+    ProcedureReturn #MAINT_FIXED | MaintTrap
   EndIf
+  CpuErr = CpuErr | #CPUE_IO
   BusError()
   ProcedureReturn 0
 EndProcedure
@@ -832,7 +953,14 @@ ProcedureRAM IoWrite(a.i, v.i)              ; a is even and past the end of RAM
     KwWrite(v)
   ElseIf MmuIsReg(a)
     MmuRegWrite(a, v)
+  ElseIf a >= #UBMAP_ADDR And a < #UBMAP_END   ; THE UNIBUS MAP
+    UbRegWrite(a, v & $FFFF)
+  ElseIf a = #CPUERR_ADDR                ; any write clears it
+    CpuErr = 0
+  ElseIf a = #MAINT_ADDR                 ; only the halt/trap option can be written
+    MaintTrap = v & 8
   ElseIf a <> #DL11_RBUF                 ; RBUF is read-only: a write is ignored
+    CpuErr = CpuErr | #CPUE_IO
     BusError()
   EndIf
 EndProcedure
@@ -842,6 +970,7 @@ EndProcedure
 ; ======================================================================
 ProcedureRAM.i ReadWord(a.i)
   If a & 1
+    CpuErr = CpuErr | #CPUE_ODD
     BusError()
     ProcedureReturn 0
   EndIf
@@ -853,6 +982,7 @@ EndProcedure
 
 ProcedureRAM WriteWord(a.i, v.i)
   If a & 1
+    CpuErr = CpuErr | #CPUE_ODD
     BusError()
     ProcedureReturn
   EndIf
@@ -922,8 +1052,24 @@ ProcedureRAM WriteByte(a.i, v.i)
     EndIf
     ProcedureReturn
   EndIf
+  If a >= #UBMAP_ADDR And a < #UBMAP_END ; a Unibus map register: one byte of it
+    If a & 1
+      UbRegWrite(a & $FFFE, (UbRegRead(a & $FFFE) & $00FF) | ((v & $FF) << 8))
+    Else
+      UbRegWrite(a, (UbRegRead(a) & $FF00) | (v & $FF))
+    EndIf
+    ProcedureReturn
+  EndIf
+  If (a & $FFFE) = #CPUERR_ADDR          ; a write to either byte clears the CPU error register
+    CpuErr = 0
+    ProcedureReturn
+  EndIf
+  If a = #MAINT_ADDR + 1                 ; the maintenance register's high byte: nothing to write
+    ProcedureReturn
+  EndIf
   If a & 1                               ; a device's high byte: nothing there
     If (a & $FFFE) < #DL11_RCSR Or (a & $FFFE) > #SWR_ADDR
+      CpuErr = CpuErr | #CPUE_IO
       BusError()
     EndIf
     ProcedureReturn
@@ -1002,6 +1148,7 @@ ProcedureRAM StackCheck()
   If Reg(6) < #STACK_LIMIT
     If (PswHigh & $C000) = 0                 ; kernel mode only
       StackYellow = 1
+      CpuErr = CpuErr | #CPUE_YELLOW
       If TrapVector = 0
         TrapVector = #TRAP_STACK             ; send the instruction through SlowTail
       EndIf
@@ -1190,6 +1337,7 @@ ProcedureRAM.i MmuIoAddr(pa.i)
   If pa >= MapMask - $1FFF
     ProcedureReturn $E000 | (pa & $1FFF)
   EndIf
+  CpuErr = CpuErr | #CPUE_NXM
   BusError()
   ProcedureReturn -1
 EndProcedure
@@ -1197,6 +1345,7 @@ EndProcedure
 ProcedureRAM.i MmuReadWord(va.i, e.i)
   Protected pa.i
   If va & 1
+    CpuErr = CpuErr | #CPUE_ODD
     BusError()
     ProcedureReturn 0
   EndIf
@@ -1217,6 +1366,7 @@ EndProcedure
 ProcedureRAM MmuWriteWord(va.i, e.i, v.i)
   Protected pa.i
   If va & 1
+    CpuErr = CpuErr | #CPUE_ODD
     BusError()
     ProcedureReturn
   EndIf
@@ -1749,6 +1899,11 @@ Procedure CpuReset()
   Next
   DevReset()
   CacheCcr = 0                           ; power-up only: the RESET instruction leaves it
+  For i = 0 To 31                        ; and the Unibus map,
+    UbMap(i) = 0
+  Next
+  CpuErr = 0                             ; the CPU error register and the halt/trap option
+  MaintTrap = 0
   Dl11TxRdy = 1
   PswSet($00E0)            ; kernel, priority 7
   TrapVector = 0

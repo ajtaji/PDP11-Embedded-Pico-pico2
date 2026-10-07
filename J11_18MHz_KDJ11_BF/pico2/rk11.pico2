@@ -77,13 +77,14 @@
 ;  truncated pack that was never written, say) is DRE, drive error, and
 ;  the firmware says which block.
 ;
-;  THE BUS. DMA goes to physical memory through RkMemRead and RkMemWrite,
-;  which today reach Mem below #RAM_BYTES and call anything else
-;  nonexistent memory (NXM, the transfer stops there - simh does the
-;  same). The controller makes 18-bit addresses (RKBA plus MEX), as the
-;  RK11-E/RKV11-D do; with the J-11's memory management the same two
-;  procedures become the 22-bit physical path, and nothing else here
-;  changes.
+;  THE BUS. The controller makes 18-bit bus addresses (RKBA plus MEX), as
+;  the RK11-D/E do. DMA goes through RkMemRead and RkMemWrite, which turn
+;  the bus address into a physical one through the Unibus map (cpu.pico2,
+;  UbPhys: one to one while MMR3 bit 5 is clear) and reach Mem below
+;  #RAM_BYTES and, on a board with PSRAM, the memory above it up to MemTop.
+;  Anything else - the bus's I/O page, a map register pointing past the
+;  memory fitted - is nonexistent memory (NXM, the transfer stops there -
+;  simh does the same).
 ;
 ;  THE INTERRUPT goes through IntReq (#INT_RK, BR5, vector 220) and is
 ;  taken at an instruction boundary by DevService (cpu.pico2), exactly as
@@ -151,7 +152,7 @@ Global RkLastUs.i, RkLastAt.i     ; Micros() and CpuNow() of the last sector mov
 Global RkBadBlock.i = -1        ; the last block the storage refused (-1 none)
 
 ; ---- the bus: physical memory for the controller's DMA ------------------
-; Return -1 for nonexistent memory. (18-bit today; see THE BUS above.)
+; Return -1 for nonexistent memory (see THE BUS above).
 
 ; ---- THE STORAGE, ON CORE 1 ---------------------------------------------
 ; The controller, its registers and the copy to and from memory stay on
@@ -203,7 +204,8 @@ ProcedureRAM DkServe()
   EndIf
 EndProcedure
 
-ProcedureRAM.i RkMemRead(pa.i)
+ProcedureRAM.i RkMemRead(pa.i)               ; pa arrives as the 18-bit bus address
+  pa = UbPhys(pa)
   If pa < #RAM_BYTES
     ProcedureReturn Mem(pa >> 1)
   EndIf
@@ -216,6 +218,7 @@ ProcedureRAM.i RkMemRead(pa.i)
 EndProcedure
 
 ProcedureRAM.i RkMemWrite(pa.i, v.i)
+  pa = UbPhys(pa)
   If pa < #RAM_BYTES
     Mem(pa >> 1) = v
     ProcedureReturn 1

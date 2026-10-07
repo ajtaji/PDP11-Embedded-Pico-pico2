@@ -1501,6 +1501,11 @@ InstructionTRAP_1044M:         ; 104400-104777   entries $1120-$113F
 InstructionHALT_000000M:       ; entry $0000, sub-decoded
   PcOutM()
   ;name = "HALT"
+  If (PswHigh & $C000) <> 0 Or MaintTrap <> 0   ; HALT outside kernel mode (or with the maintenance
+    CpuErr = CpuErr | #CPUE_HALT                ; register's trap option) does not halt: it traps
+    TrapVector = #VEC_BUS                       ; through 4, CPU error register bit 7 (cpu.pico,
+    Goto SlowTailM                               ; THE CPU ERROR AND MAINTENANCE REGISTERS)
+  EndIf
   Halted = 1
   Reg(7) = (Reg(7) - 2) & $FFFF          ; PC stays on the HALT, as on the console
   PC = Reg(7)

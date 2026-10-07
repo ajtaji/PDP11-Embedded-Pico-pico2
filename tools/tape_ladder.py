@@ -21,6 +21,8 @@ USE
                  path is relative to --tapes, default the plan's own folder)
   --no-report    leave the firmware in the tape reader at the end, instead
                  of switching it to the report firmware's behaviour
+  --transcript FILE   everything each tape's program typed until its verdict,
+                 added to FILE under a line "=== name: verdict"
 
 EACH TAPE
     R  (reset, clear memory)          -> "#READY"
@@ -146,8 +148,7 @@ def run(args, entries):
             line = p.wait_line(reply, 5)
             if kind == "G":
                 print("%s: %s" % (e["name"], line))
-        p.buf = ""
-        end = time.time() + e["seconds"]
+        end = time.time() + e["seconds"]          # p.buf holds what the program typed after "#GO"
         v = None
         while time.time() < end and v is None:
             p.read()
@@ -155,6 +156,10 @@ def run(args, entries):
         v = v or "NO VERDICT"
         last = [l for l in p.buf.splitlines() if l.strip()]
         print("%-28s %-10s %s" % (e["name"], v, last[-1][:100] if last else ""))
+        if args.transcript:
+            with open(args.transcript, "a", newline="\n") as t:
+                t.write("=== %s: %s\n" % (e["name"], v))
+                t.write("\n".join(x.rstrip() for x in p.buf.replace("\r", "").split("\n")) + "\n")
         results.append((e["name"], v))
     if not args.no_report:
         p.send(frame("Q"))
@@ -197,6 +202,7 @@ def main():
     ap.add_argument("--seconds", type=float, default=120.0)
     ap.add_argument("--dump")
     ap.add_argument("--no-report", action="store_true")
+    ap.add_argument("--transcript")
     a = ap.parse_args()
     if a.plan:
         entries = read_plan(a.plan, a.tapes or os.path.dirname(os.path.abspath(a.plan)))

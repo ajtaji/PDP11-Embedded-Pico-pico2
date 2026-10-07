@@ -19,10 +19,12 @@
 ;      writable: every write stays in PSRAM and is lost at power-off, as
 ;      with the RAM overlay - the flash is never written;
 ;    * the whole swap area of the pack (V6: 872 blocks);
-;    * physical memory up to 248 KB: 000000-157777 stays in SRAM (the fast
-;      path, untouched), 160000-757777 is PSRAM, reached through the memory
-;      management unit's slow path (cpu.pico2, MmuReadWord and friends) and
-;      the RK11's DMA (rk11.pico2, RkMemRead/RkMemWrite).
+;    * physical memory up to 3812 KB (00000000-16707777): 000000-157777
+;      stays in SRAM, the rest is PSRAM, reached through the memory
+;      management unit's fast windows and slow path (cpu.pico2) and the
+;      RK11's DMA through the Unibus map (rk11.pico2, RkMemRead/RkMemWrite).
+;      A system that leaves 22-bit mapping off sees the first 248 KB of it,
+;      up to the 18-bit I/O page (cpu.pico2, MemLim).
 ;
 ;  THE FALLBACK. Anything short of a fully working 8 MB chip leaves
 ;  PsramOk = 0, and then NOTHING here is used: the firmware runs exactly
@@ -52,10 +54,17 @@
 ;  decided them.
 ;
 ;  THE LAYOUT IN PSRAM
-;      $000000   RK0, 4872 blocks (2,494,464 bytes)
-;      $280000   RK1, 4872 blocks
-;      $500000   PDP-11 physical memory: byte pa at $500000 + pa, used
-;                for pa from 160000 (octal) to MemTop
+;      $000000   RK0, 4872 blocks (2,494,464 bytes): a whole RK05
+;      $261000   RK1, 4000 blocks (2,048,000 bytes): the size of the V6
+;                source pack's file system. Blocks 4000-4871 of RK1 do not
+;                exist here: the controller reports a drive error for them,
+;                as for any block a pack does not hold. A pack for RK1 with
+;                more than 4000 blocks is not copied (RK1 is then absent).
+;      $455000   PDP-11 physical memory from 160000 (octal) up: byte pa is
+;                at $447000 + pa (#PS_MEM, cpu.pico2), to the end of the
+;                chip - pa $3B9000, 3812 KB (#PS_MEM_TOP): what the two
+;                packs leave of the 8 MB. (A PDP-11/84 can hold memory up
+;                to 17757777, 4088 KB: its technical manual, page 2-61.)
 ;
 ;  THE PACK CHECKSUMS. The start-up line prints, for each pack region of
 ;  the flash, the checksum tools/pack_install.py printed when it put the
@@ -68,8 +77,9 @@ CompilerElse
 #PS_WIN        = #PSRAM_BASE
 CompilerEndIf
 #PS_BYTES      = $800000         ; the chip this is built for: 8 MB
-#PS_RK1        = $280000         ; RK1's place (RK0 is at 0)
-#PS_MEM_TOP    = $3E000          ; 248 KB: up to the 18-bit I/O page
+#PS_RK1        = $261000         ; RK1's place (RK0 is at 0), right behind RK0's 4872 blocks
+#PS_RK1_BLOCKS = 4000            ; RK1's size in the PSRAM
+#PS_MEM_TOP    = $3B9000         ; 3812 KB: #PS_MEM + #PS_MEM_TOP is the end of the chip
 #DISK_REGION1  = $2C0000         ; RK1's pack in the flash (8 MB boards; rk_image.py --drive1)
 ; PsramOk, PsDrives, MemTop and #PS_MEM are declared in cpu.pico2, which the others read.
 Global PsramWhy.i                ; why not: see PsramWhyText
@@ -77,6 +87,7 @@ Global PsramFound.i              ; bytes PsramBegin() found
 Global PsramBad.i                ; the address test's first wrong offset
 Global PsramCopyUs.i             ; the start-up copy and its check, us
 Global PsCopyUs.i, PsCheckUs.i   ; its two parts: flash to PSRAM, and the read back
+Global PsClearUs.i               ; clearing the PDP-11's memory in the PSRAM, us
 Global PsRk1Blocks.i
 Global PsReads.i, PsWrites.i     ; blocks read and written in PSRAM
 Global PsSumA.i, PsSumB.i        ; the checksum being added up
@@ -117,7 +128,7 @@ Procedure PsramInit()
     EndIf
   Next
   ; and the halfword and byte stores the PDP-11's memory uses
-  PokeU(#PSRAM_BASE_UNCACHED + $500000, $A55A)
+  PokeU(#PSRAM_BASE_UNCACHED + $500000, $A55A)   ; (a place inside the memory's part)
   PokeA(#PSRAM_BASE_UNCACHED + $500002, $3C)
   PokeA(#PSRAM_BASE_UNCACHED + $500003, $C3)
   If PeekL(#PSRAM_BASE_UNCACHED + $500000) <> $C33CA55A
@@ -171,7 +182,8 @@ Procedure PsRegionSum(region.i, blocks.i)
   PsSum($10000000 + region, 4096 + ((blocks * 512 + 4095) & ~4095))
 EndProcedure
 
-; Copy one pack: its stored blocks, then zeros to the end of the RK05.
+; Copy one pack: its stored blocks, then zeros to the end of its place in
+; the PSRAM (room blocks: a whole RK05 for RK0, #PS_RK1_BLOCKS for RK1).
 ; 1 = copied and read back right. The flash is read ONCE: each word goes
 ; into the PSRAM and into the region's checksum (left in PsSumA, PsSumB:
 ; the header sector, the blocks, and the rest of the blocks' last sector).
@@ -179,7 +191,7 @@ EndProcedure
 ; flash words it was made from, and the zeros must read as zeros. Two
 ; passes, timed apart: PsCopyUs (flash to PSRAM) and PsCheckUs (the read
 ; back).
-Procedure.i PsCopy(region.i, dst.i, blocks.i)
+Procedure.i PsCopy(region.i, dst.i, blocks.i, room.i)
   Define p.i
   Define q.i
   Define e.i
@@ -215,7 +227,7 @@ Procedure.i PsCopy(region.i, dst.i, blocks.i)
   PsSumA = a
   PsSumB = b
   PsSum(p, ((blocks * 512 + 4095) & ~4095) - blocks * 512)   ; the flash to the end of the last sector
-  e = #PS_WIN + dst + #RK_BLOCKS * 512
+  e = #PS_WIN + dst + room * 512
   While q < e                            ; the blocks the pack does not store read as zeros
     PokeL(q, 0)
     q = q + 4
@@ -232,7 +244,7 @@ Procedure.i PsCopy(region.i, dst.i, blocks.i)
     q = q + 4
   Wend
   w = 0
-  e = #PS_WIN + dst + #RK_BLOCKS * 512
+  e = #PS_WIN + dst + room * 512
   While q < e
     w = w | PeekL(q)
     q = q + 4
@@ -251,13 +263,13 @@ EndProcedure
 ; match, or the copy is not used.
 ;   +96 u32 1 = a patch   +100 u32 block   +104 u32 byte offset (even)
 ;   +108 u32 the old word +112 u32 the new word
-Procedure.i PsPatch(region.i, dst.i)
+Procedure.i PsPatch(region.i, dst.i, room.i)
   Define a.i
   If PeekL($10000000 + region + 96) <> 1
     ProcedureReturn 1
   EndIf
   a = PeekL($10000000 + region + 100) * 512 + PeekL($10000000 + region + 104)
-  If (a & 1) <> 0 Or a >= #RK_BLOCKS * 512
+  If (a & 1) <> 0 Or a >= room * 512
     ProcedureReturn 0
   EndIf
   If PeekU(#PS_WIN + dst + a) <> (PeekL($10000000 + region + 108) & $FFFF)
@@ -265,6 +277,19 @@ Procedure.i PsPatch(region.i, dst.i)
   EndIf
   PokeU(#PS_WIN + dst + a, PeekL($10000000 + region + 112) & $FFFF)
   ProcedureReturn 1
+EndProcedure
+
+; The PDP-11's memory in the PSRAM, cleared: at start-up and when the tape
+; reader clears memory. Through the window the memory always uses.
+Procedure PsClearMemory()
+  Define p.i
+  Define e.i
+  p = #PS_MEM + #RAM_BYTES
+  e = #PS_MEM + #PS_MEM_TOP
+  While p < e
+    PokeL(p, 0)
+    p = p + 4
+  Wend
 EndProcedure
 
 Procedure PsramLoad()
@@ -278,9 +303,9 @@ Procedure PsramLoad()
     t0 = Micros()
     If n < 0
       PsramWhy = 4
-    ElseIf PsCopy(#DISK_REGION, 0, n) = 0
+    ElseIf PsCopy(#DISK_REGION, 0, n, #RK_BLOCKS) = 0
       PsramWhy = 5
-    ElseIf PsPatch(#DISK_REGION, 0) = 0
+    ElseIf PsPatch(#DISK_REGION, 0, #RK_BLOCKS) = 0
       PsramWhy = 6
     EndIf
     If PsramWhy = 0
@@ -288,21 +313,22 @@ Procedure PsramLoad()
       PsRk0B = PsSumB
       PsRk0Sum = 1
       PsDrives = 1
-      If n1 >= 0                         ; RK1: optional, and a bad one is simply absent
-        If PsCopy(#DISK_REGION1, #PS_RK1, n1)
+      If n1 >= 0 And n1 <= #PS_RK1_BLOCKS   ; RK1: optional; a bad one, or one too big for its place, is simply absent
+        If PsCopy(#DISK_REGION1, #PS_RK1, n1, #PS_RK1_BLOCKS)
           PsRk1A = PsSumA
           PsRk1B = PsSumB
           PsRk1Sum = 1
-          If PsPatch(#DISK_REGION1, #PS_RK1)
+          If PsPatch(#DISK_REGION1, #PS_RK1, #PS_RK1_BLOCKS)
             PsDrives = 3
             PsRk1Blocks = n1
           EndIf
         EndIf
       EndIf
-      For i = #RAM_BYTES To #PS_MEM_TOP - 4 Step 4   ; the extra memory starts clear
-        PokeL(#PS_MEM + i, 0)
-      Next
+      i = Micros()
+      PsClearMemory()                    ; the extra memory starts clear
+      PsClearUs = Micros() - i
       MemTop = #PS_MEM_TOP
+      MemLim = #UB_IOPAGE                ; 22-bit mapping is off at power-up (cpu.pico2, MmuRecompute)
     Else
       PsramOk = 0
       PsDrives = 0
@@ -376,10 +402,12 @@ Procedure PsramBanner()
     Ch(32) : PsHex(PsramIdByte(1)) : Ch(32) : PsHex(PsramIdByte(2))
     Say(", clock ") : Num(PsramClockKhz()) : Say(" kHz")
     Say("; packs copied and checked in ") : Num(PsramCopyUs / 1000) : Say(" ms (copy ")
-    Num(PsCopyUs / 1000) : Say(", check ") : Num(PsCheckUs / 1000) : Say(")")
+    Num(PsCopyUs / 1000) : Say(", check ") : Num(PsCheckUs / 1000) : Say("), memory cleared in ")
+    Num(PsClearUs / 1000) : Say(" ms")
     Say("; memory ") : Num(MemTop / 1024) : Say(" KB; RK0")
     If PsDrives & 2
-      Say(" and RK1 (") : Num(PsRk1Blocks) : Say(" blocks)")
+      Say(" (whole, 4872 blocks) and RK1 (") : Num(PsRk1Blocks) : Say(" blocks stored, ") : Num(#PS_RK1_BLOCKS)
+      Say(" exist: blocks ") : Num(#PS_RK1_BLOCKS) : Say("-4871 of RK1 answer with a drive error)")
     EndIf
     Say(" writable in PSRAM, never written to flash")
     If PeekL($10000000 + #DISK_REGION + 96) = 1
@@ -427,7 +455,7 @@ Procedure.i PsDiskRead(d.i, blk.i)
   Define a.i
   Define i.i
   Define w.i
-  If ((PsDrives >> d) & 1) = 0 Or blk < 0 Or blk >= #RK_BLOCKS
+  If ((PsDrives >> d) & 1) = 0 Or blk < 0 Or blk >= #RK_BLOCKS Or (d = 1 And blk >= #PS_RK1_BLOCKS)
     DkWhy = 1
     ProcedureReturn -1
   EndIf
@@ -447,7 +475,7 @@ EndProcedure
 Procedure.i PsDiskWrite(d.i, blk.i)
   Define a.i
   Define i.i
-  If ((PsDrives >> d) & 1) = 0 Or blk < 0 Or blk >= #RK_BLOCKS
+  If ((PsDrives >> d) & 1) = 0 Or blk < 0 Or blk >= #RK_BLOCKS Or (d = 1 And blk >= #PS_RK1_BLOCKS)
     DkWhy = 1
     ProcedureReturn -1
   EndIf

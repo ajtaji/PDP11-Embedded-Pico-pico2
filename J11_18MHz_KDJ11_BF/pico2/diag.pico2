@@ -207,6 +207,13 @@ Procedure Oct(v.i)                       ; six octal digits, as DEC prints them
   Next
 EndProcedure
 
+Procedure Oct8(v.i)                      ; eight octal digits: a 22-bit address
+  Define k.i
+  For k = 21 To 0 Step -3
+    Ch(48 + ((v >> k) & 7))
+  Next
+EndProcedure
+
 Procedure Eol()
   Ch(13)
   Ch(10)
@@ -624,7 +631,7 @@ Procedure StatsBlock()
   Say(" average since BOOT (") : Num(Total) : Say(" instructions)")
   CompilerIf #PSRAM = 1
     If PsramOk                           ; the memory runs on into the PSRAM (psram_pdp11.pico2)
-      StatLine("memory  ") : Num(MemTop / 1024) : Say(" KB (000000-") : Oct(MemTop - 1) : Say("): ")
+      StatLine("memory  ") : Num(MemTop / 1024) : Say(" KB (00000000-") : Oct8(MemTop - 1) : Say("): ")
       Num(#RAM_BYTES / 1024) : Say(" KB in SRAM, ") : Num(nz * 2 / 1024) : Say(" KB of it in non-zero words; ")
       Num((MemTop - #RAM_BYTES) / 1024) : Say(" KB in PSRAM")
     Else
@@ -761,6 +768,16 @@ Procedure ClearMemory()                  ; 512 words at a time, with USB served 
       Service()
     EndIf
   Next
+  CompilerIf #PSRAM = 1                  ; and the memory in the PSRAM
+    If PsramOk
+      For i = #RAM_BYTES To MemTop - 4 Step 4
+        PokeL(#PS_MEM + i, 0)
+        If (i & $FFC) = $FFC
+          Service()
+        EndIf
+      Next
+    EndIf
+  CompilerEndIf
 EndProcedure
 
 Procedure StartCpu(start.i, switches.i)  ; core 0
