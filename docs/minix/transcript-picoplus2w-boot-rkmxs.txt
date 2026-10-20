@@ -1,0 +1,39 @@
+
+# sync
+# 
+[host: 0.04 s]
+# #BOOT RK0
+@rkmxs
+
+RESTRICTED RIGHTS
+
+USE, DUPLICATION OR DISCLOSURE IS SUBJECT TO
+RESTRICTIONS STATED IN YOUR CONTRACT WITH
+WESTERN ELECTRIC COMPANY, INC.
+
+# 
+[host: 0.86 s]
+# STTY -LCASE
+# 
+[host: 0.24 s]
+# ps
+  PID TTY TIME COMMAND
+# 
+[host: 0.44 s]
+# time od /rkmx >/dev/null
+
+real       11.0
+user       10.4
+sys         0.4
+# 
+[host: 11.21 s]
+# ls -l /rkmxs
+-rwxrwxrwx  1 root    19036 Sep 18 01:50 /rkmxs
+# 
+[host: 0.31 s]
+# sum /rkmx
+15366 38
+# 
+[host: 0.45 s]
+# 
+[board_session: exit 0]

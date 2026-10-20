@@ -11,8 +11,14 @@ bytes from the transcript, and tools/v6fs.py put writes them into a pack
 image on the host.
 
 WHAT IT READS. Lines of an octal offset and up to eight octal words, as V6's
-od prints them; a line holding only `*` stands for lines equal to the one
-before it, up to the next offset; the last line is the end offset alone.
+od prints them; the last line is the end offset alone. V6's od (and Mini-
+Unix's: /usr/source/s2/od.c, main and dupl) prints a run of lines whose
+eight words are all one value as ONE line: the run's offset and that word
+once, the next line starting where the run ends. So a line of a single word
+followed by a gap stands for that word up to the next offset. (A line
+holding only `*`, the later ods' form, stands for lines equal to the one
+before it, up to the next offset.) A run that reaches the end of the file
+is never printed by od, so it shows as a gap - an error here.
 Everything else in the transcript (prompts, other commands) is skipped. With
 several transcripts, or several od commands in one (`od FILE 0 ; od FILE
 +100.` and so on), every offset must be given exactly once or with the same
@@ -56,6 +62,7 @@ def main():
     for path in a.transcripts:
         last = None                  # (offset, words) of the last data line
         star = False
+        run = None                   # (offset, word) of a one-word line: a run, if a gap follows
         for raw in open(path, "r", errors="replace"):
             line = raw.rstrip("\r\n")
             m = line_re.match(line)
@@ -66,6 +73,11 @@ def main():
             if not m and not e:
                 continue
             off = int((m or e).group(1), 8)
+            if run and off > run[0] + 2:
+                for o in range(run[0] + 2, off, 2):
+                    if words.setdefault(o, run[1]) != run[1]:
+                        fail("%s: offset %o is given twice with different words" % (path, o))
+            run = None
             if star and last:
                 o = last[0] + 16
                 while o < off:
@@ -83,6 +95,7 @@ def main():
                 if words.setdefault(off + 2 * k, w) != w:
                     fail("%s: offset %o is given twice with different words" % (path, off + 2 * k))
             last = (off, ws) if len(ws) == 8 else None
+            run = (off, ws[0]) if len(ws) == 1 else None
     if not words:
         fail("no od lines found in %s" % ", ".join(a.transcripts))
     size = a.size if a.size is not None else end

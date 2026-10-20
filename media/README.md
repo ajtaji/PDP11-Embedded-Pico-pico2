@@ -22,6 +22,7 @@ University of California, Berkeley credits in their own READ_ME files.
 | `tape0.bin.gz` to `tape3.bin.gz` | Mini-Unix distribution; `tape1` is a 2,048,000-byte RK05 image |
 | `1bsd.tar.gz` | First Berkeley Software Distribution |
 | `2bsd.tar.gz` | Second Berkeley Software Distribution |
+| `rkmx-slotswap` | NOT downloaded: Mini-Unix's RK kernel built on a board (2026-10-20) from the Mini-Unix pack's own sources with swap by process slot, three lines changed (`../docs/minix/build-rkmx.txt`); the Pico W image puts it in as `/rkmx` (`../docs/HOWTO.md`, section 8) |
 
 `tools/rk_image.py` turns a pack into a UF2 for the Pico's flash, and
 `--boot-block` installs a boot block where a pack has none (V6's root pack

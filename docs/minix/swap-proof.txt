@@ -1,0 +1,25 @@
+# Mini-Unix with the slot-swap kernel on a Pico W: ten od runs and other jobs, the RAM overlay counted.
+# With the distribution kernel the overlay is full on the third od (124 blocks, Unix sees a disk error).
+!boot
+!timeout 120
+!wait 3
+stty -lcase
+ps
+!stats
+time od /rkmx >/dev/null
+time od /rkmx >/dev/null
+time od /rkmx >/dev/null
+time od /rkmx >/dev/null
+time od /rkmx >/dev/null
+!stats
+time od /rkmx >/dev/null
+time od /rkmx >/dev/null
+time od /rkmx >/dev/null
+time od /rkmx >/dev/null
+time od /rkmx >/dev/null
+ls -l /bin
+ps
+sum /rkmx
+sum /rkmx.dist
+df
+!stats

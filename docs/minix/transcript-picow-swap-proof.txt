@@ -1,0 +1,227 @@
+PDP-11 J-11 on Pico: serial tape reader ready
+RK0: the Pico W image uses the flash where the radio's firmware would go; a Pico W running it cannot use its radio
+RK0: mini-unix, 3061 blocks (mapped), swap 4000-4871 in RAM, READ-ONLY: the flash is never written
+auto-boot: RK0, switches 173030, then "rkmx" at the @ prompt. Press Esc within 2 s for the diagnostic console.
+booting RK0, switches 173030
+@rkmx
+
+RESTRICTED RIGHTS
+
+USE, DUPLICATION OR DISCLOSURE IS SUBJECT TO
+RESTRICTIONS STATED IN YOUR CONTRACT WITH
+WESTERN ELECTRIC COMPANY, INC.
+
+# STTY -LCASE
+# 
+[host: 0.15 s]
+# ps
+  PID TTY TIME COMMAND
+     1 8  0:03 -
+     3 8  0:00 ps
+# 
+[host: 0.32 s]
+# === PDP-11 emulator stats: RP2040 (Pico W), Cortex-M0+, clk_sys 200.0 MHz (measured at start-up)
+CPU     J-11 (KDJ11-BF), MMU off (16-bit), PSW 000004, PC 012062 (WAIT)
+speed   8962 instructions/s over the last second; 88708 average since BOOT (1346109 instructions)
+memory  56 KB (000000-157777), 23 KB in non-zero words
+disk    RK11: 238 blocks read, 92 written
+        cache: 82 reads from RAM, 156 from flash (XIP)
+        RAM overlay: 45 of 124 blocks (swap 4000-4871)
+        flash: 0 erases, 0 pages programmed - READ-ONLY build, never written
+clock   KW11-L: 228 ticks at 60 Hz, 0 dropped, interrupts on
+uptime  0:00:15 since power-up, 15 s since BOOT
+cores   core 0: the PDP-11 CPU and its device registers; core 1: USB, console, disk storage, 60 Hz, this block
+typed   15 characters from the port since BOOT, 20 read by the PDP-11, 0 waiting, 0 lost; the host was held back 0 times
+usb     longest gap between USB services since the banner: 306 us, during input
+===
+time od /rkmx >/dev/null
+
+real        5.0
+user        4.2
+sys         0.1
+# 
+[host: 4.63 s]
+# time od /rkmx >/dev/null
+
+real        5.0
+user        4.2
+sys         0.1
+# 
+[host: 4.62 s]
+# time od /rkmx >/dev/null
+
+real        4.0
+user        4.1
+sys         0.2
+# 
+[host: 4.62 s]
+# time od /rkmx >/dev/null
+
+real        5.0
+user        4.3
+sys         0.1
+# 
+[host: 4.62 s]
+# time od /rkmx >/dev/null
+
+real        4.0
+user        4.2
+sys         0.1
+# 
+[host: 4.62 s]
+# === PDP-11 emulator stats: RP2040 (Pico W), Cortex-M0+, clk_sys 200.0 MHz (measured at start-up)
+CPU     J-11 (KDJ11-BF), MMU off (16-bit), PSW 000004, PC 012062 (WAIT)
+speed   1458330 instructions/s over the last second; 866524 average since BOOT (34912878 instructions)
+memory  56 KB (000000-157777), 23 KB in non-zero words
+disk    RK11: 794 blocks read, 337 written
+        cache: 316 reads from RAM, 478 from flash (XIP)
+        RAM overlay: 52 of 124 blocks (swap 4000-4871)
+        flash: 0 erases, 0 pages programmed - READ-ONLY build, never written
+clock   KW11-L: 1735 ticks at 60 Hz, 0 dropped, interrupts on
+uptime  0:00:40 since power-up, 40 s since BOOT
+cores   core 0: the PDP-11 CPU and its device registers; core 1: USB, console, disk storage, 60 Hz, this block
+typed   140 characters from the port since BOOT, 145 read by the PDP-11, 0 waiting, 0 lost; the host was held back 0 times
+usb     longest gap between USB services since the banner: 327 us, during input
+===
+time od /rkmx >/dev/null
+
+real        4.0
+user        4.0
+sys         0.3
+# 
+[host: 4.63 s]
+# time od /rkmx >/dev/null
+
+real        5.0
+user        4.1
+sys         0.3
+# 
+[host: 4.62 s]
+# time od /rkmx >/dev/null
+
+real        4.0
+user        4.3
+sys         0.1
+# 
+[host: 4.62 s]
+# time od /rkmx >/dev/null
+
+real        5.0
+user        4.1
+sys         0.3
+# 
+[host: 4.62 s]
+# time od /rkmx >/dev/null
+
+real        4.0
+user        4.1
+sys         0.2
+# 
+[host: 4.62 s]
+# ls -l /bin
+total 455
+-rwxrwxr-x  1 bin      5916 Jun 17 14:09 ar
+-rwxrwxr-x  1 bin      5720 Jan 26  1976 as
+-rwxrwxr-x  1 bin      8740 Jan 27  1976 bas
+-rwxrwxr-x  1 bin       152 Jan 27  1976 cat
+-rwxrwxr-x  1 bin      7176 Jan 27  1976 cc
+-rwxrwxr-x  1 bin     12358 Jan 27  1976 cdb
+-rwxrwxrwx  1 root     7380 Sep  4 05:02 check
+-rwxrwxr-x  1 bin       502 Jan 27  1976 chgrp
+-rwxrwxr-x  1 bin      1734 Jan 27  1976 chmod
+-rwxrwxr-x  1 bin       500 Jan 27  1976 chown
+-rwxrwxr-x  1 bin       190 Jan 27  1976 clri
+-rwxrwxr-x  1 bin      1554 Jan 27  1976 cmp
+-rwxrwxr-x  1 bin       838 Jan 27  1976 cp
+-rwxrwxr-x  1 bin      2062 Jan 27  1976 date
+-rwxrwxrwx  1 root     4730 Aug 30 19:56 db
+-rwxrwxr-x  1 bin     10254 Jan 27  1976 dc
+-rwxrwxr-x  1 bin      2200 Jan 27  1976 dcheck
+-rwxrwxr-x  1 bin      4360 Jan 27  1976 dd
+-rwxrwxr-x  1 bin      1440 Jan 27  1976 df
+-rwxrwxrwx  1 root     4746 Jan 26  1976 diff
+-rwxrwxr-x  1 bin       262 Jan 27  1976 dsw
+-rwxrwxr-x  1 bin       654 Jan 27  1976 du
+-rwxrwxr-x  1 bin      4688 Jul 18  1975 dump
+-rwxrwxrwx  1 root     6512 Jan 26  1976 e
+-rwxrwxr-x  1 bin       758 Jan 27  1976 echo
+-rwxrwxr-x  1 bin      6292 Jan 27  1976 ed
+-rwxrwxr-x  1 bin       156 Jan 27  1976 exit
+-rwxrwxrwx  1 root     4886 Jan 27  1976 fc
+-rwxrwxr-x  1 bin      3092 Sep  4 01:43 file
+-rwxrwxr-x  1 bin       788 Jan 27  1976 goto
+-rwxrwxr-x  1 bin      3116 Jan 27  1976 icheck
+-rwxrwxr-x  1 bin      1532 Jan 27  1976 if
+-rwxrwxr-x  1 bin       192 Jan 27  1976 kill
+-rwxrwxrwx  1 root     6302 Aug 11 19:22 ld
+-rwxrwxr-x  1 bin       474 Jan 27  1976 ln
+-rwsr-xr-x  1 root     2628 Jan 27  1976 login
+-rwxrwxr-x  1 bin      4902 Jan 27  1976 ls
+-rwxrwxr-x  1 bin      4372 Jan 27  1976 mail
+-rwsr-xr-x  1 root      240 Jan 27  1976 mkdir
+-rwsr-xr-x  1 root     2360 Jan 27  1976 mv
+-rwxrwxr-x  1 bin      2438 Jan 27  1976 ncheck
+-rwsr-xr-x  1 root     3086 Jul 18  1975 newgrp
+-rwxrwxr-x  1 bin      2476 Jan 27  1976 nm
+-rwxrwxr-x  1 bin      4480 Jan 27  1976 od
+-rwsr-xr-x  1 bin      2254 Jan 27  1976 passwd
+-rwxrwxr-x  1 bin      4150 Jan 27  1976 pr
+-rwxrwxrwx  1 root     3376 Sep 18 01:23 ps
+-rwxrwxrwx  1 root     1390 Jan 26  1976 pwd
+-rwxrwxrwx  1 root     1472 Jan 26  1976 reloc
+-rwxrwxr-x  1 bin      5598 Jul 18  1975 restor
+-rwxrwxr-x  1 bin       114 Jul 18  1975 rew
+-rwxrwxr-x  1 bin      1778 Jan 27  1976 rm
+-rwsr-xr-x  1 root      292 Jan 27  1976 rmdir
+-rwxrwxrwx  1 root     8758 Aug 30 21:52 sh
+-rwxrwxr-x  1 bin      1086 Jan 27  1976 size
+-rwxrwxr-x  1 bin      5032 Jan 27  1976 sort
+-rwxrwxr-x  1 bin       520 Jan 27  1976 strip
+-rwxrwxr-x  1 bin      2312 Jan 27  1976 stty
+-rwsr-xr-x  1 root     1934 Jan 27  1976 su
+-rwxrwxr-x  1 bin       202 Jan 27  1976 sum
+-rwxrwxr-x  1 bin       100 Jan 27  1976 sync
+-rwxrwxr-x  1 bin       610 Jan 27  1976 time
+-rwxrwxr-x  1 bin      6798 Jul 18  1975 tp
+-rwxrwxr-x  1 bin       158 Jan 27  1976 tty
+-rwxrwxr-x  1 bin      1746 Jan 27  1976 uniq
+-rwxrwxr-x  1 bin      1916 Jan 27  1976 who
+-rwxrwxr-x  1 bin       680 Jan 27  1976 write
+# 
+[host: 1.34 s]
+# ps
+  PID TTY TIME COMMAND
+     1 8  0:07 -
+     3 8  0:00 ps
+# 
+[host: 0.32 s]
+# sum /rkmx
+23675 38
+# 
+[host: 0.26 s]
+# sum /rkmx.dist
+15366 38
+# 
+[host: 0.26 s]
+# df
+/dev/rk0 805
+/dev/rk1 read error 1
+count = -1; errno = 5
+# 
+[host: 0.23 s]
+# === PDP-11 emulator stats: RP2040 (Pico W), Cortex-M0+, clk_sys 200.0 MHz (measured at start-up)
+CPU     J-11 (KDJ11-BF), MMU off (16-bit), PSW 000004, PC 012062 (WAIT)
+speed   1278639 instructions/s over the last second; 1055843 average since BOOT (71615058 instructions)
+memory  56 KB (000000-157777), 24 KB in non-zero words
+disk    RK11: 1718 blocks read, 761 written
+        cache: 730 reads from RAM, 988 from flash (XIP)
+        RAM overlay: 53 of 124 blocks (swap 4000-4871)
+        flash: 0 erases, 0 pages programmed - READ-ONLY build, never written
+clock   KW11-L: 3388 ticks at 60 Hz, 0 dropped, interrupts on
+uptime  0:01:07 since power-up, 67 s since BOOT
+cores   core 0: the PDP-11 CPU and its device registers; core 1: USB, console, disk storage, 60 Hz, this block
+typed   307 characters from the port since BOOT, 312 read by the PDP-11, 0 waiting, 0 lost; the host was held back 0 times
+usb     longest gap between USB services since the banner: 330 us, during input
+===
+
+[board_session: exit 0]

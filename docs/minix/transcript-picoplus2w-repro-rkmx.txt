@@ -1,0 +1,63 @@
+PDP-11 J-11 on Pico 2: serial tape reader ready
+PSRAM: 8 MB on GPIO47, ID 0D 5D 53, clock 75000 kHz; packs copied and checked in 1664 ms (copy 877, check 303), memory cleared in 483 ms; memory 3812 KB; RK0 (whole, 4872 blocks) and RK1 (4000 blocks stored, 4000 exist: blocks 4000-4871 of RK1 answer with a drive error) writable in PSRAM, never written to flash
+PSRAM windows: packs uncached, memory cached
+pack checksums: RK0 D98BA15F CFD766C9 RK1 1215D2AC 967B3EC6
+RK0: mini-unix, 4809 blocks, running from its PSRAM copy: writable, every write lost at power-off, the whole swap area (4000-4871); the flash is never written
+auto-boot: RK0, switches 173030, then "rkmx" at the @ prompt. Press Esc within 2 s for the diagnostic console.
+booting RK0, switches 173030
+@rkmx
+
+RESTRICTED RIGHTS
+
+USE, DUPLICATION OR DISCLOSURE I
+S SUBJECT TO
+RESTRICTIONS STATED IN YOUR CONTRACT WITH
+WESTERN ELECTRIC COMPANY, INC.
+
+# STTY -LCASE
+# 
+[host: 0.24 s]
+# chdir /usr/sys/mxsys
+# 
+[host: 0.08 s]
+# cc -c -O bio.c sys1.c
+bio.c:
+sys1.c:
+# 
+[host: 26.25 s]
+# ld -a -x -r *.o
+# 
+[host: 5.25 s]
+# mv a.out syso
+# 
+[host: 0.30 s]
+# ar r ../lib1 syso
+# 
+[host: 2.12 s]
+# rm syso
+# 
+[host: 0.25 s]
+# chdir ..
+# 
+[host: 0.04 s]
+# ld -a -x low.o conf.o lib1 lib2
+# 
+[host: 2.67 s]
+# ls -l a.out /rkmx
+-rwxrwxrwx  1 root    19010 Sep 18 01:28 /rkmx
+-rwxrwxrwx  1 root    19010 Sep 18 01:48 a.out
+# 
+[host: 0.39 s]
+# cmp a.out /rkmx
+# 
+[host: 1.22 s]
+# sum a.out
+15366 38
+# 
+[host: 0.46 s]
+# sum /rkmx
+15366 38
+# 
+[host: 0.46 s]
+# 
+[board_session: exit 0]

@@ -103,8 +103,12 @@ rebuilds it from a session transcript holding `od FILE`, and checks it
 against what V6's own `sum FILE` printed on the board. It is meant for
 the 22-bit kernel built on a board (`docs/psram/build-rk70unix.txt`, then
 `docs/psram/get-rk70unix.txt`), to be kept as `media/unix/rk70unix`.
-**Not yet run on a board's transcript:** tested on the host only, by a
-round trip of a V6 kernel file through od's format.
+First run on a board's transcript on 2026-10-20: Mini-Unix's slot-swap
+kernel (`docs/minix/build-rkmx.txt`, `get-rkmx.txt`), three transcripts
+giving the same 19,036 bytes and the board's `sum`. That run taught it od's
+run form: a line of eight equal words starts a run, which od prints as the
+run's offset and the word once (V6's `od.c`, `dupl`), so a one-word line
+followed by a gap stands for that word up to the next offset.
 
 ## `v6fs.py` - read and change a V6 file system in a disk image
 

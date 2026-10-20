@@ -1,0 +1,66 @@
+# Mini-Unix's kernel with swap by process slot, built on a board from the distribution's own sources
+# (tools/board_session.py). Run on a PSRAM board with mini-unix.rk05 as RK0 (its packs are writable
+# there); the steps are the distribution's /usr/sys/mxsys/shs and /usr/sys/shld for the RK kernel.
+#
+# THE CHANGE. Mini-Unix swaps each process to SWPLO + p_pid * SWPSIZ (bio.c, swap; sys1.c, exit and
+# wait). p_pid counts 1 to NPROC-1 and round again, so every new process swapped to blocks no process
+# had used since the pid last came round: the whole swap area was walked, 66 blocks a command. On the
+# Pico W, whose swap lives in a RAM overlay that keeps every block once written, the overlay was full
+# after about three commands. Here a process swaps by its slot in proc[] instead (swapblk below):
+# newproc takes the lowest free slot, so the same few slots, and their swap blocks, are used again.
+# Slot 12's area ends at block 4857, inside the 872 blocks of SWPLO/NSWAP. Nothing else changes.
+#
+# Before this script, mx-repro.txt (the same build without the edits) gave a kernel that cmp found
+# identical to the distribution's /rkmx: the toolchain on the pack reproduces it byte for byte.
+# After it, tools/od2bin.py rebuilds the kernel from this session's transcript (the od below).
+!boot
+!timeout 300
+!wait 3
+stty -lcase
+chdir /usr/sys/mxsys
+!line ed bio.c
+!line /SWPLO+rp->p_pid\*SWPSIZ/s//swapblk(rp)/p
+!line $a
+!line
+!line /*
+!line  * The swap area of a process is that of its slot in proc[]:
+!line  * newproc takes the lowest free slot, so the same few slots,
+!line  * and their swap blocks, are used again and again. (By p_pid,
+!line  * which counts up to NPROC and round again, each new process
+!line  * swapped to blocks nothing had used since its pid came round.)
+!line  */
+!line swapblk(rp)
+!line struct proc *rp;
+!line {
+!line 	register struct proc *p;
+!line 	register n;
+!line
+!line 	n = SWPLO;
+!line 	for(p = &proc[0]; p < rp; p++)
+!line 		n =+ SWPSIZ;
+!line 	return(n);
+!line }
+!line .
+!line w
+!line q
+!wait 1
+!line ed sys1.c
+!line g/p->p_pid\*SWPSIZ+SWPLO/s//swapblk(p)/p
+!line w
+!line q
+!wait 1
+grep -n swapblk bio.c sys1.c
+grep -n SWPSIZ bio.c sys1.c
+cc -c -O bio.c sys1.c
+ld -a -x -r *.o
+mv a.out syso
+ar r ../lib1 syso
+rm syso
+chdir ..
+ld -a -x low.o conf.o lib1 lib2
+mv a.out /rkmxs
+ls -l /rkmx /rkmxs
+sum /rkmxs
+!timeout 600
+od /rkmxs
+sum /rkmxs

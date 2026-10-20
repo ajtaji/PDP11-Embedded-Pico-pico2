@@ -1,0 +1,11 @@
+# Mini-Unix's slot-swap kernel off the board: run after build-rkmx.txt on the same running system (no upload
+# or reset in between). The console can drop a little of a long od; tools/od2bin.py takes several
+# transcripts and fills each offset from whichever has it, and checks the result against sum.
+!boot
+!timeout 600
+stty -lcase
+ls -l /rkmxs
+sum /rkmxs
+od /rkmxs
+od /rkmxs
+sum /rkmxs

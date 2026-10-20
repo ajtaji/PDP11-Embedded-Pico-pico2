@@ -243,8 +243,29 @@ The `v6fs.py` lines give V6 the device nodes `ps` and `df` need, make
 python tools/tape2pico.py --empty
 cd J11_18MHz_KDJ11_BF/pico
 PureMetalForge.exe --compile diag.pico -t rp2040 -o diag.bin
-python ../../tools/rk_image.py pack ../../mini-unix.rk05 --chip pico --name mini-unix --autoboot rkmx --firmware diag.bin --firmware-uf2 firmware.uf2 -o minix.uf2
+cp ../../mini-unix.rk05 minix.rk05
+python ../../tools/v6fs.py ln minix.rk05 /rkmx /rkmx.dist -o minix.rk05
+python ../../tools/v6fs.py rm minix.rk05 /rkmx -o minix.rk05
+python ../../tools/v6fs.py put minix.rk05 ../../media/unix/rkmx-slotswap /rkmx --mode 0777 -o minix.rk05
+python ../../tools/v6fs.py rm minix.rk05 /mx -o minix.rk05
+python ../../tools/v6fs.py ln minix.rk05 /rkmx /mx -o minix.rk05
+python ../../tools/v6fs.py check minix.rk05
+python ../../tools/rk_image.py pack minix.rk05 --chip pico --name mini-unix --autoboot rkmx --firmware diag.bin --firmware-uf2 firmware.uf2 -o minix.uf2
 ```
+
+The `v6fs.py` lines put in Mini-Unix's kernel with swap by process slot
+(`media/unix/rkmx-slotswap`, 2026-10-20). The distribution's kernel swaps
+each process to a place chosen by its process number, which moves on with
+every new process, so the swap area is walked from end to end; on the Pico W,
+whose swap lives in a 124-block RAM overlay that keeps every block once
+written, the overlay was full after about three commands and Unix then saw a
+disk error. The new kernel is the distribution's own, built on a board from
+its own sources with three lines changed (`docs/minix/build-rkmx.txt`; the
+same build without the change gives the distribution's `/rkmx` byte for
+byte); ten `od` runs and more now leave the overlay at 53 of 124 blocks
+(`docs/minix/transcript-picow-swap-proof.txt`). The distribution's kernel
+stays on the pack as `/rkmx.dist`; `/mx`, whose symbols `ps` reads, is
+linked to the kernel that runs.
 
 The compiler's output is the same byte for byte from the same source and
 the same compiler. With main `b9b70ed1` these reproduce the committed

@@ -1,0 +1,17 @@
+# Mini-Unix's kernel rebuilt on a board from the pack's own sources, unchanged: cmp must find it equal to /rkmx
+!boot
+!timeout 300
+!wait 3
+stty -lcase
+chdir /usr/sys/mxsys
+cc -c -O bio.c sys1.c
+ld -a -x -r *.o
+mv a.out syso
+ar r ../lib1 syso
+rm syso
+chdir ..
+ld -a -x low.o conf.o lib1 lib2
+ls -l a.out /rkmx
+cmp a.out /rkmx
+sum a.out
+sum /rkmx
