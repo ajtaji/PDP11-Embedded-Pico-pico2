@@ -1,0 +1,49 @@
+# The DEC diagnostic ladder (media/diagnostics/ladder.txt) on a Pimoroni Pico Plus 2 W, 2026-10-20, with the
+# firmware the IDE builds: diag.pico2 compiled with the Pimoroni Pico Plus 2 W board chosen (release compiler of
+# 2026-10-19), uploaded by Compile + Upload. tools/tape_ladder.py --usb-serial ... --plan media/diagnostics/ladder.txt
+# Expected (ladder.txt): 17 PASS; DZQKC HALT at 014304, DEQKC HALT at 000006 after 22 instructions.
+
+01_T1-D0AA: #GO 000200
+01_T1-D0AA                   PASS       [serial] 138712000 instructions, 1 bells, PC 004346
+02_T2-D0BA: #GO 000200
+02_T2-D0BA                   PASS       [serial] 55299000 instructions, 1 bells, PC 003136
+03_T3-D0CA: #GO 000200
+03_T3-D0CA                   PASS       [serial] 71446000 instructions, 1 bells, PC 001412
+04_T4-D0DA: #GO 000200
+04_T4-D0DA                   PASS       [serial] 147185000 instructions, 1 bells, PC 005450
+05_T5-D0EA: #GO 000200
+05_T5-D0EA                   PASS       [serial] 107831000 instructions, 1 bells, PC 005272
+06_T6-D0FA: #GO 000200
+06_T6-D0FA                   PASS       [serial] 121242000 instructions, 1 bells, PC 003016
+07_T7-D0GA: #GO 000200
+07_T7-D0GA                   PASS       [serial] 97348000 instructions, 1 bells, PC 002726
+08_T8-D0HA: #GO 000200
+08_T8-D0HA                   PASS       [serial] 105921000 instructions, 1 bells, PC 013146
+09_T9-D0IA: #GO 000200
+09_T9-D0IA                   PASS       [serial] 51462000 instructions, 1 bells, PC 011170
+10_T10-D0JA: #GO 000200
+10_T10-D0JA                  PASS       [serial] 72739000 instructions, 1 bells, PC 000200
+11_T11-D0KA: #GO 000200
+11_T11-D0KA                  PASS       [serial] 33783000 instructions, 1 bells, PC 001146
+12_T12-D0LA: #GO 000200
+12_T12-D0LA                  PASS       [serial] 78346000 instructions, 1 bells, PC 003454
+13_T13-D0MA: #GO 000200
+13_T13-D0MA                  PASS       [serial] 17055000 instructions, 1 bells, PC 002360
+14_T15-D0OA: #GO 000200
+14_T15-D0OA                  PASS       [serial] 6063000 instructions, 1 bells, PC 010354
+15_DFKAA: #GO 000200
+15_DFKAA                     PASS       | END OF DFKAA-B
+16_DFKAB: #GO 000200
+16_DFKAB                     PASS       | END OF DFKAB 
+17_DFKAC: #GO 000200
+17_DFKAC                     PASS       | END PASS
+18_DZQKC: #GO 000200
+18_DZQKC                     FAIL        R0=000004 R1=014204 R2=152440 R3=152440 R4=154346 R5=150532 SP=000500 PSW=000000
+19_DEQKC: #GO 000200
+19_DEQKC                     FAIL        R0=000000 R1=000000 R2=000000 R3=000000 R4=000000 R5=000000 SP=001174 PSW=000000
+report: self-test: R0=55 steps=23 PASS
+tape_ladder: 17 of 19 PASS; not passed: 18_DZQKC, 19_DEQKC
+
+# the two HALTs, from the full transcript:
+HALT at 014304 (serial, 44237614 instructions, 0 bells)
+HALT at 000006 (serial, 22 instructions, 0 bells)
