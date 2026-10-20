@@ -11,8 +11,11 @@
 ;  THE BOARDS (APS6404L, 8 MB, on each)
 ;      Adafruit Feather RP2350 HSTX              RP2350A  CS on GPIO8   8 MB flash
 ;      Pimoroni Pico Plus 2 / Pico Plus 2 W      RP2350B  CS on GPIO47  16 MB flash
-;  #PSRAM_CS_PIN and #FLASH_CHIP pick the board; tools/psram_build.py sets
-;  them (--board feather or picoplus2) and builds the image.
+;  #PSRAM_CS_PIN and #FLASH_CHIP pick the board. diag.pico2 sets them for
+;  the Pico Plus 2 W when that board is chosen (its 48 GPIOs); for the
+;  Feather, tools/psram_build.py sets them (--board feather or picoplus2)
+;  and builds the image. This file is included on every build and is
+;  empty unless #PSRAM = 1.
 ;
 ;  WHAT IT GIVES THE PDP-11 (when PsramOk = 1)
 ;    * both RK05 packs in PSRAM, copied from the flash at start-up, and
@@ -81,6 +84,7 @@
 ;  pack there and prints for the image file (--sums): over the region's
 ;  bytes as 32-bit words, low byte first, a = a + word : b = b + a.
 ; ======================================================================
+CompilerIf #PSRAM = 1                ; included on every build (diag.pico2: a constant cannot guard an XIncludeFile); used only with PSRAM
 CompilerIf #PS_DISK_UNCACHED = 1
 #PS_WIN        = #PSRAM_BASE_UNCACHED
 CompilerElse
@@ -500,3 +504,4 @@ Procedure.i PsDiskWrite(d.i, blk.i)
   PsWrites = PsWrites + 1
   ProcedureReturn 1
 EndProcedure
+CompilerEndIf                        ; #PSRAM = 1

@@ -1,0 +1,5 @@
+# what a Compile or Compile + Upload in the IDE leaves beside the source
+diag.bin
+diag.bin.*
+diag.uf2
+diag.cycles.txt
