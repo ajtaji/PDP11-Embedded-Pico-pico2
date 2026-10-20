@@ -53,6 +53,7 @@ The emulated machine has a console on the USB serial port, an RK11 disk controll
 2. Copy the UF2 file onto it. The board writes it and restarts by itself.
    - **Pico 2 W:** one file, `combined.uf2` (firmware and disk pack together).
    - **Pico W:** two files in two separate BOOTSEL sessions, firmware first, then `minix.uf2`. On the RP2040 a single combined file leaves the disk area unwritten (the start-up line then says `RK0: no pack`).
+   - **With the PureMetal Forge IDE** instead of the button: choose the board in the **Board** menu and use **Compiler > Flash Prebuilt File...** with the same file(s); to change the firmware, open `diag.pico2` (or `diag.pico`) and **Compile + Upload**: the pack on the board is kept. See [docs/HOWTO.md, section 11](docs/HOWTO.md#11-flash-and-build-from-the-puremetal-forge-ide).
 3. Open the board's serial port at 115200 8N1 **within 30 s of power-up** (a COM port on Windows, `/dev/ttyACM0` or similar on Linux). The baud rate does not matter: it is USB.
 4. The board boots Unix by itself. At `#` you are root; there is no login. Type in lower case (both systems print in capitals).
 
@@ -219,6 +220,7 @@ Known differences, found by those tapes and left as they are:
 
 - Flashing, terminal and Unix: [docs/HOWTO.md](docs/HOWTO.md).
 - Your own disk image: [docs/HOWTO.md, section 7](docs/HOWTO.md#7-build-your-own-disk-image).
+- Everything from the PureMetal Forge IDE, no command line: [docs/HOWTO.md, section 11](docs/HOWTO.md#11-flash-and-build-from-the-puremetal-forge-ide).
 - The firmware and the shipped images, from source with PureMetal Forge: [docs/HOWTO.md, section 8](docs/HOWTO.md#8-build-the-firmware-and-images-with-puremetal-forge). The compiler's output is the same byte for byte from the same source, so the build reproduces the committed UF2 files; compare with the SHA-256 values in [images/README.md](images/README.md).
 - The DEC diagnostics: [docs/HOWTO.md, section 9](docs/HOWTO.md#9-run-the-diagnostic-ladder).
 

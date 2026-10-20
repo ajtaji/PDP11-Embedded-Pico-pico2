@@ -59,7 +59,9 @@ python tools/tape2pico.py --empty
 ```
 
 `--empty` builds the firmware with no tape: the serial tape reader and the
-Unix images use that. Options: `--start` and `--switches` (octal), `--name`,
+Unix images use that. The repository holds the empty files, so the firmware
+compiles as it comes (in the IDE too); after building a tape in, run
+`--empty` again before building Unix images. Options: `--start` and `--switches` (octal), `--name`,
 `--patch ADDR=WORD,...` (octal words changed after loading), `-o FILE`.
 
 ## `tape_ladder.py` - the diagnostic ladder over the serial port

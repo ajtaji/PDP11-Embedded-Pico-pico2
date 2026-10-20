@@ -10,6 +10,7 @@ Step-by-step instructions for the [PDP-11 emulator for the Pico W and Pico 2 W](
 | Re-flash without the button | [6. Re-flash without the BOOTSEL button](#6-re-flash-without-the-bootsel-button) |
 | Your own disk | [7. Build your own disk image](#7-build-your-own-disk-image) |
 | Your own firmware | [8. Build the firmware and images with PureMetal Forge](#8-build-the-firmware-and-images-with-puremetal-forge) |
+| All of it from the IDE, no command line | [11. Flash and build from the PureMetal Forge IDE](#11-flash-and-build-from-the-puremetal-forge-ide) |
 | Run the DEC diagnostics | [9. Run the diagnostic ladder](#9-run-the-diagnostic-ladder) |
 | A board with PSRAM | [10. The PSRAM boards](#10-the-psram-boards) |
 
@@ -207,6 +208,8 @@ Under Git Bash on Windows, put `MSYS_NO_PATHCONV=1` in front of any command with
 
 ## 8. Build the firmware and images with PureMetal Forge
 
+To flash a board and to change and rebuild the firmware **from the IDE alone**, see [section 11](#11-flash-and-build-from-the-puremetal-forge-ide). The command lines below build the disk images too.
+
 You need Python 3 and the PureMetal compiler (`PureMetalForge.exe`), the
 release build from compiler main `b9b70ed1` or later: the firmware keeps the
 lazy N/Z flags in r4 (`#RESERVE_MORE = 1` in `cpu.pico(2)`), and the
@@ -315,7 +318,7 @@ first bell.
 
 ## 10. The PSRAM boards
 
-**Read first (2026-10-07).** The source now has 22-bit memory on these boards and keeps the packs at 0x10240000 and 0x104C0000 (section 7). The files in `images/` are of the earlier layout and the current `tools/pack_install.py` refuses them, saying why. Until new images are put there, make the image the lines below name with `python tools/psram_build.py --board feather|picoplus2 --compiler PureMetalForge.exe --out DIR` and give `DIR/combined.uf2` to `--image`. The Feather was loaded this way with the current source; the Pimoroni has not been yet.
+**Read first (2026-10-20).** `images/picoplus2/combined.uf2` is built from the current source (packs at 0x10240000 and 0x104C0000) and ran on a Pico Plus 2 W. `images/feather/combined.uf2` is still the earlier layout, which the current `tools/pack_install.py` refuses, saying why: for a Feather, make the image with `python tools/psram_build.py --board feather --compiler PureMetalForge.exe --out DIR` and give `DIR/combined.uf2` to `--image`.
 
 The Pimoroni Pico Plus 2 W and the Adafruit Feather RP2350 HSTX run V6 with 248 KB of memory. Their images are `images/picoplus2/combined.uf2` and `images/feather/combined.uf2`.
 
@@ -354,3 +357,31 @@ python tools/board_session.py --hub-port 9 --script docs/psram/proof.txt --out t
 `docs/psram/proof.txt` checks `mem = 1036`, runs `ps`, `df /dev/rk0`, mounts RK1, types and compiles a C program and runs it, times `od /rkunix` twice and takes the statistics block. `docs/psram/swap.txt` keeps twelve 30 KB processes alive at once. The transcripts of both boards are beside them.
 
 **V6 notes for these boards.** `stty -lcase` first if you type C: in upper-case mode `\n` in a string arrives as `N`. `#` and `@` are V6's erase and kill characters. Everything written is lost at power-off.
+
+## 11. Flash and build from the PureMetal Forge IDE
+
+Everything for the **Pico 2 W** and the **Pico W** can be done in the PureMetal Forge IDE (the OpenGL IDE or the Standard one; the menus are the same), with no command line and no BOOTSEL button once the board runs a PureMetal program. The IDE's upload resets the board, copies the file and waits for it to come back, as for any PureMetal program.
+
+**Flash the ready images** (section 2 and 3 without the button):
+
+1. Plug in the board. If it is new or runs something that is not PureMetal, hold BOOTSEL while plugging it in, this once.
+2. **Board** menu: choose **Raspberry Pi Pico 2 W** or **Raspberry Pi Pico W**.
+3. **Compiler > Flash Prebuilt File...**, and choose:
+   - **Pico 2 W:** `images/pico2w-v6/combined.uf2`. The board restarts into V6.
+   - **Pico W:** `images/picow-mini-unix/firmware.uf2`, and when it is done, **Flash Prebuilt File...** again with `images/picow-mini-unix/minix.uf2`. The board restarts into Mini-Unix.
+4. Open the board's serial port (section 4). It boots Unix by itself.
+
+A ready UF2 is sent exactly as it is, so the firmware and the disk pack land where the file says.
+
+**Change the firmware and put it on the board:**
+
+1. **File > Open** `J11_18MHz_KDJ11_BF/pico2/diag.pico2` (Pico 2 W) or `J11_18MHz_KDJ11_BF/pico/diag.pico` (Pico W). If the Board menu then shows the board without the W (Raspberry Pi Pico 2, or Pico), that is fine: same chip, same build, same upload.
+2. **Compiler > Compile + Upload.** The firmware goes on the board and **the disk pack already there is kept**: the upload writes only the firmware's part of the flash. The board restarts and boots Unix from the pack.
+
+So a board needs the ready image once (above), and after that every change is Compile + Upload. The firmware the IDE builds from the repository as it is equals the firmware inside `images/` byte for byte (the same check as section 8).
+
+`tape_image.pico` and `tape_image.pico2` are in the repository as the **empty** tape, which is what Unix and the serial tape reader use, so the firmware compiles as it comes. Building a diagnostic tape in (section 9, `tools/tape2pico.py TAPE`) replaces them; run `python tools/tape2pico.py --empty`, or check the two files out again, before going back to Unix.
+
+**What still needs Python:** a disk pack of your own (section 7) and the PSRAM boards' firmware (section 10, `tools/psram_build.py`). A ready PSRAM image (`images/picoplus2/combined.uf2`) can be sent with **Flash Prebuilt File...** like the others, with **Pimoroni Pico Plus 2 W** chosen in the Board menu.
+
+Checked 2026-10-20 from a fresh clone with the release compiler of 2026-10-19, on a Pico 2 W and a Pico W: the ready images through the IDE's upload job, then the firmware compiled from the clone and uploaded on top; both boards kept their packs and booted Unix (V6 `mem = 76`; Mini-Unix `#`).
