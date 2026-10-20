@@ -264,6 +264,15 @@ Global Dim Fw.i(4)
 ; "ASM Uses", so they need PureMetal Forge main f408822d or later; 0 builds
 ; the compiled tails.
 #ASM_TAILS = 1
+; The mapped loop's MOV handlers by addressing mode with an assembly fast path
+; in front of each (tools/mmu_gen.py, asm_mov; held to the plain handlers by
+; asm_check.pico2). 0 builds the plain handlers alone.
+#ASM_MOV = 1
+; EaWordM's four commonest modes in assembly, called by the mapped handlers
+; (tools/mmu_gen.py, ASM_EAW; held to EaWordM by asm_check.pico2). 0: they call EaWordM.
+#ASM_EA = 1
+; Measured on a Pico 2 W, 2026-10-19 (V6 `time od /rkunix`, host-timed): 13.24 s
+; before, 11.14 s with #ASM_MOV, 10.36 s with both; a Pico Plus 2 W 13.37 -> 10.44 s.
 Global MmuPcRec.i           ; the instruction MMR1 holds the changes of
 Global MmuTouches.i         ; reads and writes of the unit's registers, for tests
 Global Halted.i, Waiting.i
@@ -1600,7 +1609,10 @@ EndMacro
 ; EaWord mapped: the index word and an immediate come from I space, every
 ; operand and pointer from D space, of the current mode. EaBase says where
 ; the operand itself lies.
-ProcedureRAM.i EaWordM(spec.i)
+; THE BODY IS A MACRO so that the same text is both EaWordM's slow path and,
+; in asm_check.pico2 only, the plain procedure its assembly is held to
+; (EaWordMRef there); a program that does not call EaWordMRef does not keep it.
+Macro EaWordMBody()
   EaReg = spec & 7
   EaBase = CurD
   Tmp = (spec >> 3) & 7
@@ -1657,6 +1669,16 @@ ProcedureRAM.i EaWordM(spec.i)
     ProcedureReturn Tmp
   EndIf
   ProcedureReturn Reg(EaReg)
+EndMacro
+
+; The mapped loop's handlers do not call this for the four commonest modes:
+; they call the assembly routine __eaw (tools/mmu_gen.py, ASM_EAW; #ASM_EA = 1),
+; which does X(R), -(R), (R)+ and (R) itself and comes here for everything
+; else. EaSpec is where __eaw leaves the spec on the way (asm_check.pico2
+; counts the calls that came here by it).
+Global EaSpec.i
+ProcedureRAM.i EaWordM(spec.i)
+  EaWordMBody()
 EndProcedure
 
 ProcedureRAM.i EaByteM(spec.i)
@@ -1747,7 +1769,16 @@ Macro MMSrcWord()
   If (Op & $0E00) = 0
     Src = Reg((Op >> 6) & 7)
   Else
+CompilerIf #ASM_EA = 1
+  ASM Uses Op
+    ubfx r0, r8, #6, #6
+    bl __eaw
+    ldr r1, =global_ea
+    str r0, [r1]
+  EndASM
+CompilerElse
     Ea = EaWordM((Op >> 6) & $3F)
+CompilerEndIf
     MMReadWordE(Src, Ea, EaBase)
   EndIf
 EndMacro

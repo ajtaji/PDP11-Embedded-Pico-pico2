@@ -1,0 +1,519 @@
+; ======================================================================
+;  asm_check.pico - holds the Pico's assembly fast paths to their plain
+;  versions, on the board (Raspberry Pi Pico / Pico W, the unmapped loop).
+;
+;  tools/asm_mov_gen.py gives the seven MOV handlers by addressing mode an
+;  assembly fast path in front of their Basic bodies, and the handlers'
+;  operand addresses a subroutine, __eaw1, in place of EaWord (cpu.pico,
+;  #ASM_MOV and #ASM_EA). This program holds both to the plain code:
+;    * MOV: a random machine state - registers, memory, the condition codes,
+;      the stack pointer either side of the yellow limit - and one MOV of a
+;      random form at a random PC, run twice from that state through CpuRun:
+;      once with the table at the assembly entry and once at the plain one
+;      (MovAsm / MovRef). R0-R7, N Z V C, the pending trap, the CPU error
+;      register, the yellow stack flag, the PSW and every word of the 56 KB
+;      (against a shadow copy) are compared.
+;    * __eaw1 against EaWord's own body (EaWordRef) on random specs and
+;      registers: the address, R0-R7, EaReg, Tmp, Adr, the trap, the CPU error
+;      register and the yellow flag.
+;  Both ways through the assembly are counted: "fast" (the plain code never
+;  ran) and "slow" (an early exit to it). Addresses stay below the I/O page,
+;  whose device registers have side effects a second run would see.
+;  Every round prints
+;      ASMCHECK mov checks=N fast=F slow=S failures=X PASS
+;      ASMCHECK ea checks=N fast=F slow=S failures=X PASS
+;  (FAIL with the first difference). A deliberately broken fast path must
+;  make it FAIL; these did, each within the first round (2026-10-19): the
+;  (R)+ step of MOV (R)+,R 4 for 2, MOV X(R),R setting N/Z from the PC, and
+;  __eaw1's X(R) PC step 4 for 2. One did not, rightly: MOV R,-(R) leaving
+;  for the Basic below 001000 instead of 000400 only sends more cases to the
+;  Basic, whose answer is the same.
+;      PureMetalForge.exe --compile asm_check.pico -t rp2040 -o asm_check.bin --port COMn
+; ======================================================================
+#DISK_BACKEND = 0
+#DISK_FLASH_MODEL = 0
+#DISK_READ_ONLY = 0
+#DESK_PROBE = 0
+EnableExplicit
+XIncludeFile "RP2040/Lib/clocks.pico"
+XIncludeFile "RP2040/Lib/timer.pico"
+XIncludeFile "RP2040/Lib/uart.pico"
+XIncludeFile "RP2040/Lib/usb_serial.pico"
+XIncludeFile "RP2040/Lib/safety.pico"
+XIncludeFile "cpu.pico"
+XIncludeFile "instructions_mmu.pico"
+XIncludeFile "instructions.pico"
+XIncludeFile "disk.pico"
+XIncludeFile "kw11.pico"
+XIncludeFile "rk11.pico"
+
+#CLOCK_KHZ = 200000
+#ROUND = 2000
+#PAIRS = 7
+#NOT_RUN = $5A5A1234                    ; Src before a run: still there = the plain body never ran
+
+Global Seed.i = $1234567
+; THE SHADOW. 56 KB more would not fit beside the two 32 KB tables, so every address
+; this program makes lies in the low 28 KB or the top 1 KB of RAM (the RAM's end is
+; there to be stepped over), and only those are shadowed; the words between are
+; summed once, and a run that changes them is a failure of its own (field 32).
+#LO_WORDS = $3800                       ; 000000-067777
+#HI_WORD = $6E00                        ; 156000-157777
+#HI_WORDS = #RAM_WORDS - #HI_WORD
+Global Dim ShadowLo.u(#LO_WORDS)
+Global Dim ShadowHi.u(#HI_WORDS)
+Global MidSum.i, DbgA.i, DbgB.i, DbgShown.i
+Global Dim PairSm.i(#PAIRS)
+Global Dim PairDm.i(#PAIRS)
+#SNAP = 40
+Global Dim SnapA.i(#SNAP)
+Global Dim SnapB.i(#SNAP)
+Global Dim DiffA.i(8)                   ; up to 4 (word index, value) pairs
+Global Dim DiffB.i(8)
+Global NDiffA.i, NDiffB.i
+Global Checks.i, Fast.i, Slow.i, Failures.i, FirstBad.i, FirstOp.i, FirstField.i
+Global TPc.i, TOp.i, TPair.i, TRs.i, TRd.i
+Global Dim SReg.i(8)
+Global Dim SAlt.i(6)
+Global Dim SBank.i(4)
+Global GK.i, GS.i, GD.i, GN.i, GI.i, GK2.i, GN2.i
+Global Osm.i, Odm.i, Oi.i, Ow.i, Ofield.i, Mr.i, Mt0.i
+Global SNZ.i, SV.i, SC.i
+
+; FlagNZ lives in r4 (cpu.pico2): only these two small procedures name it, so no
+; procedure here that saves r4 in its frame touches it (PM1126).
+Procedure.i NzRead()
+  ProcedureReturn FlagNZ
+EndProcedure
+
+Procedure NzWrite(v.i)
+  FlagNZ = v
+EndProcedure
+
+Procedure Ch(c.i)
+  UsbSerialWrite(c)
+EndProcedure
+
+Procedure Say(*s.i)
+  Define p.i, c.i
+  p = *s
+  c = PeekA(p) & 255
+  While c <> 0
+    Ch(c)
+    p = p + 1
+    c = PeekA(p) & 255
+  Wend
+EndProcedure
+
+Procedure Num(v.i)
+  Define n.i, p.i
+  n = v
+  If n < 0
+    Ch(45)
+    n = 0 - n
+  EndIf
+  p = 1
+  While n / p >= 10
+    p = p * 10
+  Wend
+  While p > 0
+    Ch(48 + (n / p) % 10)
+    p = p / 10
+  Wend
+EndProcedure
+
+Procedure Oct(v.i)
+  Define k.i
+  For k = 15 To 0 Step -3
+    Ch(48 + ((v >> k) & 7))
+  Next
+EndProcedure
+
+Procedure Eol()
+  Ch(13)
+  Ch(10)
+  UsbSerialFlush()
+  UsbSerialTask()
+EndProcedure
+
+Procedure Pump(us.i)
+  Define t0.i
+  t0 = Micros()
+  While (Micros() - t0) < us
+    UsbSerialTask()
+    SafetyPet()
+  Wend
+EndProcedure
+
+Procedure.i Rnd()                       ; xorshift32
+  Seed = Seed ! (Seed << 13)
+  Seed = Seed ! ((Seed >> 17) & $7FFF)
+  Seed = Seed ! (Seed << 5)
+  ProcedureReturn Seed & $7FFFFFFF
+EndProcedure
+
+Procedure.i RndN(n.i)
+  ProcedureReturn Rnd() % n
+EndProcedure
+
+; An even address in RAM (below the I/O page).
+Procedure.i RndRam()
+  If RndN(8) = 0
+    ProcedureReturn #HI_WORD * 2 + RndN(#HI_WORDS) * 2
+  EndIf
+  ProcedureReturn RndN(#LO_WORDS) * 2
+EndProcedure
+
+Procedure.i MidSumNow()
+  Define i.i, h.i
+  h = 0
+  For i = #LO_WORDS To #HI_WORD - 1
+    h = h * 31 + Mem(i)
+  Next
+  ProcedureReturn h
+EndProcedure
+
+; A register value: mostly an even RAM address (the fast path; +2 so that a
+; -(R) lands in RAM too), sometimes odd, either side of the yellow stack
+; limit, the top of RAM, or anything below the I/O page.
+Procedure.i RndReg()
+  Define k.i
+  k = RndN(12)
+  If k < 7
+    ProcedureReturn RndRam() + 2
+  ElseIf k = 7
+    ProcedureReturn RndRam() + 1
+  ElseIf k = 8
+    ProcedureReturn $FC + RndN(8) * 2   ; 000374-000412
+  ElseIf k = 9
+    ProcedureReturn #RAM_BYTES - 4 + RndN(3) * 2   ; 157774-160000: a step onto the I/O page
+  EndIf
+  ProcedureReturn RndRam() + RndN(2)
+EndProcedure
+
+Procedure SaveState()
+  For GI = 0 To 7 : SReg(GI) = Reg(GI) : Next
+  For GI = 0 To 5 : SAlt(GI) = RegAlt(GI) : Next
+  For GI = 0 To 3 : SBank(GI) = StackBank(GI) : Next
+  SNZ = NzRead() : SV = FlagV : SC = FlagC
+EndProcedure
+
+; Back to the saved state exactly: a trap in the run before may have changed
+; the mode, the register set and the stack pointers.
+Procedure LoadState()
+  PswSet($00E0)                         ; kernel, register set 0, priority 7
+  For GI = 0 To 7 : Reg(GI) = SReg(GI) : Next
+  For GI = 0 To 5 : RegAlt(GI) = SAlt(GI) : Next
+  For GI = 0 To 3 : StackBank(GI) = SBank(GI) : Next
+  NzWrite(SNZ) : FlagV = SV : FlagC = SC
+  MmuOn = 0
+  TrapVector = 0 : PswLate = 0 : AbortPsw = 0 : StackYellow = 0 : CpuErr = 0
+  TraceArm = 0 : Halted = 0 : Waiting = 0 : IntReq = 0 : DevActive = 0 : Dl11TxRdy = 1
+  Src = #NOT_RUN
+EndProcedure
+
+; Run the one instruction at TPc through entry target.
+Procedure RunOnce(target.Label)
+  OpTable(TOp >> 3) = target
+  Reg(7) = TPc
+  GK = CpuRun(1)
+EndProcedure
+
+; What the run left, into *snap / *diff / *nd (no locals: see NzRead)
+Procedure Snap(*snap.i, *diff.i, *nd.i)
+  GS = *snap : GD = *diff : GN = *nd
+  PokeL(GS, GK)
+  For GI = 0 To 7 : PokeL(GS + 4 + GI * 4, Reg(GI)) : Next
+  PokeL(GS + 36, NzRead())
+  PokeL(GS + 40, FlagV & $8000)
+  PokeL(GS + 44, FlagC & $10000)
+  PokeL(GS + 48, TrapVector)
+  PokeL(GS + 52, CpuErr)
+  PokeL(GS + 56, StackYellow)
+  PokeL(GS + 60, PswGet())
+  PokeL(GS + 64, Halted)
+  PokeL(GS + 68, Bool(Src = #NOT_RUN))
+  GN2 = 0
+  For GI = 0 To #LO_WORDS - 1
+    If Mem(GI) <> ShadowLo(GI)
+      If GN2 < 4
+        PokeL(GD + GN2 * 8, GI)
+        PokeL(GD + GN2 * 8 + 4, Mem(GI))
+      EndIf
+      GN2 = GN2 + 1
+      Mem(GI) = ShadowLo(GI)
+    EndIf
+  Next
+  For GI = 0 To #HI_WORDS - 1
+    If Mem(#HI_WORD + GI) <> ShadowHi(GI)
+      If GN2 < 4
+        PokeL(GD + GN2 * 8, #HI_WORD + GI)
+        PokeL(GD + GN2 * 8 + 4, Mem(#HI_WORD + GI))
+      EndIf
+      GN2 = GN2 + 1
+      Mem(#HI_WORD + GI) = ShadowHi(GI)
+    EndIf
+  Next
+  PokeL(GN, GN2)
+EndProcedure
+
+#SNAP_FAST = 17                         ; the index of the "plain code never ran" word
+
+Procedure OneCheck()
+  PswSet($00E0)
+  TPair = RndN(#PAIRS)
+  Osm = PairSm(TPair)
+  Odm = PairDm(TPair)
+  For Oi = 0 To 6 : Reg(Oi) = RndReg() : Next
+  TPc = RndN(#LO_WORDS - 4) * 2
+  TRs = RndN(8)
+  If Osm = 2 And TRs = 7
+    TRs = RndN(7)                       ; (R7)+ is an immediate: the table sends it elsewhere
+  EndIf
+  TRd = RndN(8)
+  TOp = $1000 | (Osm << 9) | (TRs << 6) | (Odm << 3) | TRd
+  Mem(TPc >> 1) = TOp
+  Mem((TPc + 2) >> 1) = RndN($10000)    ; an index word
+  If RndN(4) <> 0 Or Odm = 6            ; ... mostly one that lands in the shadowed RAM (always for a store):
+    Oi = TRs                            ; the indexed register is the source's, or (0,6) the
+    If Odm = 6                          ; destination's; X(PC) counts from the PC after the word
+      Oi = TRd
+    EndIf
+    If Oi = 7
+      Mem((TPc + 2) >> 1) = (RndRam() - (TPc + 4)) & $FFFF
+    Else
+      Mem((TPc + 2) >> 1) = (RndRam() - Reg(Oi)) & $FFFF
+    EndIf
+  EndIf
+  For Oi = 0 To #LO_WORDS - 1
+    ShadowLo(Oi) = Mem(Oi)
+  Next
+  For Oi = 0 To #HI_WORDS - 1
+    ShadowHi(Oi) = Mem(#HI_WORD + Oi)
+  Next
+  NzWrite(Rnd()) : FlagV = Rnd() : FlagC = Rnd()
+  For Oi = 1 To 3                       ; a trap into another mode pushes on that mode's stack:
+    StackBank(Oi) = RndRam() + 8        ; keep it in the shadowed RAM too
+  Next
+  SaveState()
+  LoadState()
+  RunOnce(MovAsm(TPair))
+  DbgA = MidSumNow()
+  Snap(@SnapA(0), @DiffA(0), @NDiffA)
+  LoadState()
+  RunOnce(MovRef(TPair))
+  DbgB = MidSumNow()
+  Snap(@SnapB(0), @DiffB(0), @NDiffB)
+  If (DbgA <> MidSum Or DbgB <> MidSum) And DbgShown < 3
+    DbgShown = DbgShown + 1
+    Say("MID op=") : Oct(TOp) : Say(" pc=") : Oct(TPc) : Say(" A=") : Num(Bool(DbgA <> MidSum)) : Say(" B=") : Num(Bool(DbgB <> MidSum))
+    Say(" trap=") : Num(SnapB(12)) : Say(" regs")
+    For Oi = 0 To 6 : Say(" ") : Oct(SReg(Oi)) : Next
+    Say(" idx=") : Oct(ShadowLo((TPc + 2) >> 1)) : Say(" nd=") : Num(NDiffA) : Say(" d0=") : Oct(DiffA(0) * 2) : Say(" banks")
+    For Oi = 0 To 3 : Say(" ") : Oct(SBank(Oi)) : Next
+    Eol()
+  EndIf
+  OpTable(TOp >> 3) = MovAsm(TPair)     ; the table as built
+  Checks = Checks + 1
+  If SnapA(#SNAP_FAST) = 1
+    Fast = Fast + 1
+  Else
+    Slow = Slow + 1
+  EndIf
+  Ofield = -1
+  For Oi = 0 To #SNAP_FAST - 1
+    If SnapA(Oi) <> SnapB(Oi) And Ofield < 0
+      Ofield = Oi
+    EndIf
+  Next
+  If Ofield < 0 And NDiffA <> NDiffB
+    Ofield = 30
+  EndIf
+  If Ofield < 0
+    For Oi = 0 To 7
+      If Oi < NDiffA * 2 And DiffA(Oi) <> DiffB(Oi) And Ofield < 0
+        Ofield = 31
+      EndIf
+    Next
+  EndIf
+  If Ofield < 0 And (DbgA <> MidSum Or DbgB <> MidSum)
+    Ofield = 32                         ; a store outside the shadowed RAM, by either run
+  EndIf
+  MidSum = DbgB
+  If Ofield >= 0
+    Failures = Failures + 1
+    If FirstBad < 0
+      FirstBad = Checks
+      FirstOp = TOp
+      FirstField = Ofield
+      Say("FIRST FAIL op=") : Oct(TOp) : Say(" pc=") : Oct(TPc) : Say(" field=") : Num(Ofield)
+      If Ofield < #SNAP_FAST
+        Say(" asm=") : Num(SnapA(Ofield)) : Say(" plain=") : Num(SnapB(Ofield))
+      EndIf
+      Say(" fast=") : Num(SnapA(#SNAP_FAST)) : Eol()
+    EndIf
+  EndIf
+EndProcedure
+
+; ---- __eaw1, the handlers' operand address --------------------------------
+; The plain body, as a procedure of its own (cpu.pico, EaWordBody).
+ProcedureRAM.i EaWordRef(spec.i)
+  EaWordBody()
+EndProcedure
+
+; __eaw1 as the handlers reach it: bl, spec in r0, the address back in r0.
+; (lr is kept in r5 across the bl: __eaw1 keeps r4-r11.)
+Procedure EaAsm()
+  ASM
+    push {r5}
+    mov r5, lr
+    ldr r0, =global_espec
+    ldr r0, [r0]
+    bl __eaw1
+    ldr r1, =global_er
+    str r0, [r1]
+    mov lr, r5
+    pop {r5}
+  EndASM
+EndProcedure
+
+#EA_NONE = $77AA55                      ; EaSpec before a run: still there = __eaw1 never went on to EaWord
+Global EaChecks.i, EaFast.i, EaSlow.i, EaFailures.i, EaFirst.i, EaFirstSpec.i, EaFirstField.i
+Global ESpec.i, ER.i, Ei.i, EField.i
+Global Dim EaA.i(24)
+Global Dim EaB.i(24)
+
+Procedure EaSnap(*s.i)
+  GS = *s
+  PokeL(GS, ER)
+  For GI = 0 To 7 : PokeL(GS + 4 + GI * 4, Reg(GI)) : Next
+  PokeL(GS + 36, EaReg)
+  PokeL(GS + 40, Tmp)
+  PokeL(GS + 44, Adr)
+  PokeL(GS + 48, TrapVector)
+  PokeL(GS + 52, CpuErr)
+  PokeL(GS + 56, StackYellow)
+  PokeL(GS + 60, AbortPsw)
+  PokeL(GS + 64, Bool(EaSpec = #EA_NONE))
+EndProcedure
+
+Procedure.i PickMode()
+  Define k.i
+  k = RndN(4)
+  If k = 0
+    ProcedureReturn 6
+  ElseIf k = 1
+    ProcedureReturn 4
+  ElseIf k = 2
+    ProcedureReturn 2
+  EndIf
+  ProcedureReturn 1
+EndProcedure
+
+Procedure EaOne()
+  PswSet($00E0)
+  For Ei = 0 To 6 : Reg(Ei) = RndReg() : Next
+  Reg(7) = RndReg()
+  If RndN(2)
+    Reg(7) = RndN(#LO_WORDS - 2) * 2
+    Mem((Reg(7)) >> 1) = (RndRam() - Reg(RndN(7))) & $FFFF
+  EndIf
+  ESpec = RndN(64)
+  If RndN(3) <> 0                       ; mostly the four modes the assembly does
+    ESpec = (ESpec & 7) | (PickMode() << 3)
+  EndIf
+  NzWrite(Rnd()) : FlagV = Rnd() : FlagC = Rnd()
+  SaveState()
+  LoadState()
+  ER = 0
+  EaSpec = #EA_NONE
+  EaAsm()
+  EaSnap(@EaA(0))
+  LoadState()
+  EaSpec = #EA_NONE
+  ER = EaWordRef(ESpec)
+  EaSnap(@EaB(0))
+  EaChecks = EaChecks + 1
+  If EaA(16) = 1
+    EaFast = EaFast + 1
+  Else
+    EaSlow = EaSlow + 1
+  EndIf
+  EField = -1
+  For Ei = 0 To 15
+    If EaA(Ei) <> EaB(Ei) And EField < 0
+      EField = Ei
+    EndIf
+  Next
+  If EField >= 0
+    EaFailures = EaFailures + 1
+    If EaFirst < 0
+      EaFirst = EaChecks
+      EaFirstSpec = ESpec
+      EaFirstField = EField
+      Say("EA FIRST FAIL spec=") : Oct(ESpec) : Say(" field=") : Num(EField)
+      Say(" asm=") : Num(EaA(EField)) : Say(" plain=") : Num(EaB(EField)) : Say(" fast=") : Num(EaA(16)) : Eol()
+    EndIf
+  EndIf
+EndProcedure
+
+Procedure Main()
+  SafetyBoot()
+  ClockInitKhz(#CLOCK_KHZ)
+  UsbSerialInit()
+  SafetyOk()
+  While UsbSerialReady() = 0
+    UsbSerialTask()
+    SafetyPet()
+  Wend
+  Pump(3000000)
+  ; MOV_PAIRS, in tools/mmu_gen.py's order
+  PairSm(0) = 0 : PairDm(0) = 4
+  PairSm(1) = 4 : PairDm(1) = 0
+  PairSm(2) = 6 : PairDm(2) = 0
+  PairSm(3) = 6 : PairDm(3) = 4
+  PairSm(4) = 2 : PairDm(4) = 0
+  PairSm(5) = 6 : PairDm(5) = 1
+  PairSm(6) = 0 : PairDm(6) = 6
+  BuildOpcodeTable()
+  CpuReset()
+  For Mr = 0 To #RAM_WORDS - 1
+    Mem(Mr) = RndN($10000)
+  Next
+  FirstBad = -1
+  EaFirst = -1
+  MidSum = MidSumNow()
+  Say("ASMCHECK start: the Pico's unmapped MOV handlers and __eaw1, assembly against plain") : Eol()
+  Repeat
+    Mt0 = Micros()
+    For Mr = 1 To #ROUND
+      OneCheck()
+      UsbSerialTask()
+      SafetyPet()
+    Next
+    Say("ASMCHECK mov checks=") : Num(Checks) : Say(" fast=") : Num(Fast) : Say(" slow=") : Num(Slow)
+    Say(" failures=") : Num(Failures)
+    If Failures = 0
+      Say(" PASS")
+    Else
+      Say(" FAIL first=") : Num(FirstBad) : Say(" op=") : Oct(FirstOp) : Say(" field=") : Num(FirstField)
+    EndIf
+    Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
+    Mt0 = Micros()
+    For Mr = 1 To #ROUND * 5
+      EaOne()
+      UsbSerialTask()
+      SafetyPet()
+    Next
+    Say("ASMCHECK ea checks=") : Num(EaChecks) : Say(" fast=") : Num(EaFast) : Say(" slow=") : Num(EaSlow)
+    Say(" failures=") : Num(EaFailures)
+    If EaFailures = 0
+      Say(" PASS")
+    Else
+      Say(" FAIL first=") : Num(EaFirst) : Say(" spec=") : Oct(EaFirstSpec) : Say(" field=") : Num(EaFirstField)
+    EndIf
+    Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
+  ForEver
+EndProcedure
+
+Main()

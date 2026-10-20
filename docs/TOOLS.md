@@ -186,6 +186,51 @@ python tools/mmu_gen.py --check
 Run it after any change to `instructions.pico`; `--check` fails if the
 generated files are out of date.
 
+For the Pico 2 it also writes the mapped loop's assembly: a fast path in
+front of each MOV handler by addressing mode, and `__eaw`, the operand
+address the handlers reach with `bl` instead of calling `EaWordM`
+(`#ASM_MOV` and `#ASM_EA` in `pico2/cpu.pico2`; 0 builds the plain code).
+
+## `asm_mov_gen.py` - the Pico's assembly fast paths
+
+```
+python tools/asm_mov_gen.py
+python tools/asm_mov_gen.py --check
+```
+
+Writes the Pico's Thumb-1 assembly into `pico/instructions.pico`, between
+`; ---- ASM (tools/asm_mov_gen.py)` lines: a fast path in front of each of
+the unmapped loop's MOV handlers by addressing mode, and `__eaw1`, the
+operand address in place of `EaWord` (`#ASM_MOV` and `#ASM_EA` in
+`pico/cpu.pico`). Each fast path makes every test the Basic makes before it
+changes anything and, if one fails, goes to the Basic body, which stays as
+both the slow path and the reference. Run it after changing those handlers'
+Basic bodies; `--check` fails if the file is out of date.
+
+## `asm_check.pico` / `asm_check.pico2` - the assembly held to the Basic, on a board
+
+Not a tool but a test firmware, one per chip. It puts the emulated machine
+in random states and runs each assembly fast path and its plain Basic
+version from the same state, comparing everything they can change
+(registers, condition codes, memory against a shadow copy, the memory
+management registers, traps), and counts how many runs took the fast path
+and how many left it for the Basic. It prints a line per round:
+
+```
+ASMCHECK mov checks=17977 fast=6733 slow=11244 failures=0 PASS
+ASMCHECK ea checks=80000 fast=60679 slow=19321 failures=0 PASS
+```
+
+```
+cd J11_18MHz_KDJ11_BF/pico2
+PureMetalForge.exe --compile asm_check.pico2 -t rp2350 -o asm_check.bin --port COMn
+cd ../pico
+PureMetalForge.exe --compile asm_check.pico -t rp2040 -o asm_check.bin --port COMn
+```
+
+Read its serial port for a few minutes; any `FAIL` names the first
+instruction and field that differed.
+
 ## `psram_build.py` - the PSRAM boards' image
 
 ```

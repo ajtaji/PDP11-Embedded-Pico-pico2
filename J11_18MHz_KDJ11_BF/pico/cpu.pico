@@ -242,6 +242,18 @@ Global MmuTouches.i         ; reads and writes of the unit's registers, for test
 Global Halted.i, Waiting.i
 Global PC.i                 ; the emulated PC between instructions; Reg(7) is its
                             ; stale copy then (see THE EMULATED PC in instructions)
+; THE ASSEMBLY FAST PATHS (tools/asm_mov_gen.py writes them into instructions.pico;
+; asm_check.pico holds each to its plain version on the board). #ASM_MOV: the
+; seven MOV handlers by mode get a fast path in front of their Basic bodies.
+; #ASM_EA: the handlers reach __eaw1 by bl for X(R), -(R), (R)+ and (R) (EaFast,
+; below). 0 builds the plain code alone.
+#ASM_MOV = 1
+#ASM_EA = 1
+; Measured on a Pico W, 2026-10-19 (Mini-Unix `time od /rkmx`, host-timed): 5.88 s
+; before, 4.61 s with both.
+Global Dim MovAsm.Label(7)                  ; each MOV handler by mode: the assembly entry ...
+Global Dim MovRef.Label(7)                  ; ... and the plain one (filled with the table)
+Global EaSpec.i                             ; where __eaw1 leaves the spec when it goes on to EaWord
 
 ; The run loop's countdown and the machine's clock - see THE RUN WINDOW.
 Global RunLeft.i            ; instructions left in this window
@@ -1192,7 +1204,9 @@ EndProcedure
 ;  handler does register mode inline, because a call costs ~13 cycles.
 ;  spec = the six-bit mode/register field. Returns the operand's address.
 ; ======================================================================
-ProcedureRAM.i EaWord(spec.i)
+; THE BODY IS A MACRO so that the same text is EaWord and, in asm_check.pico only,
+; the plain procedure __eaw1 is held to (EaWordRef there).
+Macro EaWordBody()
   EaReg = spec & 7
   Tmp = (spec >> 3) & 7
   ; The modes most used first (Mini-Unix and V6, desk profiles of 2026-10-02).
@@ -1235,7 +1249,29 @@ ProcedureRAM.i EaWord(spec.i)
     ProcedureReturn Tmp
   EndIf
   ProcedureReturn Reg(EaReg)
+EndMacro
+
+ProcedureRAM.i EaWord(spec.i)
+  EaWordBody()
 EndProcedure
+
+; Ea = EaWord(Op & $3F), as the handlers write it (instructions.pico): with
+; #ASM_EA = 1 through __eaw1 (tools/asm_mov_gen.py). tools/mmu_gen.py turns it
+; back into the EaWord line for the mapped loop.
+Macro EaFast()
+CompilerIf #ASM_EA = 1
+  ASM Uses Op
+    mov r0, r8
+    movs r1, #63
+    ands r0, r1
+    bl __eaw1
+    ldr r1, =global_ea
+    str r0, [r1]
+  EndASM
+CompilerElse
+  Ea = EaWord(Op & $3F)
+CompilerEndIf
+EndMacro
 
 ; Byte operands step (R)+ and -(R) by one, except through SP and PC, which
 ; always step by two so they stay even.
@@ -1266,7 +1302,19 @@ Macro MSrcWord()
   If (Op & $0E00) = 0
     Src = Reg((Op >> 6) & 7)
   Else
+CompilerIf #ASM_EA = 1
+  ASM Uses Op
+    mov r0, r8
+    lsrs r0, r0, #6
+    movs r1, #63
+    ands r0, r1
+    bl __eaw1
+    ldr r1, =global_ea
+    str r0, [r1]
+  EndASM
+CompilerElse
     Ea = EaWord((Op >> 6) & $3F)
+CompilerEndIf
     MReadWord(Src, Ea)
   EndIf
 EndMacro

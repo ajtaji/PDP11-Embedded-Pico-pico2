@@ -104,6 +104,9 @@ HANDOVER_M = """  ; ---- MMU HANDOVER: the unit is off - back to the unmapped lo
 
 def generate():
     raw = open(SRC, "rb").read().decode("ascii").replace("\r\n", "\n")
+    # the Pico's handlers write the operand address as EaFast() (cpu.pico: __eaw1
+    # with #ASM_EA = 1); the mapped loop gets the EaWord line it stands for
+    raw = raw.replace("EaFast()", "Ea = EaWord(Op & $3F)")
     # the unmapped loop's own MOV handlers (and their table lines) stay out:
     # they use the unmapped operand code directly, and the Pico 2's mapped
     # loop gets handlers written here instead (specialise, below)
@@ -340,6 +343,440 @@ def pico2_tails(text):
     return text
 
 
+# ----------------------------------------------------------------------
+#  THE MOV HANDLERS IN ASSEMBLY (#ASM_MOV = 1, cpu.pico2). Each MOV_PAIRS
+#  handler gets a Cortex-M33 fast path in front of its Basic body. The fast
+#  path makes EVERY test the Basic makes before it changes anything: the
+#  register is not R7 where the Basic would reach Reg(7) through a variable,
+#  each access lies in its entry's fast window (cpu.pico2, MMReadWordE /
+#  MMWriteWordE) and is even, a pushed SP stays at or above 000400. If any
+#  test fails it branches, with nothing changed, to the Basic body (the label
+#  with "Ref"), which does the whole instruction the slow way - so the Basic
+#  is both the slow path and the reference the fast path is held to
+#  (asm_check.pico2 compares the two on random machine states). When every
+#  test passes nothing can trap, so the handler ends with the native tail
+#  and leaves Reg(7) stale, as every native handler does.
+#  Registers: r0-r3 only, plus Op (r8), PC (r9), RunLeft (r11) and FlagNZ
+#  (r4, written only after the last test).
+# ----------------------------------------------------------------------
+ASM_REC = {2: 0x10, -2: 0xF0}          # MmrRecord's byte: ((amount & $1F) << 3) | register
+
+
+def asm_mov(sm, dm, ref):
+    tag = "__mv%d%d_" % (sm, dm)
+    bail = "__ul_cpurunm_" + ref.lower()
+    L = []
+    e = L.append
+
+    def window(addr, base, kind, s1, s2):
+        # s2 = the entry's host base when addr is in its fast window (else to the Basic)
+        e("    ldr %s, =global_cur%s" % (s1, base))
+        e("    ldr %s, [%s]" % (s1, s1))
+        e("    add.w %s, %s, %s, lsr #13" % (s1, s1, addr))
+        e("    lsls %s, %s, #2" % (s1, s1))       # the entry's byte offset in the Map arrays
+        e("    ldr %s, =global_map%slo" % (s2, kind))
+        e("    ldr %s, [%s, %s]" % (s2, s2, s1))
+        e("    cmp %s, %s" % (addr, s2))
+        e("    blt %s" % bail)
+        e("    ldr %s, =global_map%shi" % (s2, kind))
+        e("    ldr %s, [%s, %s]" % (s2, s2, s1))
+        e("    cmp %s, %s" % (addr, s2))
+        e("    bge %s" % bail)
+        e("    lsls %s, %s, #31" % (s2, addr))
+        e("    bne %s" % bail)
+        e("    ldr %s, =global_maphost" % s2)
+        e("    ldr %s, [%s, %s]" % (s2, s2, s1))
+
+    def reg_of(out, field_shift):
+        # out = the register field of Op at field_shift (0 destination, 6 source)
+        if field_shift:
+            e("    ubfx %s, r8, #6, #3" % out)
+        else:
+            e("    and.w %s, r8, #7" % out)
+
+    def mmr_record(rreg, amount):
+        # MmrRecord(r, amount) (cpu.pico2) with r in rreg; uses r0-r3
+        e("    ldr r3, =global_mmr0")
+        e("    ldr r3, [r3]")
+        e("    lsrs r3, r3, #13")
+        e("    bne %sr9" % tag)
+        e("    adds %s, #%d" % (rreg, ASM_REC[amount]))
+        e("    ldr r3, =global_fw")
+        e("    ldr r3, [r3, #12]")
+        e("    ldr r0, =global_mmupcrec")
+        e("    ldr r1, [r0]")
+        e("    cmp r1, r3")
+        e("    beq %sr1" % tag)
+        e("    str r3, [r0]")
+        e("    ldr r0, =global_mmr1")
+        e("    str %s, [r0]" % rreg)
+        e("    b %sr9" % tag)
+        e("%sr1:" % tag)
+        e("    ldr r0, =global_mmr1")
+        e("    ldr r1, [r0]")
+        e("    uxtb r1, r1")
+        e("    cmp r1, #0")
+        e("    beq %sr2" % tag)
+        e("    lsls %s, %s, #8" % (rreg, rreg))
+        e("    orrs r1, %s" % rreg)
+        e("    str r1, [r0]")
+        e("    b %sr9" % tag)
+        e("%sr2:" % tag)
+        e("    str %s, [r0]" % rreg)
+        e("%sr9:" % tag)
+
+    def index_word(out, pc_reg):
+        # out = (the word at pc_reg, I space) + the base register; pc_reg + 2 is the new PC
+        window(pc_reg, "i", "r", "r2", "r3")
+        e("    ldrh r3, [r3, %s]" % pc_reg)
+
+    # ---- the tests, in the order the Basic makes its accesses ----
+    # r1 = Src at the end of the tests; r0 the destination address (memory
+    # destinations), r3 its entry's host base
+    if sm == 6:
+        e("    mov r0, r9")
+        index_word("r3", "r0")                 # r3 = the index word
+        reg_of("r1", 6)
+        e("    cmp r1, #7")
+        e("    bne %ss1" % tag)
+        e("    adds r1, r0, #2")              # X(PC): the PC after the index word
+        e("    b %ss2" % tag)
+        e("%ss1:" % tag)
+        e("    ldr r2, =global_reg")
+        e("    lsls r1, r1, #2")
+        e("    ldr r1, [r2, r1]")
+        e("%ss2:" % tag)
+        e("    adds r0, r3, r1")
+        e("    uxth r0, r0")                 # the source address
+        window("r0", "d", "r", "r2", "r3")
+        e("    ldrh r1, [r3, r0]")           # Src
+    elif sm == 4:
+        reg_of("r2", 6)
+        e("    cmp r2, #7")
+        e("    beq %s" % bail)
+        e("    ldr r3, =global_reg")
+        e("    lsls r0, r2, #2")
+        e("    ldr r0, [r3, r0]")
+        e("    subs r0, r0, #2")
+        e("    uxth r0, r0")
+        e("    cmp r2, #6")
+        e("    bne %ss1" % tag)
+        e("    cmp.w r0, #0x100")
+        e("    blt %s" % bail)
+        e("%ss1:" % tag)
+        window("r0", "d", "r", "r2", "r3")
+        e("    ldrh r1, [r3, r0]")
+    elif sm == 2:
+        reg_of("r2", 6)                        # the table sends only R0-R6 here
+        e("    ldr r3, =global_reg")
+        e("    lsls r0, r2, #2")
+        e("    ldr r0, [r3, r0]")
+        window("r0", "d", "r", "r2", "r3")
+        e("    ldrh r1, [r3, r0]")
+
+    if dm == 0:
+        reg_of("r2", 0)
+        e("    cmp r2, #7")
+        e("    beq %s" % bail)
+    elif dm == 1:
+        reg_of("r2", 0)
+        e("    cmp r2, #7")
+        e("    beq %s" % bail)
+        e("    ldr r3, =global_reg")
+        e("    lsls r0, r2, #2")
+        e("    ldr r0, [r3, r0]")
+        window("r0", "d", "w", "r2", "r3")
+    elif dm == 4:
+        reg_of("r2", 0)
+        e("    cmp r2, #7")
+        e("    beq %s" % bail)
+        e("    ldr r3, =global_reg")
+        e("    lsls r0, r2, #2")
+        e("    ldr r0, [r3, r0]")
+        e("    subs r0, r0, #2")
+        e("    uxth r0, r0")
+        e("    cmp r2, #6")
+        e("    bne %sd1" % tag)
+        e("    cmp.w r0, #0x100")
+        e("    blt %s" % bail)
+        e("%sd1:" % tag)
+        window("r0", "d", "w", "r2", "r3")
+    elif dm == 6:
+        e("    mov r0, r9")
+        index_word("r3", "r0")
+        reg_of("r1", 0)
+        e("    cmp r1, #7")
+        e("    bne %sd1" % tag)
+        e("    adds r1, r0, #2")
+        e("    b %sd2" % tag)
+        e("%sd1:" % tag)
+        e("    ldr r2, =global_reg")
+        e("    lsls r1, r1, #2")
+        e("    ldr r1, [r2, r1]")
+        e("%sd2:" % tag)
+        e("    adds r0, r3, r1")
+        e("    uxth r0, r0")
+        window("r0", "d", "w", "r2", "r3")
+    if sm == 0:
+        # a register source is read AFTER the destination's address is worked
+        # out (mmu_gen's specialise): R7 is the PC as it stands then, and a
+        # source that is the autodecremented destination register reads its new value
+        reg_of("r1", 6)
+        e("    cmp r1, #7")
+        e("    bne %sa1" % tag)
+        e("    mov r1, r9")
+        if dm == 6:
+            e("    adds r1, r1, #2")
+        e("    b %sa9" % tag)
+        e("%sa1:" % tag)
+        if dm == 4:
+            e("    and.w r2, r8, #7")
+            e("    cmp r1, r2")
+            e("    bne %sa2" % tag)
+            e("    movs r1, r0")
+            e("    b %sa9" % tag)
+            e("%sa2:" % tag)
+        e("    ldr r2, =global_reg")
+        e("    lsls r1, r1, #2")
+        e("    ldr r1, [r2, r1]")
+        e("%sa9:" % tag)
+
+    # ---- every test passed: the instruction, as the Basic does it ----
+    if dm in (1, 4, 6):
+        e("    strh r1, [r3, r0]")
+    e("    movs r4, r1")                      # FlagNZ = Src
+    if sm in (6,) or dm == 6:
+        e("    adds.w r9, r9, #%d" % (4 if (sm == 6 and dm == 6) else 2))
+    flagv = ["    ldr r3, =global_flagv", "    movs r0, #0", "    str r0, [r3]"]
+    if sm in (2, 4):
+        # the source register moves first, then the destination register is
+        # written (they may be the same register), then MmrRecord(rs, +-2)
+        e("    ubfx r2, r8, #6, #3")
+        e("    ldr r3, =global_reg")
+        if sm == 2:
+            e("    adds r0, r0, #2")
+            e("    uxth r0, r0")
+        e("    lsls r2, r2, #2")
+        e("    str r0, [r3, r2]")
+        e("    lsrs r2, r2, #2")
+        e("    and.w r0, r8, #7")
+        e("    lsls r0, r0, #2")
+        e("    str r1, [r3, r0]")             # dm is 0 for every sm 2/4 pair
+        L.extend(flagv)
+        mmr_record("r2", 2 if sm == 2 else -2)
+    elif dm == 0:
+        e("    and.w r0, r8, #7")
+        e("    ldr r3, =global_reg")
+        e("    lsls r0, r0, #2")
+        e("    str r1, [r3, r0]")
+        L.extend(flagv)
+    elif dm == 4:
+        e("    and.w r2, r8, #7")
+        e("    ldr r3, =global_reg")
+        e("    lsls r2, r2, #2")
+        e("    str r0, [r3, r2]")
+        e("    lsrs r2, r2, #2")
+        L.extend(flagv)
+        mmr_record("r2", -2)
+    else:
+        L.extend(flagv)
+    # the native tail (NextNativeM)
+    tail = ASM_NATIVE_M.split("\n")[2:]
+    tail = tail[:tail.index("  EndASM")]
+    no_scaled_index("\n".join(L), "asm_mov")
+    return "\n".join(L + tail) + "\n"
+
+
+# ----------------------------------------------------------------------
+#  THE OPERAND ADDRESS IN ASSEMBLY (#ASM_EA = 1, cpu.pico2): __eaw, a
+#  subroutine the mapped handlers reach with "bl" instead of calling EaWordM
+#  (a call, a frame and a return cost about as much as the work). In: r0 =
+#  the 6-bit mode and register. Out: r0 = the address, with EaReg, EaBase,
+#  Tmp, Adr, the register and MMR1 left exactly as EaWordM leaves them.
+#  X(R), -(R), (R)+ and (R) are done here (96% of V6's mapped operands);
+#  anything else - the index word outside the I fast window or odd, -(R) on
+#  R7 or taking SP below 000400, the other modes - goes on to EaWordM itself
+#  with the spec, nothing changed that EaWordM does not set again, and lr
+#  still the handler's, so EaWordM returns straight to the handler. It
+#  clobbers r0-r3, r12 and lr only. asm_check.pico2 holds it to EaWordM.
+# ----------------------------------------------------------------------
+ASM_EAW = """    mov r12, r0
+    and.w r1, r0, #7
+    ldr r2, =global_eareg
+    str r1, [r2]
+    ldr r2, =global_curd
+    ldr r2, [r2]
+    ldr r3, =global_eabase
+    str r2, [r3]
+    ubfx r0, r0, #3, #3
+    cmp r0, #6
+    bne __eaw_m4
+    ldr r2, =global_reg
+    ldr r3, [r2, #28]
+    ldr r2, =global_curi
+    ldr r2, [r2]
+    add.w r2, r2, r3, lsr #13
+    lsls r2, r2, #2
+    ldr r0, =global_maprlo
+    ldr r0, [r0, r2]
+    cmp r3, r0
+    blt __eaw_slow
+    ldr r0, =global_maprhi
+    ldr r0, [r0, r2]
+    cmp r3, r0
+    bge __eaw_slow
+    lsls r0, r3, #31
+    bne __eaw_slow
+    ldr r0, =global_adr
+    str r3, [r0]
+    ldr r0, =global_maphost
+    ldr r0, [r0, r2]
+    ldrh r0, [r0, r3]
+    ldr r2, =global_tmp
+    str r0, [r2]
+    adds r3, r3, #2
+    uxth r3, r3
+    ldr r2, =global_reg
+    str r3, [r2, #28]
+    lsls r3, r1, #2
+    ldr r3, [r2, r3]
+    adds r0, r0, r3
+    uxth r0, r0
+    b __eaw_out
+__eaw_m4:
+    cmp r0, #4
+    bne __eaw_m2
+    cmp r1, #7
+    beq __eaw_slow
+    ldr r2, =global_reg
+    lsls r3, r1, #2
+    adds r2, r2, r3
+    ldr r3, [r2]
+    subs r3, r3, #2
+    uxth r3, r3
+    cmp r1, #6
+    bne __eaw_m4a
+    cmp.w r3, #0x100
+    blt __eaw_slow
+__eaw_m4a:
+    str r3, [r2]
+    ldr r2, =global_tmp
+    str r0, [r2]
+    movs r0, r3
+    adds r1, #240
+    b __eaw_rec
+__eaw_m2:
+    cmp r0, #2
+    bne __eaw_m1
+    ldr r2, =global_reg
+    lsls r3, r1, #2
+    adds r2, r2, r3
+    ldr r3, [r2]
+    adds r0, r3, #2
+    uxth r0, r0
+    str r0, [r2]
+    ldr r2, =global_tmp
+    str r3, [r2]
+    movs r0, r3
+    cmp r1, #7
+    bne __eaw_m2a
+    ldr r2, =global_curi
+    ldr r2, [r2]
+    ldr r3, =global_eabase
+    str r2, [r3]
+    b __eaw_out
+__eaw_m2a:
+    adds r1, #16
+    b __eaw_rec
+__eaw_m1:
+    cmp r0, #1
+    bne __eaw_slow
+    ldr r2, =global_tmp
+    str r0, [r2]
+    ldr r2, =global_reg
+    lsls r0, r1, #2
+    ldr r0, [r2, r0]
+    b __eaw_out
+__eaw_rec:
+    ldr r2, =global_mmr0
+    ldr r2, [r2]
+    lsrs r2, r2, #13
+    bne __eaw_out
+    ldr r3, =global_fw
+    ldr r3, [r3, #12]
+    ldr r2, =global_mmupcrec
+    ldr r2, [r2]
+    cmp r2, r3
+    beq __eaw_rec1
+    ldr r2, =global_mmupcrec
+    str r3, [r2]
+    ldr r2, =global_mmr1
+    str r1, [r2]
+    b __eaw_out
+__eaw_rec1:
+    ldr r3, =global_mmr1
+    ldr r2, [r3]
+    uxtb r2, r2
+    cmp r2, #0
+    beq __eaw_rec2
+    lsls r1, r1, #8
+    orrs r2, r1
+    str r2, [r3]
+    b __eaw_out
+__eaw_rec2:
+    str r1, [r3]
+__eaw_out:
+    bx lr
+__eaw_slow:
+    mov r0, r12
+    ldr r1, =global_easpec
+    str r0, [r1]
+    b eawordm
+"""
+EAW_CALL = """CompilerIf #ASM_EA = 1
+  ASM Uses Op
+    and.w r0, r8, #0x3f
+    bl __eaw
+    ldr r1, =global_ea
+    str r0, [r1]
+  EndASM
+CompilerElse
+  Ea = EaWordM(Op & $3F)
+CompilerEndIf
+"""
+
+
+def no_scaled_index(text, what):
+    """The RP2350 assembler of the 2026-10-17 release dropped the shift of
+    "ldr/str Rt, [Rn, Rm, lsl #n]" without a word (forum 1355, fixed in
+    compiler 38267549e); a firmware built with it would run wrong. So the
+    generated assembly shifts into a register first and never uses the form."""
+    if re.search(r"\[[^\]]*lsl", text):
+        fail(what + ": a scaled index ([Rn, Rm, lsl #n]) in the generated assembly; shift first (no_scaled_index).")
+
+
+def pico2_eaw(text):
+    """The Pico 2's file: __eaw after the slow fetch (it is reached only by bl),
+    and the handlers' "Ea = EaWordM(Op & $3F)" lines call it."""
+    at = "  TrapVector = TrapHeld\n  Goto OpTableM(Op >> 3)\n"
+    if text.count(at) != 1:
+        fail("pico2_eaw: the slow fetch's end moved; teach tools/mmu_gen.py.")
+    no_scaled_index(ASM_EAW, "__eaw")
+    text = text.replace(at, at + "CompilerIf #ASM_EA = 1\n  ASM\n__eaw:\n" + ASM_EAW + "  EndASM\nCompilerEndIf\n")
+    out, n = [], 0
+    for line in text.split("\n"):
+        if line.strip() == "Ea = EaWordM(Op & $3F)":
+            ind = line[:len(line) - len(line.lstrip())]
+            out.append("\n".join(l if l.startswith("Compiler") else ind + l
+                                 for l in EAW_CALL.rstrip("\n").split("\n")))
+            n += 1
+        else:
+            out.append(line)
+    if n < 30:
+        fail("pico2_eaw: only " + str(n) + " EaWordM call sites found; teach tools/mmu_gen.py.")
+    return "\n".join(out)
+
+
 def specialise(text):
     """The Pico 2's file: MOV handlers for MOV_PAIRS, and their table entries."""
     if NATIVE_EVEN:
@@ -359,15 +796,29 @@ def specialise(text):
             body = DST_CODE[dm][:k] + SRC_CODE[0] + DST_CODE[dm][k:]
         else:
             body = SRC_CODE[sm] + DST_CODE[dm]
-        hs += ("%s:            ; MOV, source mode %d, destination mode %d\n  PcOutM()\n" % (name, sm, dm)
+        ref = name[:-1] + "RefM"
+        hs += ("%s:            ; MOV, source mode %d, destination mode %d\n" % (name, sm, dm)
+               + "CompilerIf #ASM_MOV = 1\n  ASM Uses PC, RunLeft, Op, FlagNZ\n" + asm_mov(sm, dm, ref)
+               + "  EndASM\nCompilerEndIf\n"
+               + "%s:         ; the plain version: the fast path's slow path and its reference\n  PcOutM()\n" % ref
                + body + "  FlagNZ = Src\n  FlagV = 0\n  NextSyncedM()\n\n")
         regs = range(7) if sm == 2 else range(8)          # (R7)+ is an immediate: the general handler
         for sr in regs:
             fill += "  OpTableM($%04X) = ?%s\n" % (0x200 | sm << 6 | sr << 3 | dm, name)
+        k = MOV_PAIRS.index((sm, dm))
+        fill += "  MovAsmM(%d) = ?%s\n  MovRefM(%d) = ?%s\n" % (k, name, k, ref)
     mark = "\n; ======================================================================\n;  THE TABLE - filled"
     if text.count(mark) != 1 or text.count("  OpTableReadyM = 1\n") != 1:
         fail("specialise: the mapped file's table section moved; teach tools/mmu_gen.py.")
     text = text.replace(mark, "\n" + hs.rstrip("\n") + "\n" + mark)
+    # each handler's two entry points, for asm_check.pico2 (it points the
+    # table at one or the other); filled with the table, read by nothing else
+    decl = "Global Dim OpTableM.Label(8192)\n"
+    if text.count(decl) != 1:
+        fail("specialise: the mapped table's declaration moved; teach tools/mmu_gen.py.")
+    text = text.replace(decl, decl + "Global Dim MovAsmM.Label(%d)                ; the MOV handlers by mode: the "
+                        "assembly entry ...\nGlobal Dim MovRefM.Label(%d)                ; ... and the plain one "
+                        "(tools/mmu_gen.py, asm_mov)\n" % (len(MOV_PAIRS), len(MOV_PAIRS)))
     return text.replace("  OpTableReadyM = 1\n", fill + "  OpTableReadyM = 1\n")
 
 
@@ -380,6 +831,7 @@ def main():
             text = text.replace("\nProcedure.i CpuRunM(n.i)\n", "\nProcedureRAM.i CpuRunM(n.i)\n", 1)
             text = specialise(text)
             text = pico2_tails(text)
+            text = pico2_eaw(text)
         else:                                # the Pico: its SRAM holds CpuRun (Mini-Unix); CpuRunM stays in flash
             text = text.replace("\nProcedureRAM.i CpuRunM(n.i)", "\nProcedure.i CpuRunM(n.i)", 1)
         if "--check" in sys.argv:

@@ -291,6 +291,93 @@ SlowFetch:                               ; the I/O page, an odd PC, past the end
                                          ; incremented, as on the J-11 (Architecture Handbook
                                          ; 1983, model differences 28 and 30)
   Goto OpTable(Op >> 3)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- ASM (tools/asm_mov_gen.py) ----
+CompilerIf #ASM_EA = 1
+  ASM
+__eaw1:
+    mov r12, r0
+    movs r1, #7
+    ands r1, r0
+    ldr r2, =global_eareg
+    str r1, [r2]
+    lsrs r0, r0, #3
+    cmp r0, #6
+    bne __eaw1_m4
+    ldr r2, =global_reg
+    ldr r3, [r2, #28]
+    ldr r0, =#RAM_BYTES
+    cmp r3, r0
+    bhs __eaw1_slow
+    lsrs r0, r3, #1
+    bcs __eaw1_slow
+    ldr r0, =global_adr
+    str r3, [r0]
+    ldr r0, =global_mem
+    ldrh r0, [r0, r3]
+    ldr r2, =global_tmp
+    str r0, [r2]
+    adds r3, #2
+    uxth r3, r3
+    ldr r2, =global_reg
+    str r3, [r2, #28]
+    lsls r1, r1, #2
+    ldr r1, [r2, r1]
+    adds r0, r0, r1
+    uxth r0, r0
+    bx lr
+__eaw1_m4:
+    cmp r0, #4
+    bne __eaw1_m2
+    cmp r1, #7
+    beq __eaw1_slow
+    ldr r2, =global_reg
+    lsls r3, r1, #2
+    ldr r0, [r2, r3]
+    subs r0, #2
+    uxth r0, r0
+    cmp r1, #6
+    bne __eaw1_m4a
+    lsrs r1, r0, #8
+    beq __eaw1_slow
+__eaw1_m4a:
+    str r0, [r2, r3]
+    movs r1, #4
+    ldr r2, =global_tmp
+    str r1, [r2]
+    bx lr
+__eaw1_m2:
+    cmp r0, #2
+    bne __eaw1_m1
+    ldr r2, =global_reg
+    lsls r3, r1, #2
+    ldr r0, [r2, r3]
+    adds r1, r0, #2
+    uxth r1, r1
+    str r1, [r2, r3]
+    ldr r2, =global_tmp
+    str r0, [r2]
+    bx lr
+__eaw1_m1:
+    cmp r0, #1
+    bne __eaw1_slow
+    ldr r2, =global_tmp
+    str r0, [r2]
+    ldr r2, =global_reg
+    lsls r1, r1, #2
+    ldr r0, [r2, r1]
+    bx lr
+__eaw1_slow:
+    mov r0, r12
+    ldr r1, =global_easpec
+    str r0, [r1]
+    push {lr}
+    bl eaword
+    pop {pc}
+  EndASM
+CompilerEndIf
+; ---- END ASM ----
+; ---- END UNMAPPED ONLY ----
 
 ;-MOV-------------------------------------------------------------------
 InstructionMOV_01:            ; 01SSDD   entries $0200-$03FF
@@ -300,7 +387,7 @@ InstructionMOV_01:            ; 01SSDD   entries $0200-$03FF
   If (Op & $38) = 0
     Reg(Op & 7) = Src
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MWriteWord(Ea, Src)
   EndIf
   FlagNZ = Src
@@ -335,7 +422,7 @@ InstructionCMP_02:            ; 02SSDD   entries $0400-$05FF
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
   EndIf
   Res = Src - Dst                        ; src - dst, the other way round from SUB
@@ -374,7 +461,7 @@ InstructionBIT_03:            ; 03SSDD   entries $0600-$07FF
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
   EndIf
   FlagNZ = Src & Dst
@@ -410,7 +497,7 @@ InstructionBIC_04:            ; 04SSDD   entries $0800-$09FF
     Res = Reg(Op & 7) & ~Src & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Res, Ea)
     Res = Res & ~Src & $FFFF
     MWriteWord(Ea, Res)
@@ -451,7 +538,7 @@ InstructionBIS_05:            ; 05SSDD   entries $0A00-$0BFF
     Res = Reg(Op & 7) | Src
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Res, Ea)
     Res = Res | Src
     MWriteWord(Ea, Res)
@@ -493,7 +580,7 @@ InstructionADD_06:            ; 06SSDD   entries $0C00-$0DFF
     Res = Src + Dst
     Reg(Op & 7) = Res & $FFFF
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = Src + Dst
     MWriteWord(Ea, Res)
@@ -516,7 +603,7 @@ InstructionSUB_16:            ; 16SSDD   entries $1C00-$1DFF
     Res = Dst - Src
     Reg(Op & 7) = Res & $FFFF
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = Dst - Src
     MWriteWord(Ea, Res)
@@ -541,7 +628,7 @@ InstructionCLR_0050:          ; 0050DD   entries $0140-$0147
   If (Op & $38) = 0
     Reg(Op & 7) = 0
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MWriteWord(Ea, 0)
   EndIf
   FlagNZ = 0
@@ -577,7 +664,7 @@ InstructionCOM_0051:          ; 0051DD   entries $0148-$014F
     Res = Reg(Op & 7) ! $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Res, Ea)
     Res = Res ! $FFFF
     MWriteWord(Ea, Res)
@@ -619,7 +706,7 @@ InstructionINC_0052:          ; 0052DD   entries $0150-$0157   C unaffected
     Res = (Dst + 1) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst + 1) & $FFFF
     MWriteWord(Ea, Res)
@@ -666,7 +753,7 @@ InstructionDEC_0053:          ; 0053DD   entries $0158-$015F   C unaffected
     Res = (Dst - 1) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst - 1) & $FFFF
     MWriteWord(Ea, Res)
@@ -712,7 +799,7 @@ InstructionNEG_0054:          ; 0054DD   entries $0160-$0167
     Res = (0 - Reg(Op & 7)) & $FFFF      ; 100000 negates to itself
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Res, Ea)
     Res = (0 - Res) & $FFFF
     MWriteWord(Ea, Res)
@@ -766,7 +853,7 @@ InstructionADC_0055:          ; 0055DD   entries $0168-$016F
     Res = (Dst + ((FlagC >> 16) & 1)) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst + ((FlagC >> 16) & 1)) & $FFFF
     MWriteWord(Ea, Res)
@@ -822,7 +909,7 @@ InstructionSBC_0056:          ; 0056DD   entries $0170-$0177
     Res = (Dst - ((FlagC >> 16) & 1)) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst - ((FlagC >> 16) & 1)) & $FFFF
     MWriteWord(Ea, Res)
@@ -873,7 +960,7 @@ InstructionTST_0057:          ; 0057DD   entries $0178-$017F
   If (Op & $38) = 0
     FlagNZ = Reg(Op & 7)
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(FlagNZ, Ea)
   EndIf
   FlagV = 0
@@ -913,7 +1000,7 @@ InstructionROR_0060:          ; 0060DD   entries $0180-$0187
     Res = (Dst >> 1) | ((FlagC >> 1) & $8000)
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst >> 1) | ((FlagC >> 1) & $8000)
     MWriteWord(Ea, Res)
@@ -956,7 +1043,7 @@ InstructionROL_0061:          ; 0061DD   entries $0188-$018F
     Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FFFF
     MWriteWord(Ea, Res)
@@ -999,7 +1086,7 @@ InstructionASR_0062:          ; 0062DD   entries $0190-$0197
     Res = (Dst >> 1) | (Dst & $8000)
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst >> 1) | (Dst & $8000)
     MWriteWord(Ea, Res)
@@ -1042,7 +1129,7 @@ InstructionASL_0063:          ; 0063DD   entries $0198-$019F
     Res = (Dst << 1) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst << 1) & $FFFF
     MWriteWord(Ea, Res)
@@ -1085,7 +1172,7 @@ InstructionSWAB_0003:         ; 0003DD   entries $0018-$001F
     Res = ((Dst >> 8) | (Dst << 8)) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = ((Dst >> 8) | (Dst << 8)) & $FFFF
     MWriteWord(Ea, Res)
@@ -1109,7 +1196,7 @@ InstructionSXT_0067:          ; 0067DD   entries $01B8-$01BF   N unaffected
   If (Op & $38) = 0
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MWriteWord(Ea, Res)
   EndIf
   SetNZ(FlagN(), 1 - FlagN())
@@ -1168,7 +1255,7 @@ InstructionMFPI_0065:         ; 0065SS   entries $01A8-$01AF
       Src = ModeSp((PswHigh >> 12) & 3)
     EndIf
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Src, Ea)
   EndIf
   If TrapVector = 0                      ; a read that failed (bus error, MMU abort) aborts
@@ -1192,7 +1279,7 @@ InstructionMTPI_0066:         ; 0066DD   entries $01B0-$01B7
       Reg(Op & 7) = Src
     EndIf
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MWriteWord(Ea, Src)
   EndIf
   FlagNZ = Src
@@ -1401,7 +1488,7 @@ InstructionJSR_004:           ; 004RDD   entries $0100-$013F
   If (Op & $38) = 0
     TrapVector = #VEC_BUS                ; JSR to a register is illegal
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     Push(Reg((Op >> 6) & 7))
     Reg((Op >> 6) & 7) = Reg(7)
     Reg(7) = Ea
@@ -1467,7 +1554,7 @@ InstructionMUL_070:           ; 070RSS   entries $0E00-$0E3F
   If (Op & $38) = 0
     Src = Reg(Op & 7)
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Src, Ea)
   EndIf
   Src = Src - ((Src & $8000) << 1)                        ; signed 16
@@ -1498,7 +1585,7 @@ InstructionDIV_071:           ; 071RSS   entries $0E40-$0E7F
   If (Op & $38) = 0
     Src = Reg(Op & 7)
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Src, Ea)
   EndIf
   Src = Src - ((Src & $8000) << 1)
@@ -1536,7 +1623,7 @@ InstructionASH_072:           ; 072RSS   entries $0E80-$0EBF
   If (Op & $38) = 0
     Src = Reg(Op & 7) & $3F
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Src, Ea)
     Src = Src & $3F
   EndIf
@@ -1574,7 +1661,7 @@ InstructionASHC_073:          ; 073RSS   entries $0EC0-$0EFF
   If (Op & $38) = 0
     Src = Reg(Op & 7) & $3F
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Src, Ea)
     Src = Src & $3F
   EndIf
@@ -1614,7 +1701,7 @@ InstructionXOR_074:           ; 074RDD   entries $0F00-$0F3F
     Res = Reg(Op & 7) ! Reg((Op >> 6) & 7)
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Res, Ea)
     Res = Res ! Reg((Op >> 6) & 7)
     MWriteWord(Ea, Res)
@@ -2423,7 +2510,7 @@ InstructionBITB_13_IR:           ; 1327DD  BITB #n,Rd, the source an immediate
 ; ======================================================================
 InstructionMOV_01_RM:            ; 010SDD  MOV Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MWriteWord(Ea, Src)
   FlagNZ = Src
@@ -2432,7 +2519,7 @@ InstructionMOV_01_RM:            ; 010SDD  MOV Rs,memory
 
 InstructionCMP_02_RM:            ; 020SDD  CMP Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MReadWord(Dst, Ea)
   Res = Src - Dst
@@ -2443,7 +2530,7 @@ InstructionCMP_02_RM:            ; 020SDD  CMP Rs,memory
 
 InstructionBIT_03_RM:            ; 030SDD  BIT Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MReadWord(Dst, Ea)
   FlagNZ = Src & Dst
@@ -2452,7 +2539,7 @@ InstructionBIT_03_RM:            ; 030SDD  BIT Rs,memory
 
 InstructionBIC_04_RM:            ; 040SDD  BIC Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MReadWord(Res, Ea)
   Res = Res & ~Src & $FFFF
@@ -2463,7 +2550,7 @@ InstructionBIC_04_RM:            ; 040SDD  BIC Rs,memory
 
 InstructionBIS_05_RM:            ; 050SDD  BIS Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MReadWord(Res, Ea)
   Res = Res | Src
@@ -2474,7 +2561,7 @@ InstructionBIS_05_RM:            ; 050SDD  BIS Rs,memory
 
 InstructionADD_06_RM:            ; 060SDD  ADD Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MReadWord(Dst, Ea)
   Res = Src + Dst
@@ -2486,7 +2573,7 @@ InstructionADD_06_RM:            ; 060SDD  ADD Rs,memory
 
 InstructionSUB_16_RM:            ; 160SDD  SUB Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MReadWord(Dst, Ea)
   Res = Dst - Src
@@ -2641,6 +2728,79 @@ RunEnd:
 ; is InstructionMOV_01's, line for line. The mapped loop gets its own from
 ; the generator (the Pico 2 only), which is why this block is left out there.
 InstructionMOV_01_M04:            ; MOV, source mode 0, destination mode 4
+; ---- ASM (tools/asm_mov_gen.py) ----
+CompilerIf #ASM_MOV = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    mov r2, r8
+    lsls r2, r2, #29
+    lsrs r2, r2, #29
+    cmp r2, #7
+    beq __ul_cpurun_instructionmov_01_m04ref
+    ldr r3, =global_reg
+    lsls r1, r2, #2
+    ldr r0, [r3, r1]
+    subs r0, #2
+    uxth r0, r0
+    cmp r2, #6
+    bne __um04_d1
+    lsrs r3, r0, #8
+    beq __ul_cpurun_instructionmov_01_m04ref
+__um04_d1:
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __ul_cpurun_instructionmov_01_m04ref
+    lsrs r3, r0, #1
+    bcs __ul_cpurun_instructionmov_01_m04ref
+    mov r3, r8
+    lsls r3, r3, #23
+    lsrs r3, r3, #29
+    cmp r3, #7
+    bne __um04_a1
+    mov r3, r9
+    b __um04_a9
+__um04_a1:
+    cmp r3, r2
+    bne __um04_a2
+    movs r3, r0
+    b __um04_a9
+__um04_a2:
+    ldr r1, =global_reg
+    lsls r3, r3, #2
+    ldr r3, [r1, r3]
+__um04_a9:
+    mov r12, r3
+    ldr r1, =global_mem
+    mov r3, r12
+    strh r3, [r1, r0]
+    ldr r1, =global_reg
+    lsls r2, r2, #2
+    str r0, [r1, r2]
+    mov r4, r12
+    ldr r1, =global_flagv
+    movs r0, #0
+    str r0, [r1]
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+InstructionMOV_01_M04Ref:         ; the plain version: the fast path's slow path and its reference
+; ---- END ASM ----
   PcOut()
   EaReg = Op & 7
   Ea = (Reg(EaReg) - 2) & $FFFF
@@ -2655,6 +2815,70 @@ InstructionMOV_01_M04:            ; MOV, source mode 0, destination mode 4
   NextSynced()
 
 InstructionMOV_01_M40:            ; MOV, source mode 4, destination mode 0
+; ---- ASM (tools/asm_mov_gen.py) ----
+CompilerIf #ASM_MOV = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    mov r1, r8
+    lsls r1, r1, #23
+    lsrs r1, r1, #29
+    cmp r1, #7
+    beq __ul_cpurun_instructionmov_01_m40ref
+    ldr r3, =global_reg
+    lsls r2, r1, #2
+    ldr r0, [r3, r2]
+    subs r0, #2
+    uxth r0, r0
+    cmp r1, #6
+    bne __um40_s1
+    lsrs r3, r0, #8
+    beq __ul_cpurun_instructionmov_01_m40ref
+__um40_s1:
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __ul_cpurun_instructionmov_01_m40ref
+    lsrs r3, r0, #1
+    bcs __ul_cpurun_instructionmov_01_m40ref
+    ldr r3, =global_mem
+    ldrh r3, [r3, r0]
+    mov r12, r3
+    mov r2, r8
+    lsls r2, r2, #29
+    lsrs r2, r2, #29
+    cmp r2, #7
+    beq __ul_cpurun_instructionmov_01_m40ref
+    ldr r3, =global_reg
+    lsls r1, r1, #2
+    str r0, [r3, r1]
+    ldr r3, =global_reg
+    lsls r2, r2, #2
+    mov r0, r12
+    str r0, [r3, r2]
+    mov r4, r12
+    ldr r1, =global_flagv
+    movs r0, #0
+    str r0, [r1]
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+InstructionMOV_01_M40Ref:         ; the plain version: the fast path's slow path and its reference
+; ---- END ASM ----
   PcOut()
   EaReg = (Op >> 6) & 7
   Ea = (Reg(EaReg) - 2) & $FFFF
@@ -2669,6 +2893,77 @@ InstructionMOV_01_M40:            ; MOV, source mode 4, destination mode 0
   NextSynced()
 
 InstructionMOV_01_M60:            ; MOV, source mode 6, destination mode 0
+; ---- ASM (tools/asm_mov_gen.py) ----
+CompilerIf #ASM_MOV = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    mov r2, r9
+    ldr r3, =#RAM_BYTES
+    cmp r2, r3
+    bhs __ul_cpurun_instructionmov_01_m60ref
+    lsrs r3, r2, #1
+    bcs __ul_cpurun_instructionmov_01_m60ref
+    ldr r3, =global_mem
+    ldrh r0, [r3, r2]
+    mov r1, r8
+    lsls r1, r1, #23
+    lsrs r1, r1, #29
+    cmp r1, #7
+    bne __um60_x1
+    adds r2, #2
+    b __um60_x2
+__um60_x1:
+    ldr r3, =global_reg
+    lsls r2, r1, #2
+    ldr r2, [r3, r2]
+__um60_x2:
+    adds r0, r0, r2
+    uxth r0, r0
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __ul_cpurun_instructionmov_01_m60ref
+    lsrs r3, r0, #1
+    bcs __ul_cpurun_instructionmov_01_m60ref
+    ldr r3, =global_mem
+    ldrh r3, [r3, r0]
+    mov r12, r3
+    mov r2, r8
+    lsls r2, r2, #29
+    lsrs r2, r2, #29
+    cmp r2, #7
+    beq __ul_cpurun_instructionmov_01_m60ref
+    mov r1, r9
+    adds r1, #2
+    mov r9, r1
+    ldr r3, =global_reg
+    lsls r2, r2, #2
+    mov r0, r12
+    str r0, [r3, r2]
+    mov r4, r12
+    ldr r1, =global_flagv
+    movs r0, #0
+    str r0, [r1]
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+InstructionMOV_01_M60Ref:         ; the plain version: the fast path's slow path and its reference
+; ---- END ASM ----
   PcOut()
   EaReg = (Op >> 6) & 7
   Adr = Reg(7)
@@ -2682,6 +2977,94 @@ InstructionMOV_01_M60:            ; MOV, source mode 6, destination mode 0
   NextSynced()
 
 InstructionMOV_01_M64:            ; MOV, source mode 6, destination mode 4
+; ---- ASM (tools/asm_mov_gen.py) ----
+CompilerIf #ASM_MOV = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    mov r2, r9
+    ldr r3, =#RAM_BYTES
+    cmp r2, r3
+    bhs __ul_cpurun_instructionmov_01_m64ref
+    lsrs r3, r2, #1
+    bcs __ul_cpurun_instructionmov_01_m64ref
+    ldr r3, =global_mem
+    ldrh r0, [r3, r2]
+    mov r1, r8
+    lsls r1, r1, #23
+    lsrs r1, r1, #29
+    cmp r1, #7
+    bne __um64_x1
+    adds r2, #2
+    b __um64_x2
+__um64_x1:
+    ldr r3, =global_reg
+    lsls r2, r1, #2
+    ldr r2, [r3, r2]
+__um64_x2:
+    adds r0, r0, r2
+    uxth r0, r0
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __ul_cpurun_instructionmov_01_m64ref
+    lsrs r3, r0, #1
+    bcs __ul_cpurun_instructionmov_01_m64ref
+    ldr r3, =global_mem
+    ldrh r3, [r3, r0]
+    mov r12, r3
+    mov r2, r8
+    lsls r2, r2, #29
+    lsrs r2, r2, #29
+    cmp r2, #7
+    beq __ul_cpurun_instructionmov_01_m64ref
+    ldr r3, =global_reg
+    lsls r1, r2, #2
+    ldr r0, [r3, r1]
+    subs r0, #2
+    uxth r0, r0
+    cmp r2, #6
+    bne __um64_d1
+    lsrs r3, r0, #8
+    beq __ul_cpurun_instructionmov_01_m64ref
+__um64_d1:
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __ul_cpurun_instructionmov_01_m64ref
+    lsrs r3, r0, #1
+    bcs __ul_cpurun_instructionmov_01_m64ref
+    ldr r1, =global_mem
+    mov r3, r12
+    strh r3, [r1, r0]
+    ldr r1, =global_reg
+    lsls r2, r2, #2
+    str r0, [r1, r2]
+    mov r1, r9
+    adds r1, #2
+    mov r9, r1
+    mov r4, r12
+    ldr r1, =global_flagv
+    movs r0, #0
+    str r0, [r1]
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+InstructionMOV_01_M64Ref:         ; the plain version: the fast path's slow path and its reference
+; ---- END ASM ----
   PcOut()
   EaReg = (Op >> 6) & 7
   Adr = Reg(7)
@@ -2701,6 +3084,63 @@ InstructionMOV_01_M64:            ; MOV, source mode 6, destination mode 4
   NextSynced()
 
 InstructionMOV_01_M20:            ; MOV, source mode 2, destination mode 0
+; ---- ASM (tools/asm_mov_gen.py) ----
+CompilerIf #ASM_MOV = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    mov r1, r8
+    lsls r1, r1, #23
+    lsrs r1, r1, #29
+    ldr r3, =global_reg
+    lsls r2, r1, #2
+    ldr r0, [r3, r2]
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __ul_cpurun_instructionmov_01_m20ref
+    lsrs r3, r0, #1
+    bcs __ul_cpurun_instructionmov_01_m20ref
+    ldr r3, =global_mem
+    ldrh r3, [r3, r0]
+    mov r12, r3
+    mov r2, r8
+    lsls r2, r2, #29
+    lsrs r2, r2, #29
+    cmp r2, #7
+    beq __ul_cpurun_instructionmov_01_m20ref
+    ldr r3, =global_reg
+    adds r0, #2
+    uxth r0, r0
+    lsls r1, r1, #2
+    str r0, [r3, r1]
+    ldr r3, =global_reg
+    lsls r2, r2, #2
+    mov r0, r12
+    str r0, [r3, r2]
+    mov r4, r12
+    ldr r1, =global_flagv
+    movs r0, #0
+    str r0, [r1]
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+InstructionMOV_01_M20Ref:         ; the plain version: the fast path's slow path and its reference
+; ---- END ASM ----
   PcOut()
   EaReg = (Op >> 6) & 7
   Ea = Reg(EaReg)
@@ -2712,6 +3152,84 @@ InstructionMOV_01_M20:            ; MOV, source mode 2, destination mode 0
   NextSynced()
 
 InstructionMOV_01_M61:            ; MOV, source mode 6, destination mode 1
+; ---- ASM (tools/asm_mov_gen.py) ----
+CompilerIf #ASM_MOV = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    mov r2, r9
+    ldr r3, =#RAM_BYTES
+    cmp r2, r3
+    bhs __ul_cpurun_instructionmov_01_m61ref
+    lsrs r3, r2, #1
+    bcs __ul_cpurun_instructionmov_01_m61ref
+    ldr r3, =global_mem
+    ldrh r0, [r3, r2]
+    mov r1, r8
+    lsls r1, r1, #23
+    lsrs r1, r1, #29
+    cmp r1, #7
+    bne __um61_x1
+    adds r2, #2
+    b __um61_x2
+__um61_x1:
+    ldr r3, =global_reg
+    lsls r2, r1, #2
+    ldr r2, [r3, r2]
+__um61_x2:
+    adds r0, r0, r2
+    uxth r0, r0
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __ul_cpurun_instructionmov_01_m61ref
+    lsrs r3, r0, #1
+    bcs __ul_cpurun_instructionmov_01_m61ref
+    ldr r3, =global_mem
+    ldrh r3, [r3, r0]
+    mov r12, r3
+    mov r2, r8
+    lsls r2, r2, #29
+    lsrs r2, r2, #29
+    cmp r2, #7
+    beq __ul_cpurun_instructionmov_01_m61ref
+    ldr r3, =global_reg
+    lsls r1, r2, #2
+    ldr r0, [r3, r1]
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __ul_cpurun_instructionmov_01_m61ref
+    lsrs r3, r0, #1
+    bcs __ul_cpurun_instructionmov_01_m61ref
+    ldr r1, =global_mem
+    mov r3, r12
+    strh r3, [r1, r0]
+    mov r1, r9
+    adds r1, #2
+    mov r9, r1
+    mov r4, r12
+    ldr r1, =global_flagv
+    movs r0, #0
+    str r0, [r1]
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+InstructionMOV_01_M61Ref:         ; the plain version: the fast path's slow path and its reference
+; ---- END ASM ----
   PcOut()
   EaReg = (Op >> 6) & 7
   Adr = Reg(7)
@@ -2727,6 +3245,82 @@ InstructionMOV_01_M61:            ; MOV, source mode 6, destination mode 1
   NextSynced()
 
 InstructionMOV_01_M06:            ; MOV, source mode 0, destination mode 6
+; ---- ASM (tools/asm_mov_gen.py) ----
+CompilerIf #ASM_MOV = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    mov r2, r9
+    ldr r3, =#RAM_BYTES
+    cmp r2, r3
+    bhs __ul_cpurun_instructionmov_01_m06ref
+    lsrs r3, r2, #1
+    bcs __ul_cpurun_instructionmov_01_m06ref
+    ldr r3, =global_mem
+    ldrh r0, [r3, r2]
+    mov r1, r8
+    lsls r1, r1, #29
+    lsrs r1, r1, #29
+    cmp r1, #7
+    bne __um06_x1
+    adds r2, #2
+    b __um06_x2
+__um06_x1:
+    ldr r3, =global_reg
+    lsls r2, r1, #2
+    ldr r2, [r3, r2]
+__um06_x2:
+    adds r0, r0, r2
+    uxth r0, r0
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __ul_cpurun_instructionmov_01_m06ref
+    lsrs r3, r0, #1
+    bcs __ul_cpurun_instructionmov_01_m06ref
+    mov r3, r8
+    lsls r3, r3, #23
+    lsrs r3, r3, #29
+    cmp r3, #7
+    bne __um06_a1
+    mov r3, r9
+    adds r3, #2
+    b __um06_a9
+__um06_a1:
+    ldr r1, =global_reg
+    lsls r3, r3, #2
+    ldr r3, [r1, r3]
+__um06_a9:
+    mov r12, r3
+    ldr r1, =global_mem
+    mov r3, r12
+    strh r3, [r1, r0]
+    mov r1, r9
+    adds r1, #2
+    mov r9, r1
+    mov r4, r12
+    ldr r1, =global_flagv
+    movs r0, #0
+    str r0, [r1]
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+InstructionMOV_01_M06Ref:         ; the plain version: the fast path's slow path and its reference
+; ---- END ASM ----
   PcOut()
   EaReg = Op & 7
   Adr = Reg(7)
@@ -2954,6 +3548,22 @@ BuildTable:
   OpTable($022E) = ?InstructionMOV_01_M06
   OpTable($0236) = ?InstructionMOV_01_M06
   OpTable($023E) = ?InstructionMOV_01_M06
+; ---- ASM (tools/asm_mov_gen.py) ----
+  MovAsm(0) = ?InstructionMOV_01_M04
+  MovRef(0) = ?InstructionMOV_01_M04Ref
+  MovAsm(1) = ?InstructionMOV_01_M40
+  MovRef(1) = ?InstructionMOV_01_M40Ref
+  MovAsm(2) = ?InstructionMOV_01_M60
+  MovRef(2) = ?InstructionMOV_01_M60Ref
+  MovAsm(3) = ?InstructionMOV_01_M64
+  MovRef(3) = ?InstructionMOV_01_M64Ref
+  MovAsm(4) = ?InstructionMOV_01_M20
+  MovRef(4) = ?InstructionMOV_01_M20Ref
+  MovAsm(5) = ?InstructionMOV_01_M61
+  MovRef(5) = ?InstructionMOV_01_M61Ref
+  MovAsm(6) = ?InstructionMOV_01_M06
+  MovRef(6) = ?InstructionMOV_01_M06Ref
+; ---- END ASM ----
 ; ---- END UNMAPPED ONLY ----
   OpTableReady = 1
   Goto RunStart
