@@ -1,9 +1,10 @@
 # Ready-to-flash Unix images
 
 **Read this first (2026-10-21).** The Pico 2 W, Pico Plus 2 W and Pico W files were rebuilt on
-2026-10-21 from the source of commit `dccf68e` (the J-11's floating point unit on the RP2350 builds,
-the PC's references in I space, on top of the hot paths in assembly and Mini-Unix's swap by process
-slot of 2026-10-20), from a clean `git archive`, and each file was run on its board as described
+2026-10-21 from the source of commit `5064ad4` (the Pico 2 W's 152 KB of memory and 254-block write
+overlay, so V6's cc runs there; the J-11's floating point unit on the RP2350 builds; the PC's references
+in I space; on top of the hot paths in assembly and Mini-Unix's swap by process slot of 2026-10-20), from
+a clean `git archive`, and each file was run on its board as described
 below. The DEC diagnostic ladder gives 17 of 19 (the two J-11 HALTs) on the Pico 2 W and the Pico W
 with firmware built from the same source. The RP2350 files keep
 their packs at 0x10240000 and 0x104C0000, clear of the region a radio's firmware is kept in
@@ -32,7 +33,7 @@ The UNIX files inside the disk packs are covered by the Caldera licence in
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `pico2w-v6/combined.uf2` | 3,234,304 | `a3022634fcc030bef7ff33f8a1cf3789ec8f0dab2facf6374f6b900d580f5f9c` |
+| `pico2w-v6/combined.uf2` | 3,231,744 | `262af6be9a2561d4de92497e1e04f2adddc467260c983a71f579470387fa2cc1` |
 
 Firmware and disk pack in one UF2: hold BOOTSEL, plug in, copy the file to
 the `RP2350` drive. At the serial console:
@@ -41,33 +42,32 @@ the `RP2350` drive. At the serial console:
 auto-boot: RK0, switches 173030, then "rkunix" at the @ prompt. Press Esc within 2 s for the diagnostic console.
 booting RK0, switches 173030
 @rkunix
-mem = 76
+mem = 556
 #
 ```
 
-`time od /rkunix >/dev/null` takes real 10.0 s, user 9.7 s on a Pico 2 W with this file
-(2026-10-21; 10.36 s timed from the host with the file of 2026-10-20; 13.24 s before the hot paths in assembly of 2026-10-19, 13.86 s before
+`time od /rkunix >/dev/null` takes real 10.0 s, user 9.8 s, 10.47 s timed from the host, on a Pico 2 W
+with this file (2026-10-21; 10.36 s timed from the host with the file of 2026-10-20; 13.24 s before the hot paths in assembly of 2026-10-19, 13.86 s before
 the paste fix, 14.22 s before the dispatch tails in assembly, 17.43 s before the compiler's code
 generation pass of 2026-10-03, 19.3 s before the dispatch pass of 2026-10-03, 21.7 s before the
 speed pass of 2026-10-02). No clock ticks are dropped. The file was copied to the `RP2350`
 drive, as above, and booted by itself; the DEC diagnostics pass with firmware built from the
 same source (above). Text pasted into
-the terminal arrives whole (the README's Pasting text section). The file-write overlay is 38
-blocks. The pack is the V6 root pack (`../media/unix/v6root.gz`) with V6's
+the terminal arrives whole (the README's Pasting text section). The file-write overlay is 254
+blocks; the C compiler builds and runs a program, and `dc` runs. The pack is the V6 root pack (`../media/unix/v6root.gz`) with V6's
 own `rkuboot` installed in block 0.
 
 The pack is changed with `tools/v6fs.py` (see `../README.md`): `/dev/rk0`,
 `/dev/rrk0` and `/dev/swap` added, `/unix` linked to the kernel that runs,
 and the kernel's swap sized to the firmware's 112-block swap RAM disk. `ps`
 works; use `df /dev/rk0` (plain `df` looks for V6's built-in `/dev/rk2` and
-`/dev/rp0`). V6's `dc` is too large for the 56 KB machine, and its `cc` stops with a memory fault
-there (the file of 2026-10-20 does the same); both run on the PSRAM boards.
+`/dev/rp0`). The machine has 152 KB of memory (V6 says `mem = 556`).
 
 ## PSRAM boards: Pimoroni Pico Plus 2 W and Adafruit Feather RP2350 HSTX (V6, 248 KB)
 
 | Board | File | Size | SHA-256 |
 |---|---|---|---|
-| Pimoroni Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w)): RP2350B, PSRAM chip select GPIO47, 16 MB flash | `picoplus2/combined.uf2` | 9,422,336 | `6ddf75058caaf42061bb8a9fc1e89c83979233111fb247bc1e120f03bad53093` |
+| Pimoroni Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w)): RP2350B, PSRAM chip select GPIO47, 16 MB flash | `picoplus2/combined.uf2` | 9,420,288 | `23d8ed003cd3d6b122c69ff18f398679854a11f89f16ed9bcaf95ba50fdf3279` |
 | Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM ([6130](https://www.adafruit.com/product/6130)): RP2350A, GPIO8, 8 MB flash | `feather/combined.uf2` | 9,378,816 | `cebc0629fda95a4975144c330f84a7baf9ac5b1219e5e6392b043d0653a8d722` |
 
 Each is one UF2 with the firmware, RK0 (the V6 root pack, as in `pico2w-v6/`,
@@ -75,9 +75,9 @@ plus `/dev/rk1`) and RK1 (V6's source pack, `../media/unix/v6src.gz`).
 
 `picoplus2/combined.uf2` was copied to a Pico Plus 2 W's boot drive on 2026-10-21 and
 `docs/psram/proof.txt` passes (`mem = 1036`, `ps`, `df`, RK1 mounted, the C compiler builds and
-runs a program), `time od /rkunix >/dev/null` takes 10.42 s timed from the host (13.37 s before
-the hot paths in assembly), and no clock tick is dropped. Its firmware (SHA-256
-`26a90a23...b8ac`) has the floating point unit, which V7 and the benchmarks of
+runs a program), `time od /rkunix >/dev/null` takes 10.75 s timed from the host (10.42 s with the file
+built from `dccf68e`; 13.37 s before the hot paths in assembly), and no clock tick is dropped. Its
+firmware (SHA-256 `d1e6ab8a...184c`) has the floating point unit, which V7 and the benchmarks of
 `../docs/BENCHMARKS.md` use; the pack regions have the checksums the board prints at start-up
 (`RK0 21C285A3 5CA82BF0 RK1 1215D2AC 967B3EC6`). V7 is not in this file: its pack is built with
 `tools/v7_pack.py` (HOWTO section 12). It is for the Pico Plus 2 and the Pico Plus

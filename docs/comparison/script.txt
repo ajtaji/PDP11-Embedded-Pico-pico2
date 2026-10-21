@@ -1,0 +1,15 @@
+# the comparison script: the same on both emulators (V6, 150 MHz)
+!timeout 900
+stty -lcase cr0
+stty
+chdir /usr
+cc -O sieve.c
+mv a.out sieve
+cc -f -O whet.c
+mv a.out whet
+time sieve
+time sieve
+time whet
+time whet
+time od /rkunix >/dev/null
+time od /rkunix >/dev/null

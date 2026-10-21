@@ -1,0 +1,75 @@
+
+# stty -lcase cr0
+# 
+[host: 0.18 s]
+stty
+speed 0 baud
+erase = '#'; kill = '@'
+-nl echo -tabs 
+# 
+[host: 0.18 s]
+chdir /usr
+# 
+[host: 0.06 s]
+cc -O sieve.c
+# 
+[host: 3.77 s]
+mv a.out sieve
+# 
+[host: 0.18 s]
+cc -f -O whet.c
+# 
+[host: 10.03 s]
+mv a.out whet
+# 
+[host: 0.18 s]
+time sieve
+10 iterations
+
+1899 primes
+
+real        2.0
+user        2.5
+sys         0.1
+# 
+[host: 2.86 s]
+time sieve
+10 iterations
+
+1899 primes
+
+real        2.0
+user        2.5
+sys         0.1
+# 
+[host: 2.86 s]
+time whet
+1000 KWhetstones done; X = 18178/10000
+
+real        4.0
+user        4.4
+sys         0.1
+# 
+[host: 4.81 s]
+time whet
+1000 KWhetstones done; X = 18178/10000
+
+real        4.0
+user        4.4
+sys         0.1
+# 
+[host: 4.81 s]
+time od /rkunix >/dev/null
+
+real       10.0
+user        9.8
+sys         0.4
+# 
+[host: 10.57 s]
+time od /rkunix >/dev/null
+
+real       10.0
+user        9.8
+sys         0.4
+# 
+[host: 10.56 s]

@@ -19,10 +19,10 @@ The emulated machine has a console on the USB serial port, an RK11 disk controll
 | Unix | Sixth Edition (V6) | Mini-Unix |
 | Kernel booted | `rkunix` | `rkmx` |
 | Memory management | on | off (Mini-Unix does not use it; the stats block says `MMU off (16-bit)`) |
-| PDP-11 memory | 56 KB (000000-157777) plus the I/O page | 56 KB (000000-157777) plus the I/O page |
+| PDP-11 memory | 152 KB (000000-457777) plus the I/O page; V6 says `mem = 556` (56 KB, 000000-157777, with memory management off) | 56 KB (000000-157777) plus the I/O page |
 | Speed, measured on the boards (2026-10-20, with the hot paths in assembly) | V6 `time od /rkunix` in 10.4 s, timed from the host (13.9 s on 2026-10-04); the bench loop with memory management off ran at about 2,440,000 instructions per second on 2026-10-04 | Mini-Unix `time od /rkmx` in 4.6 s (5.9 s on 2026-10-04); the bench loop ran at about 2,550,000 instructions per second on 2026-10-04 |
 | Console ready after port open | `#` after 3.4 s | `#` after 3.2 s |
-| RAM for writes | 112-block swap RAM disk plus 38 blocks for file-system writes | 124 blocks shared by swap and file writes |
+| RAM for writes | 112-block swap RAM disk plus 254 blocks for file-system writes | 124 blocks shared by swap and file writes |
 | Flash images | `combined.uf2` (one file) | `firmware.uf2` then `minix.uf2` (two files) |
 | Disk | RK05 pack in flash, read-only | RK05 pack in flash, read-only |
 | DEC diagnostic ladder | 17 of 19 pass (the other two halt by design for a J-11) | 17 of 19 pass (the same two) |
@@ -63,7 +63,7 @@ RK0: v6root, 4872 blocks, swap 4000-4871 in RAM, READ-ONLY: the flash is never w
 auto-boot: RK0, switches 173030, then "rkunix" at the @ prompt. Press Esc within 2 s for the diagnostic console.
 booting RK0, switches 173030
 @rkunix
-mem = 76
+mem = 556
 #
 ```
 
@@ -164,7 +164,7 @@ RK0: v6root, 4872 blocks, running from its PSRAM copy: writable, every write los
 - **The chip is set up by the compiler's own library** (`RP2350/Lib/psram.pico2`); `pico2/psram_pdp11.pico2` holds what the PDP-11 does with the memory.
 - **A program in PSRAM runs as fast as one in SRAM.** The memory management unit's fast windows hold a host address for each page, in SRAM or in PSRAM alike. Before that change the same `od` job took 46.2 s with the program in PSRAM.
 - **Which window, measured on V6 itself:** the PDP-11's memory goes through the XIP cache (13.08 s for the `od` job; 18.56 s through the uncached window); the packs go through the uncached window, so a block transfer evicts nothing.
-- **If the PSRAM is not found**, or is not a working 8 MB chip, the pin is given back and the board runs as the Pico 2 W build does (56 KB, the pack read-only in flash, `mem = 76`), and the first line says why. Shown on a board by building the Pimoroni image with the Feather's pin: `PSRAM: not in use - the PSRAM library found none (its error 5: no chip answered the ID read on this pin). Running as the Pico 2 build: 56 KB, the pack read-only in flash.` A 4 MB chip and a chip that fails its test could not be shown on these boards; `tools/psram_desk_check.py` covers them on the emulator and has not been run again since the firmware moved to the library.
+- **If the PSRAM is not found**, or is not a working 8 MB chip, the pin is given back and the board runs as the Pico 2 W build does (the pack read-only in flash; then 56 KB, `mem = 76`), and the first line says why. Shown on a board by building the Pimoroni image with the Feather's pin: `PSRAM: not in use - the PSRAM library found none (its error 5: no chip answered the ID read on this pin). Running as the Pico 2 build: 56 KB, the pack read-only in flash.` A 4 MB chip and a chip that fails its test could not be shown on these boards; `tools/psram_desk_check.py` covers them on the emulator and has not been run again since the firmware moved to the library.
 - **Getting it onto a board:** copy `combined.uf2` to the board's boot drive (hold BOOT while plugging in), or, with no button and no drive, send the packs over USB serial with `tools/pack_install.py` and upload the firmware with the compiler: [docs/HOWTO.md, section 10](docs/HOWTO.md#10-the-psram-boards). The boards here were loaded the second way; the firmware and pack bytes on them are the ones in the image files (the firmware's SHA-256 and the pack checksums were compared), but the files themselves were not copied to a boot drive.
 
 ## Seventh Edition (V7) and floating point
@@ -177,22 +177,21 @@ Measured on a Pico Plus 2 W on 2026-10-21 ([docs/BENCHMARKS.md](docs/BENCHMARKS.
 |---|---|---|
 | Dhrystone 2.1 | 1,125.7 Dhrystones/s (0.64 DMIPS) | - (needs `typedef` and `enum`) |
 | Whetstone, double precision | about 183 KWIPS | about 227 KWIPS |
-| BYTE Sieve, 10 iterations | 2.5 s | 2.5 s |
+| BYTE Sieve, 10 iterations | 2.5 s | 2.5 s (the Pico 2 W too) |
 | givens (pichart), double precision | 85,000-104,000 FLOPS | - |
 
-For comparison, a PDP-11/70 with its FP11 ran the double precision Whetstone at 479 under DEC's FORTRAN-IV-PLUS, and the Sieve in C in just over 1.1 s.
+For comparison, a PDP-11/70 with its FP11 ran the double precision Whetstone at 479 under DEC's FORTRAN-IV-PLUS, and the Sieve in C in just over 1.1 s. Against another PDP-11 emulator on the same board and clock (Pico_1140, the same V6 and the same benchmarks), this one is 1.25 to 2.7 times as fast: [docs/COMPARISON.md](docs/COMPARISON.md).
 
 ## Known limits
 
-- **56 KB of PDP-11 memory** (000000-157777) plus the I/O page. V6 reports `mem = 76` at boot; about 15 KB is left for user programs once its kernel is in.
+- **PDP-11 memory:** 152 KB on the Pico 2 W (V6 reports `mem = 556`: about 111 KB for user programs), 56 KB on the Pico W. Until 2026-10-21 the Pico 2 W had 56 KB too (`mem = 76`, 15 KB for programs): its run loop for memory management off took 256 KB of SRAM for a table, now 32 KB.
 - **Writes live in RAM (RAM disks), in 512-byte blocks.**
-  - Pico 2 W: a **swap RAM disk of 112 blocks** (56 KB, blocks 4000-4111 of the pack) and **38 blocks for file-system writes**. The V6 kernel in the image is patched to swap only there (`_nswap` = 112), so swap can never be refused. 112 blocks hold about three of V6's largest processes (about 33 blocks each) or many small ones; if a session ever needs more, V6 stops with its own "panic: out of swap space".
+  - Pico 2 W: a **swap RAM disk of 112 blocks** (56 KB, blocks 4000-4111 of the pack) and **254 blocks (127 KB) for file-system writes**. The V6 kernel in the image is patched to swap only there (`_nswap` = 112), so swap can never be refused. 112 blocks hold about three of V6's largest processes (about 33 blocks each) or many small ones; if a session ever needs more, V6 stops with its own "panic: out of swap space".
   - Pico W: **124 blocks shared** by swap and file writes. Mini-Unix gives each process a fixed 66-block swap area. The distribution's kernel chose the area by process number, which moves on with every command, so the swap area was walked from end to end and the 124 blocks ran out after about three commands. The kernel in the image (since 2026-10-20, `media/unix/rkmx-slotswap`, [docs/minix/](docs/minix/)) chooses it by process slot, and slots are reused lowest first: ten `od` runs and more leave 53 of the 124 blocks in use. The blocks can still run out if many large processes are swapped out at once, or after many files are written.
   - When the file-write blocks are used up, a write to a new block fails: Unix sees a disk error, the console prints once `[RK0: the RAM overlay for file writes is full ...]`, and the statistics block shows `FULL: n writes refused`. Nothing already written changes and nothing reaches the flash; power off to start clean.
 - **Nothing is saved across a power cycle.** Every disk write, the swap area included, goes to RAM; the next power-up starts from the pack as flashed. `sync` does no harm but saves nothing. (The flash-wear warnings in [disk_boot_readme.md](disk_boot_readme.md) concern emulators that write the flash; this firmware never does.)
-- **V6 on the Pico 2 W:** `ps` works; `df` with no argument looks for V6's built-in `/dev/rk2` and `/dev/rp0`, which this machine does not have, so type **`df /dev/rk0`**. `dc` is too large for the 56 KB machine.
-- **Seventh Edition (V7) runs on the PSRAM boards only.** Its kernel alone needs about 74 KB of memory (text 32,704 + data 1,854 + bss 39,812 bytes) and the Pico 2 W and Pico W have 56 KB. No ready image of it is in `images/`: build the pack with `tools/v7_pack.py` ([docs/HOWTO.md, section 12](docs/HOWTO.md#12-seventh-edition-v7-on-the-pico-plus-2-w)).
-- **V6's C compiler does not run on the 56 KB Pico 2 W:** `cc` stops with `Memory fault -- Core dumped` before compiling anything (seen on 2026-10-21, with the image of 2026-10-20 as well). It runs on the PSRAM boards.
+- **V6 on the Pico 2 W:** `ps` works; `df` with no argument looks for V6's built-in `/dev/rk2` and `/dev/rp0`, which this machine does not have, so type **`df /dev/rk0`**. `cc` and `dc` run (both needed more memory than the 56 KB the machine had before 2026-10-21).
+- **Seventh Edition (V7) runs on the PSRAM boards only** (built and run there; the Pico W has 56 KB, and V7 has not been tried on the 152 KB Pico 2 W). No ready image of it is in `images/`: build the pack with `tools/v7_pack.py` ([docs/HOWTO.md, section 12](docs/HOWTO.md#12-seventh-edition-v7-on-the-pico-plus-2-w)).
 - **Packs:** RK05 only (up to 4872 blocks), drive 0 only (RK1 as well on the PSRAM boards). On the RP2350 boards the pack starts at 0x10240000, so the Pico 2 W's 4 MB hold 1.75 MB of pack: the V6 root pack is stored mapped (2,891 blocks in use). `images/pico2w-v6/combined.uf2` is that build; it ran on a Pico 2 W on 2026-10-20.
 - **The Pico W image uses the flash where the radio's firmware would go; a Pico W running it cannot use its radio.** Its 2 MB cannot hold Mini-Unix (3,061 blocks in use) clear of that region; the firmware says so at start-up and `tools/rk_image.py` when it packs. The Pico W image of 2026-10-20 ran on a Pico W.
 - **Mini-Unix:** a refused swap write can restart the shell.

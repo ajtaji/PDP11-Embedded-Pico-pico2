@@ -49,8 +49,7 @@ Dhrystone's `dhry.h`, `dhry_1.c` and `dhry_2.c` are netlib's
 (<https://www.netlib.org/benchmark/dhry-c>, a shell archive) and are not
 copied here.
 
-V6 on a PSRAM board (the 56 KB Pico 2 W's `cc` stops with a memory fault -
-see Known limits in the README): put the two files of `docs/bench/v6/` on
+V6 (a Pico 2 W, or a PSRAM board): put the two files of `docs/bench/v6/` on
 the pack with `tools/v6fs.py put`, then
 
 ```
@@ -64,6 +63,17 @@ the pack with `tools/v6fs.py put`, then
 (`-f`: V6's C compiler refuses floating point without it - "No floating
 point!" - and links its floating point interpreter, which on this machine
 never runs: the instructions go to the FPU.)
+
+## The Pico 2 W
+
+With 152 KB of memory since 2026-10-21 the Pico 2 W runs V6's compiler too, and
+the same V6 benchmarks give the PSRAM board's times: the Sieve 2.5 s CPU (2.83 s
+from the host), the Whetstone 4.3 s CPU (4.67 s), `od /rkunix` 10.44 s.
+
+## Against another emulator
+
+[COMPARISON.md](COMPARISON.md): Pico_1140 on the same board, at the same clock,
+running the same V6 and the same benchmarks.
 
 ## What changed V7's times
 

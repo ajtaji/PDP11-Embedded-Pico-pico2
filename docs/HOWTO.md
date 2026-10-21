@@ -84,7 +84,7 @@ RK0: v6root, 4872 blocks, swap 4000-4871 in RAM, READ-ONLY: the flash is never w
 auto-boot: RK0, switches 173030, then "rkunix" at the @ prompt. Press Esc within 2 s for the diagnostic console.
 booting RK0, switches 173030
 @rkunix
-mem = 76
+mem = 556
 #
 ```
 
@@ -134,7 +134,7 @@ The system answers `Tue Sep 22 10:00:00 EDT 1998`, and `date` on its own then sh
 
 - `ps` works.
 - `df` with no argument looks for V6's built-in `/dev/rk2` and `/dev/rp0`, which this machine does not have: type `df /dev/rk0`.
-- `dc` is too large for the 56 KB machine.
+- `cc` and `dc` run: the machine has 152 KB (`mem = 556`).
 
 ### Live statistics
 
@@ -393,8 +393,7 @@ Checked 2026-10-20 with the release compiler of 2026-10-19, on a Pico 2 W and a 
 
 ## 12. Seventh Edition (V7) on the Pico Plus 2 W
 
-V7 needs more memory than the 56 KB machines have; on a PSRAM board it gets
-a megabyte. The Pico 2 firmware has the J-11's floating point unit (FPJ11,
+V7 is built and run on the PSRAM boards, where it gets a megabyte. The Pico 2 firmware has the J-11's floating point unit (FPJ11,
 `pico2/fp11.pico2`), which V7's C compiler needs.
 
 **Build the pack** (from the V7 tape in `media/unix/`; `tools/v7_pack.py`
