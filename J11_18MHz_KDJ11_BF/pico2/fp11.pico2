@@ -1,0 +1,1223 @@
+; ======================================================================
+;  fp11.pico2 - the FPJ11 floating point unit of the J-11, for the
+;  Raspberry Pi Pico 2. Include it after cpu.pico2 and before the two
+;  instruction files; they send opcodes 170000-177777 here (FpExec).
+;
+;  WHAT IT IS. The FP11 instruction set as the J-11's FPJ11 runs it: six
+;  accumulators of 64 bits, the status register FPS (error, interrupt
+;  disable and the four interrupt enables, the D, L and T modes, N Z V C),
+;  the exception code FEC and address FEA, F (32-bit) and D (64-bit)
+;  operands in memory, word and long integers, and the trap through 244.
+;
+;  WHERE IT COMES FROM. This is a port, line for line, of SIMH's
+;  pdp11_fp.c (Robert M Supnik, its "32b version", fetched 2026-10-21 from
+;  github.com/simh/simh; the permission notice is below): the same 64-bit
+;  numbers held as two 32-bit halves, the same three guard bits, the same
+;  rounding, the same shift-and-add multiply that keeps the top 64 bits,
+;  the same restoring divide, the same MODf, conversions, condition codes
+;  and exceptions, and the J-11's way with register changes (a specifier's
+;  register is changed only when the instruction completes; the PC at
+;  once). What SIMH does on other models (the 11/44 and 11/70 register
+;  tracking, the FIS instructions) is not here.
+;    tools/fp11_model.py is the same port in Python, and the FP test
+;    program (fp_check.pico2) holds this file to it on random operands.
+;
+;  THE NUMBERS. A 64-bit value is (h, l): h holds the sign (bit 31), the
+;  exponent (bits 30-23, excess 128) and the high 23 fraction bits; l the
+;  low 32. The fraction has a hidden 1 at bit 55 of the whole (bit 23 of
+;  h). F format is the high half. An exponent of 0 is a zero; with the
+;  sign set it is the "undefined variable".
+;
+;  SIMH's notice, as its terms require:
+;    Copyright (c) 1993-2023, Robert M Supnik
+;    Permission is hereby granted, free of charge, to any person obtaining
+;    a copy of this software and associated documentation files (the
+;    "Software"), to deal in the Software without restriction, including
+;    without limitation the rights to use, copy, modify, merge, publish,
+;    distribute, sublicense, and/or sell copies of the Software, and to
+;    permit persons to whom the Software is furnished to do so, subject to
+;    the following conditions: The above copyright notice and this
+;    permission notice shall be included in all copies or substantial
+;    portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT
+;    WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+;    THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+;    NONINFRINGEMENT. IN NO EVENT SHALL ROBERT M SUPNIK BE LIABLE FOR ANY
+;    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+;    TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+;    SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. Except as
+;    contained in this notice, the name of Robert M Supnik shall not be
+;    used in advertising or otherwise to promote the sale, use or other
+;    dealings in this Software without prior written authorization from
+;    Robert M Supnik.
+; ======================================================================
+
+; ---- FPS -----------------------------------------------------------------
+#FPS_ER  = $8000
+#FPS_ID  = $4000
+#FPS_IUV = $0800
+#FPS_IU  = $0400
+#FPS_IV  = $0200
+#FPS_IC  = $0100
+#FPS_D   = $0080
+#FPS_L   = $0040
+#FPS_T   = $0020
+#FPS_N   = $0008
+#FPS_Z   = $0004
+#FPS_V   = $0002
+#FPS_C   = $0001
+#FPS_CC  = $000F
+#FPS_RW  = $CFEF                 ; ER ID IUV IU IV IC D L T and the codes
+; ---- FEC -----------------------------------------------------------------
+#FEC_OP    = 2
+#FEC_DZRO  = 4
+#FEC_ICVT  = 6
+#FEC_OVFLO = 8
+#FEC_UNFLO = 10
+#FEC_UNDFV = 12
+; ---- the format ----------------------------------------------------------
+#FP_SIGN  = $80000000
+#FP_EXP   = $7F800000
+#FP_HB    = $00800000
+#FP_FRACH = $007FFFFF
+#FP_BIAS  = $80
+#FP_GUARD = 3
+#VEC_FPE  = $A4                  ; 000244
+#FP_LONG  = 4
+#FP_QUAD  = 8
+
+; Fps, Fec, Fea and the accumulators FrH/FrL are declared in cpu.pico2 (CpuReset clears them).
+Global FpBackupPc.i              ; the PC after the instruction word (FEA)
+Global FpChgReg.i, FpChgVal.i, FpChgOn.i   ; the J-11's register change, made at the end
+Global FpQuit.i                  ; the instruction is over: an abort, or an exception that NOPs it
+Global FpSpace.i                 ; the last operand address's space: 0 D, 1 I
+Global FpAdr.i                   ; ... and the address
+; The 64-bit working values, as (h, l) pairs in two arrays (index #P_*)
+#P_FAC = 0                       ; the packed accumulator operand
+#P_SRC = 1                       ; the packed source operand
+#P_MOD = 2                       ; MODf's fraction result
+#P_FF  = 3                       ; fractions in the arithmetic
+#P_SF  = 4
+#P_Q   = 5
+#P_T   = 6
+#P_M   = 7
+#P_R   = 8
+#P_RND = 9                       ; the rounding constants (FpInit)
+#P_FRG = 10
+#P_DRG = 11
+#P_FMK = 12
+#P_ZERO = 13
+Global Dim PH.i(14)
+Global Dim PL.i(14)
+Global Dim FpMask.i(33)          ; FpMask(n) = the low n bits
+Global FpReady.i
+; FpExec's and FpEa's working values (Globals: see FpCpuCc)
+Global FxAc.i, FxDs.i, FxQd.i, FxLenf.i, FxLeni.i, FxDst.i, FxNewv.i, FxEx.i, FxSign.i, FxI.i, FxC.i, FxN.i, FxZ.i, FxV.i
+Global FeR.i, FeAdr.i, FeSp.i
+
+Procedure FpInit()
+  Define i.i
+  FpMask(0) = 0
+  For i = 1 To 31
+    FpMask(i) = (1 << i) - 1
+  Next
+  FpMask(32) = -1
+  ; simh's constants are { l, h } (fpac_t): fround_fac rounds F at bit 31 of l,
+  ; fround_guard_fac at bit 2 of h and dround_guard_fac at bit 2 of l (guarded)
+  PH(#P_RND) = 0 : PL(#P_RND) = 1 << 31
+  PH(#P_FRG) = 1 << 2 : PL(#P_FRG) = 0
+  PH(#P_DRG) = 0 : PL(#P_DRG) = 1 << 2
+  PH(#P_FMK) = (1 << (23 + #FP_GUARD + 1)) - 1 : PL(#P_FMK) = -1   ; fmask_fac
+  PH(#P_ZERO) = 0 : PL(#P_ZERO) = 0
+  FpReady = 1
+EndProcedure
+
+; ---- 64-bit helpers on the pairs ---------------------------------------
+ProcedureRAM.i ULt(a.i, b.i)                     ; unsigned a < b
+  ProcedureReturn Bool((a ! $80000000) < (b ! $80000000))
+EndProcedure
+
+ProcedureRAM FpCopy(d.i, s.i)
+  PH(d) = PH(s)
+  PL(d) = PL(s)
+EndProcedure
+
+ProcedureRAM FpAdd(d.i, s.i)                     ; d = d + s (F_ADD(s, d, d))
+  Define l.i
+  l = PL(d) + PL(s)
+  PH(d) = PH(d) + PH(s) + ULt(l, PL(s))
+  PL(d) = l
+EndProcedure
+
+ProcedureRAM FpSub(d.i, s.i)                     ; d = d - s (F_SUB(s, d, d))
+  PH(d) = PH(d) - PH(s) - ULt(PL(d), PL(s))
+  PL(d) = PL(d) - PL(s)
+EndProcedure
+
+ProcedureRAM.i FpLt(a.i, b.i)                    ; F_LT: unsigned 64-bit a < b
+  If PH(a) <> PH(b)
+    ProcedureReturn ULt(PH(a), PH(b))
+  EndIf
+  ProcedureReturn ULt(PL(a), PL(b))
+EndProcedure
+
+ProcedureRAM FpLsh(d.i, s.i, n.i)                ; F_LSH_V, 0 <= n < 64
+  Define h.i, l.i
+  If n = 0
+    h = PH(s) : l = PL(s)
+  ElseIf n >= 32
+    h = PL(s) << (n - 32) : l = 0
+  Else
+    h = (PH(s) << n) | ((PL(s) >> (32 - n)) & FpMask(n))
+    l = PL(s) << n
+  EndIf
+  PH(d) = h : PL(d) = l
+EndProcedure
+
+ProcedureRAM FpRsh(d.i, s.i, n.i)                ; F_RSH_V, 0 <= n < 64
+  Define h.i, l.i
+  If n = 0
+    h = PH(s) : l = PL(s)
+  ElseIf n >= 32
+    l = (PH(s) >> (n - 32)) & FpMask(64 - n) : h = 0
+  Else
+    l = ((PL(s) >> n) & FpMask(32 - n)) | (PH(s) << (32 - n))
+    h = (PH(s) >> n) & FpMask(32 - n)
+  EndIf
+  PH(d) = h : PL(d) = l
+EndProcedure
+
+ProcedureRAM FpLsh1(d.i)
+  PH(d) = (PH(d) << 1) | ((PL(d) >> 31) & 1)
+  PL(d) = PL(d) << 1
+EndProcedure
+
+ProcedureRAM FpRsh1(d.i)
+  PL(d) = ((PL(d) >> 1) & $7FFFFFFF) | ((PH(d) & 1) << 31)
+  PH(d) = (PH(d) >> 1) & $7FFFFFFF
+EndProcedure
+
+ProcedureRAM FpGetFrac(d.i, s.i)                 ; F_GET_FRAC_P: the fraction with its hidden bit
+  PL(d) = PL(s)
+  PH(d) = (PH(s) & #FP_FRACH) | #FP_HB
+EndProcedure
+
+Macro FpExpOf(mH)
+  (((mH) >> 23) & $FF)
+EndMacro
+
+; ---- exceptions ----------------------------------------------------------
+; FpNoTrap(code): 1 if the exception is disabled (the instruction goes on),
+; 0 if it is enabled: FER, FEC and FEA are set and, unless FID, the trap
+; through 244 follows the instruction.
+ProcedureRAM.i FpNoTrap(code.i)
+  Define t.i
+  If code >= #FEC_ICVT And code <= #FEC_UNDFV
+    If code = #FEC_ICVT
+      t = #FPS_IC
+    ElseIf code = #FEC_OVFLO
+      t = #FPS_IV
+    ElseIf code = #FEC_UNFLO
+      t = #FPS_IU
+    Else
+      t = #FPS_IUV
+    EndIf
+    If (Fps & t) = 0
+      ProcedureReturn 1
+    EndIf
+  EndIf
+  Fps = Fps | #FPS_ER
+  Fec = code
+  Fea = (FpBackupPc - 2) & $FFFF
+  If (Fps & #FPS_ID) = 0
+    If TrapVector = 0 Or TrapVector = #TRAP_STACK
+      TrapVector = #VEC_FPE
+    EndIf
+  EndIf
+  ProcedureReturn 0
+EndProcedure
+
+ProcedureRAM.i FpSetCc(old.i, rh.i, newv.i)     ; setfcc
+  old = (old & ~#FPS_CC) | newv
+  If rh & #FP_SIGN
+    old = old | #FPS_N
+  EndIf
+  If FpExpOf(rh) = 0
+    old = old | #FPS_Z
+  EndIf
+  ProcedureReturn old
+EndProcedure
+
+; ---- round and pack (the result into pair p, its sign already in PH(p)) --
+ProcedureRAM.i FpRoundPack(p.i, ex.i, f.i, r.i)
+  If r And (Fps & #FPS_T) = 0
+    If Fps & #FPS_D
+      FpAdd(f, #P_DRG)
+    Else
+      FpAdd(f, #P_FRG)
+    EndIf
+    If (PH(f) >> (23 + #FP_GUARD + 1)) & 1
+      FpRsh1(f)
+      ex = ex + 1
+    EndIf
+  EndIf
+  FpRsh(f, f, #FP_GUARD)
+  PL(p) = PL(f)
+  PH(p) = (PH(p) & #FP_SIGN) | ((ex & $FF) << 23) | (PH(f) & #FP_FRACH)
+  If ex > $FF
+    If FpNoTrap(#FEC_OVFLO)
+      FpCopy(p, #P_ZERO)
+    EndIf
+    ProcedureReturn #FPS_V
+  EndIf
+  If ex <= 0
+    If FpNoTrap(#FEC_UNFLO)
+      FpCopy(p, #P_ZERO)
+    EndIf
+  EndIf
+  ProcedureReturn 0
+EndProcedure
+
+Procedure.i FpRound(p.i)                      ; roundfp11: to F, in place
+  Define oh.i, ol.i
+  oh = PH(p) : ol = PL(p)
+  FpCopy(#P_T, p)
+  FpAdd(#P_T, #P_RND)
+  If (PH(#P_T) ! oh) & #FP_SIGN
+    PH(#P_T) = PH(#P_T) ! #FP_SIGN
+    If FpNoTrap(#FEC_OVFLO)
+      FpCopy(p, #P_ZERO)
+    Else
+      FpCopy(p, #P_T)
+    EndIf
+    ProcedureReturn #FPS_V
+  EndIf
+  FpCopy(p, #P_T)
+  ProcedureReturn 0
+EndProcedure
+
+; Big normalize (only for fractions that may have lost many bits), then one at a time
+ProcedureRAM.i FpNormalize(f.i, ex.i, big.i)
+  If big
+    If (PH(f) & ($00FFFFFF << #FP_GUARD)) = 0
+      FpLsh(f, f, 24) : ex = ex - 24
+    EndIf
+    If (PH(f) & ($00FFF000 << #FP_GUARD)) = 0
+      FpLsh(f, f, 12) : ex = ex - 12
+    EndIf
+    If (PH(f) & ($00FC0000 << #FP_GUARD)) = 0
+      FpLsh(f, f, 6) : ex = ex - 6
+    EndIf
+  EndIf
+  While ((PH(f) >> (23 + #FP_GUARD)) & 1) = 0
+    FpLsh1(f) : ex = ex - 1
+  Wend
+  ProcedureReturn ex
+EndProcedure
+
+; ---- the arithmetic (results in #P_FAC) ----------------------------------
+ProcedureRAM.i FpAddOp()                         ; addfp11(fac, fsrc)
+  Define fe.i, se.i, ed.i, hf.i, hs.i
+  hf = PH(#P_FAC) & ~#FP_SIGN : hs = PH(#P_SRC) & ~#FP_SIGN
+  If ULt(hf, hs) Or (hf = hs And ULt(PL(#P_FAC), PL(#P_SRC)))   ; |fac| < |fsrc|: swap
+    FpCopy(#P_T, #P_FAC) : FpCopy(#P_FAC, #P_SRC) : FpCopy(#P_SRC, #P_T)
+  EndIf
+  fe = FpExpOf(PH(#P_FAC))
+  se = FpExpOf(PH(#P_SRC))
+  If fe = 0
+    If se
+      FpCopy(#P_FAC, #P_SRC)
+    Else
+      FpCopy(#P_FAC, #P_ZERO)
+    EndIf
+    ProcedureReturn 0
+  EndIf
+  If se = 0
+    ProcedureReturn 0
+  EndIf
+  ed = fe - se
+  If ed >= 60
+    ProcedureReturn 0
+  EndIf
+  FpGetFrac(#P_FF, #P_FAC)
+  FpGetFrac(#P_SF, #P_SRC)
+  FpLsh(#P_FF, #P_FF, #FP_GUARD)
+  FpLsh(#P_SF, #P_SF, #FP_GUARD)
+  If (PH(#P_FAC) ! PH(#P_SRC)) & #FP_SIGN    ; signs differ: subtract
+    If ed
+      FpRsh(#P_SF, #P_SF, ed)
+    EndIf
+    FpSub(#P_FF, #P_SF)
+    If (PH(#P_FF) | PL(#P_FF)) = 0
+      FpCopy(#P_FAC, #P_ZERO)
+      ProcedureReturn 0
+    EndIf
+    fe = FpNormalize(#P_FF, fe, Bool(ed <= 1))
+  Else
+    If ed
+      FpRsh(#P_SF, #P_SF, ed)
+    EndIf
+    FpAdd(#P_FF, #P_SF)
+    If (PH(#P_FF) >> (23 + #FP_GUARD + 1)) & 1
+      FpRsh1(#P_FF) : fe = fe + 1
+    EndIf
+  EndIf
+  ProcedureReturn FpRoundPack(#P_FAC, fe, #P_FF, 1)
+EndProcedure
+
+; frac_mulfp11: #P_FF = the top 64 bits of #P_FF * (#P_SF guarded), shift and add.
+; Each step adds before it shifts, so no bit is lost to the truncation and the
+; result is exactly floor(ff * (sf << 3) / 2^56) - checked against this loop on
+; 200,000 random pairs (tools/fp11_model.py's frac_mul), and the identity
+; FpFracMulAsm computes.
+Procedure FpFracMulRef()
+  Define i.i
+  FpCopy(#P_M, #P_FF)                         ; mpy
+  FpLsh(#P_Q, #P_SF, #FP_GUARD)               ; mpc
+  PH(#P_R) = 0 : PL(#P_R) = 0
+  If (PL(#P_M) | PL(#P_Q)) = 0                ; 24 x 24
+    For i = 0 To 23
+      If PH(#P_M) & 1
+        PH(#P_R) = PH(#P_R) + PH(#P_Q)
+      EndIf
+      FpRsh1(#P_R)
+      PH(#P_M) = (PH(#P_M) >> 1) & $7FFFFFFF
+    Next
+  Else
+    If PL(#P_M) <> 0
+      For i = 0 To 31
+        If PL(#P_M) & 1
+          FpAdd(#P_R, #P_Q)
+        EndIf
+        FpRsh1(#P_R)
+        PL(#P_M) = (PL(#P_M) >> 1) & $7FFFFFFF
+      Next
+    EndIf
+    For i = 0 To 23
+      If PH(#P_M) & 1
+        FpAdd(#P_R, #P_Q)
+      EndIf
+      FpRsh1(#P_R)
+      PH(#P_M) = (PH(#P_M) >> 1) & $7FFFFFFF
+    Next
+  EndIf
+  FpCopy(#P_FF, #P_R)
+EndProcedure
+
+; ---- THE ASSEMBLY --------------------------------------------------------
+; The pairs are reached at fixed offsets: PH(n) and PL(n) are words, #P_FF = 3
+; (byte 12), #P_SF = 4 (16), #P_Q = 5 (20). Free here: r0-r3, r12, and r5 r6
+; saved (r4 is FlagNZ, r7 the frame, r8-r11 the reserved registers).
+;
+; The multiply: a = ff (56 bits, its hidden bit at 55), b = sf << 3 (59 bits);
+; the product's bits 56-119 are the result. Schoolbook on 32-bit halves, the
+; three UMAALs carrying into the next word (each is Rn*Rm + RdLo + RdHi, which
+; cannot overflow 64 bits): p1:p0 = al*bl, p2:p1 += al*bh, p3:p1 += ah*bl,
+; p3:p2 += ah*bh. 24 x 24 (both low words 0) needs nothing different.
+ProcedureRAM FpFracMulAsm()
+  ASM
+    push {r5, r6}
+    ldr r6, =global_pl
+    ldr r0, [r6, #12]
+    ldr r2, [r6, #16]
+    ldr r6, =global_ph
+    ldr r1, [r6, #12]
+    ldr r3, [r6, #16]
+    lsls r3, r3, #3
+    orr.w r3, r3, r2, lsr #29
+    lsls r2, r2, #3
+    umull r12, r5, r0, r2
+    movs r6, #0
+    umaal r5, r6, r0, r3
+    movs r0, #0
+    umaal r5, r0, r1, r2
+    umaal r6, r0, r1, r3
+    lsls r1, r0, #8
+    orr.w r1, r1, r6, lsr #24
+    lsls r2, r6, #8
+    orr.w r2, r2, r5, lsr #24
+    ldr r3, =global_ph
+    str r1, [r3, #12]
+    ldr r3, =global_pl
+    str r2, [r3, #12]
+    pop {r5, r6}
+  EndASM
+EndProcedure
+
+ProcedureRAM FpFracMul()
+CompilerIf #ASM_FP = 1
+  FpFracMulAsm()
+CompilerElse
+  FpFracMulRef()
+CompilerEndIf
+EndProcedure
+
+; divfp11's quotient: #P_Q from #P_FF / #P_SF (both guarded, ff < 2 sf), FqCount
+; bits, into the low word for D (FqQd) and the high word for F - simh's loop.
+; Its early way out (the remainder gone to 0) only saves the zero bits the
+; final shift puts back, so the quotient is floor(ff * 2^(count-1) / sf)
+; (tools/fp11_model.py checks the identity on 100,000 pairs) and the assembly
+; runs all count steps.
+Global FqCount.i, FqQd.i
+Procedure FpDivQRef()
+  Define i.i
+  PH(#P_Q) = 0 : PL(#P_Q) = 0
+  i = FqCount
+  While i > 0 And (PH(#P_FF) | PL(#P_FF)) <> 0
+    FpLsh1(#P_Q)
+    If FpLt(#P_FF, #P_SF) = 0
+      FpSub(#P_FF, #P_SF)
+      If FqQd
+        PL(#P_Q) = PL(#P_Q) | 1
+      Else
+        PH(#P_Q) = PH(#P_Q) | 1
+      EndIf
+    EndIf
+    FpLsh1(#P_FF)
+    i = i - 1
+  Wend
+  If i > 0
+    FpLsh(#P_Q, #P_Q, i)
+  EndIf
+EndProcedure
+
+; The restoring division in registers: ff in r0:r1, sf in r2:r3, the quotient
+; in r5:r6, the count in r12. Each step subtracts; a borrow adds sf back and
+; shifts in a 0, no borrow shifts in a 1; then ff doubles (ff < 2^61 - no
+; overflow). The quotient builds in r5:r6 either way: F's 27 bits end in r6
+; and move to the high word.
+ProcedureRAM FpDivQAsm()
+  ASM
+    push {r5, r6}
+    ldr r6, =global_ph
+    ldr r0, [r6, #12]
+    ldr r2, [r6, #16]
+    ldr r6, =global_pl
+    ldr r1, [r6, #12]
+    ldr r3, [r6, #16]
+    ldr r6, =global_fqcount
+    ldr r5, [r6]
+    mov r12, r5
+    movs r5, #0
+    movs r6, #0
+__fdq_loop:
+    subs.w r1, r1, r3
+    sbcs.w r0, r0, r2
+    bcc __fdq_back
+    adds.w r6, r6, r6
+    adc.w r5, r5, r5
+    orr.w r6, r6, #1
+    b __fdq_next
+__fdq_back:
+    adds.w r1, r1, r3
+    adc.w r0, r0, r2
+    adds.w r6, r6, r6
+    adc.w r5, r5, r5
+__fdq_next:
+    adds.w r1, r1, r1
+    adc.w r0, r0, r0
+    subs.w r12, r12, #1
+    bne __fdq_loop
+    ldr r0, =global_fqqd
+    ldr r0, [r0]
+    cmp r0, #0
+    bne __fdq_d
+    movs r5, r6
+    movs r6, #0
+__fdq_d:
+    ldr r0, =global_ph
+    str r5, [r0, #20]
+    ldr r0, =global_pl
+    str r6, [r0, #20]
+    pop {r5, r6}
+  EndASM
+EndProcedure
+
+ProcedureRAM FpDivQ()
+CompilerIf #ASM_FP = 1
+  FpDivQAsm()
+CompilerElse
+  FpDivQRef()
+CompilerEndIf
+EndProcedure
+
+ProcedureRAM.i FpMulOp()                         ; mulfp11
+  Define fe.i, se.i
+  fe = FpExpOf(PH(#P_FAC))
+  se = FpExpOf(PH(#P_SRC))
+  If fe = 0 Or se = 0
+    FpCopy(#P_FAC, #P_ZERO)
+    ProcedureReturn 0
+  EndIf
+  FpGetFrac(#P_FF, #P_FAC)
+  FpGetFrac(#P_SF, #P_SRC)
+  fe = fe + se - #FP_BIAS
+  PH(#P_FAC) = PH(#P_FAC) ! PH(#P_SRC)
+  FpFracMul()
+  If ((PH(#P_FF) >> (23 + #FP_GUARD)) & 1) = 0
+    FpLsh1(#P_FF) : fe = fe - 1
+  EndIf
+  ProcedureReturn FpRoundPack(#P_FAC, fe, #P_FF, 1)
+EndProcedure
+
+Procedure.i FpModOp()                         ; modfp11: integer to #P_FAC, fraction to #P_MOD
+  Define fe.i, se.i, v.i
+  fe = FpExpOf(PH(#P_FAC))
+  se = FpExpOf(PH(#P_SRC))
+  If fe = 0 Or se = 0
+    FpCopy(#P_MOD, #P_ZERO)
+    FpCopy(#P_FAC, #P_ZERO)
+    ProcedureReturn 0
+  EndIf
+  FpGetFrac(#P_FF, #P_FAC)
+  FpGetFrac(#P_SF, #P_SRC)
+  fe = fe + se - #FP_BIAS
+  PH(#P_FAC) = PH(#P_FAC) ! PH(#P_SRC)
+  PH(#P_MOD) = PH(#P_FAC)
+  FpFracMul()
+  If ((PH(#P_FF) >> (23 + #FP_GUARD)) & 1) = 0
+    FpLsh1(#P_FF) : fe = fe - 1
+  EndIf
+  If fe <= #FP_BIAS                           ; all fraction
+    FpCopy(#P_FAC, #P_ZERO)
+    ProcedureReturn FpRoundPack(#P_MOD, fe, #P_FF, 1)
+  EndIf
+  If Fps & #FPS_D
+    v = #FP_BIAS + 56
+  Else
+    v = #FP_BIAS + 24
+  EndIf
+  If fe > v                                   ; all integer
+    FpCopy(#P_MOD, #P_ZERO)
+    ProcedureReturn FpRoundPack(#P_FAC, fe, #P_FF, 0)
+  EndIf
+  FpRsh(#P_M, #P_FMK, fe - #FP_BIAS)          ; the fraction mask
+  PL(#P_SF) = PL(#P_FF) & PL(#P_M)
+  PH(#P_SF) = PH(#P_FF) & PH(#P_M)
+  If (PH(#P_SF) | PL(#P_SF)) = 0
+    FpCopy(#P_MOD, #P_ZERO)
+  Else
+    FpLsh(#P_SF, #P_SF, fe - #FP_BIAS)
+    se = FpNormalize(#P_SF, #FP_BIAS, 1)
+    FpRoundPack(#P_MOD, se, #P_SF, 1)
+  EndIf
+  PL(#P_FF) = PL(#P_FF) & ~PL(#P_M)
+  PH(#P_FF) = PH(#P_FF) & ~PH(#P_M)
+  ProcedureReturn FpRoundPack(#P_FAC, fe, #P_FF, 0)
+EndProcedure
+
+ProcedureRAM.i FpDivOp()                         ; divfp11 (the caller has refused a zero divisor)
+  Define fe.i, se.i
+  se = FpExpOf(PH(#P_SRC))
+  fe = FpExpOf(PH(#P_FAC))
+  If fe = 0
+    FpCopy(#P_FAC, #P_ZERO)
+    ProcedureReturn 0
+  EndIf
+  FpGetFrac(#P_FF, #P_FAC)
+  FpGetFrac(#P_SF, #P_SRC)
+  FpLsh(#P_FF, #P_FF, #FP_GUARD)
+  FpLsh(#P_SF, #P_SF, #FP_GUARD)
+  fe = fe - se + #FP_BIAS + 1
+  PH(#P_FAC) = PH(#P_FAC) ! PH(#P_SRC)
+  FqQd = Fps & #FPS_D
+  If FqQd
+    FqCount = 23 + #FP_GUARD + 33
+  Else
+    FqCount = 23 + #FP_GUARD + 1
+  EndIf
+  FpDivQ()
+  If ((PH(#P_Q) >> (23 + #FP_GUARD)) & 1) = 0
+    FpLsh1(#P_Q) : fe = fe - 1
+  EndIf
+  ProcedureReturn FpRoundPack(#P_FAC, fe, #P_Q, 1)
+EndProcedure
+
+; ---- operands ------------------------------------------------------------
+; The space of a specifier through R7 is I, otherwise D (cpu.pico2, THE PC'S SPACE).
+; Mapped, a word goes through the page's fast window when it is in one (the
+; inline MMReadWordE / MMWriteWordE the CPU's own loads and stores use) and
+; through MmuReadWord / MmuWriteWord - the checks, the aborts, the first
+; write's W bit - when it is not. (Before the windows, these two were a
+; quarter of the time givens spent, 2026-10-21.)
+Global FrwA.i, FrwV.i                          ; Globals: MmuReadWord can reach FlagNZ (PM1126)
+Global FrwE.i, FrwFast.i                       ; FpReadF / FpWriteF: the window entry, and whether it held
+ProcedureRAM.i FpRdW(va.i, sp.i)                 ; a word of memory, through the MMU when it is on
+  FrwA = va & $FFFF
+  If MmuOn
+    If sp
+      MMReadWordE(FrwV, FrwA, CurI)
+    Else
+      MMReadWordE(FrwV, FrwA, CurD)
+    EndIf
+    ProcedureReturn FrwV
+  EndIf
+  ProcedureReturn ReadWord(FrwA)
+EndProcedure
+
+ProcedureRAM FpWrW(va.i, sp.i, v.i)
+  FrwA = va & $FFFF
+  FrwV = v & $FFFF
+  If MmuOn
+    If sp
+      MMWriteWordE(FrwA, FrwV, CurI)
+    Else
+      MMWriteWordE(FrwA, FrwV, CurD)
+    EndIf
+  Else
+    WriteWord(FrwA, FrwV)
+  EndIf
+EndProcedure
+
+; The yellow stack limit for an FP specifier's -(SP): the address the
+; instruction will use, kernel mode only (simh set_stack_trap).
+Procedure FpStackCheck(adr.i)
+  If adr < #STACK_LIMIT
+    If (PswHigh & $C000) = 0
+      StackYellow = 1
+      CpuErr = CpuErr | #CPUE_YELLOW
+      If TrapVector = 0
+        TrapVector = #TRAP_STACK
+      EndIf
+    EndIf
+  EndIf
+EndProcedure
+
+ProcedureRAM FpRegChange(n.i, r.i)               ; fp_reg_change, the J-11's way
+  If r = 7
+    Reg(7) = (Reg(7) + n) & $FFFF
+  Else
+    FpChgReg = r : FpChgVal = n : FpChgOn = 1
+  EndIf
+EndProcedure
+
+; GeteaFW / GeteaFP: the operand's address into FpAdr and FpSpace. len 2 is
+; the word form. Mode 0 never comes here for an integer; for a floating
+; operand it names an accumulator and AC6/AC7 are an illegal-op exception.
+ProcedureRAM FpEa(spec.i, ln.i)
+  FeR = spec & 7
+  FeSp = Bool(FeR = 7)
+  Select (spec >> 3) & 7
+    Case 0
+      If FeR >= 6
+        FpNoTrap(#FEC_OP)
+        FpQuit = 1
+      EndIf
+      FpAdr = 0 : FpSpace = 0
+    Case 1
+      FpAdr = Reg(FeR) : FpSpace = FeSp
+    Case 2
+      FeAdr = Reg(FeR)
+      If FeR = 7
+        ln = 2
+      EndIf
+      FpRegChange(ln, FeR)
+      FpAdr = FeAdr : FpSpace = FeSp
+    Case 3
+      FeAdr = Reg(FeR)
+      FpRegChange(2, FeR)
+      FpAdr = FpRdW(FeAdr, FeSp) : FpSpace = 0
+    Case 4
+      FeAdr = (Reg(FeR) - ln) & $FFFF
+      FpRegChange(0 - ln, FeR)
+      If FeR = 6
+        FpStackCheck(FeAdr)
+      EndIf
+      FpAdr = FeAdr : FpSpace = FeSp
+    Case 5
+      FeAdr = (Reg(FeR) - 2) & $FFFF
+      FpRegChange(-2, FeR)
+      If FeR = 6
+        FpStackCheck(FeAdr - 2)
+      EndIf
+      FpAdr = FpRdW(FeAdr, FeSp) : FpSpace = 0
+    Case 6
+      FeAdr = FpRdW(Reg(7), 1)
+      Reg(7) = (Reg(7) + 2) & $FFFF
+      FpAdr = (Reg(FeR) + FeAdr) & $FFFF : FpSpace = 0
+    Case 7
+      FeAdr = FpRdW(Reg(7), 1)
+      Reg(7) = (Reg(7) + 2) & $FFFF
+      FpAdr = FpRdW((Reg(FeR) + FeAdr) & $FFFF, 0) : FpSpace = 0
+  EndSelect
+  If TrapVector = #VEC_BUS Or TrapVector = #VEC_MMU
+    FpQuit = 1                                ; the address could not be read: the instruction stops
+  EndIf
+EndProcedure
+
+; ReadFP into pair p (1 = read; 0 = the instruction is NOP'd)
+ProcedureRAM.i FpReadF(p.i, spec.i, ln.i)
+  If spec <= 7
+    PH(p) = FrH(spec)
+    If ln = #FP_QUAD
+      PL(p) = FrL(spec)
+    Else
+      PL(p) = 0
+    EndIf
+  ElseIf spec = $17                           ; 027, immediate: one word
+    PH(p) = FpRdW(FpAdr, FpSpace) << 16
+    PL(p) = 0
+  Else
+    FrwFast = 0
+    If MmuOn And (FpAdr & 1) = 0              ; the whole operand in one window: plain loads
+      If FpSpace
+        FrwE = CurI + (FpAdr >> 13)
+      Else
+        FrwE = CurD + (FpAdr >> 13)
+      EndIf
+      If FpAdr >= MapRLo(FrwE) And FpAdr + ln - 2 < MapRHi(FrwE)
+        FrwFast = 1
+        FrwA = FpAdr + MapHost(FrwE)
+        PH(p) = (PeekU(FrwA) << 16) | PeekU(FrwA + 2)
+        If ln = #FP_QUAD
+          PL(p) = (PeekU(FrwA + 4) << 16) | PeekU(FrwA + 6)
+        Else
+          PL(p) = 0
+        EndIf
+      EndIf
+    EndIf
+    If FrwFast = 0                            ; else word by word (a page edge, the I/O page, unmapped)
+      PH(p) = (FpRdW(FpAdr, FpSpace) << 16) | (FpRdW(FpAdr + 2, FpSpace) & $FFFF)
+      If ln = #FP_QUAD
+        PL(p) = (FpRdW(FpAdr + 4, FpSpace) << 16) | (FpRdW(FpAdr + 6, FpSpace) & $FFFF)
+      Else
+        PL(p) = 0
+      EndIf
+    EndIf
+  EndIf
+  If TrapVector = #VEC_BUS Or TrapVector = #VEC_MMU
+    FpQuit = 1
+    ProcedureReturn 0
+  EndIf
+  If (PH(p) & #FP_SIGN) <> 0 And FpExpOf(PH(p)) = 0
+    If FpNoTrap(#FEC_UNDFV) = 0
+      ProcedureReturn 0
+    EndIf
+  EndIf
+  ProcedureReturn 1
+EndProcedure
+
+ProcedureRAM FpWriteF(p.i, spec.i, ln.i)        ; WriteFP from pair p
+  If FpQuit
+    ProcedureReturn
+  EndIf
+  If spec <= 7
+    FrH(spec) = PH(p)
+    If ln = #FP_QUAD
+      FrL(spec) = PL(p)
+    EndIf
+    ProcedureReturn
+  EndIf
+  If spec = $17
+    FpWrW(FpAdr, FpSpace, (PH(p) >> 16) & $FFFF)
+    ProcedureReturn
+  EndIf
+  If FpAdr & 1                                ; odd: the J-11 traps before writing
+    CpuErr = CpuErr | #CPUE_ODD
+    BusError()
+    FpQuit = 1
+    ProcedureReturn
+  EndIf
+  If MmuOn                                    ; the whole operand in one write window: plain stores
+    If FpSpace
+      FrwE = CurI + (FpAdr >> 13)
+    Else
+      FrwE = CurD + (FpAdr >> 13)
+    EndIf
+    If FpAdr >= MapWLo(FrwE) And FpAdr + ln - 2 < MapWHi(FrwE)
+      FrwA = FpAdr + MapHost(FrwE)
+      PokeU(FrwA, (PH(p) >> 16) & $FFFF)
+      PokeU(FrwA + 2, PH(p) & $FFFF)
+      If ln = #FP_QUAD
+        PokeU(FrwA + 4, (PL(p) >> 16) & $FFFF)
+        PokeU(FrwA + 6, PL(p) & $FFFF)
+      EndIf
+      ProcedureReturn
+    EndIf
+  EndIf
+  FpWrW(FpAdr, FpSpace, (PH(p) >> 16) & $FFFF)
+  FpWrW(FpAdr + 2, FpSpace, PH(p) & $FFFF)
+  If ln = #FP_QUAD
+    FpWrW(FpAdr + 4, FpSpace, (PL(p) >> 16) & $FFFF)
+    FpWrW(FpAdr + 6, FpSpace, PL(p) & $FFFF)
+  EndIf
+  If TrapVector = #VEC_BUS Or TrapVector = #VEC_MMU
+    FpQuit = 1
+  EndIf
+EndProcedure
+
+Procedure.i FpReadI(spec.i, ln.i)             ; ReadI: the integer in the HIGH 16 or all 32 bits
+  If ln = 2 Or spec = $17
+    ProcedureReturn FpRdW(FpAdr, FpSpace) << 16
+  EndIf
+  ProcedureReturn (FpRdW(FpAdr, FpSpace) << 16) | (FpRdW(FpAdr + 2, FpSpace) & $FFFF)
+EndProcedure
+
+Procedure FpWriteI(v.i, spec.i, ln.i)
+  If FpQuit
+    ProcedureReturn
+  EndIf
+  If ln = 2 Or spec = $17
+    FpWrW(FpAdr, FpSpace, (v >> 16) & $FFFF)
+    ProcedureReturn
+  EndIf
+  If FpAdr & 1
+    CpuErr = CpuErr | #CPUE_ODD
+    BusError()
+    FpQuit = 1
+    ProcedureReturn
+  EndIf
+  FpWrW(FpAdr, FpSpace, (v >> 16) & $FFFF)
+  FpWrW(FpAdr + 2, FpSpace, v & $FFFF)
+EndProcedure
+
+ProcedureRAM FpLoadAc(p.i, ac.i, qd.i)          ; F_LOAD
+  PH(p) = FrH(ac)
+  If qd
+    PL(p) = FrL(ac)
+  Else
+    PL(p) = 0
+  EndIf
+EndProcedure
+
+ProcedureRAM FpStoreAc(ac.i, p.i, qd.i)         ; F_STORE
+  FrH(ac) = PH(p)
+  If qd
+    FrL(ac) = PL(p)
+  EndIf
+EndProcedure
+
+; The processor's condition codes from FxN FxZ FxV FxC (no parameters and no
+; locals: FlagNZ is in r4 - cpu.pico2 - and a procedure on the way to it may
+; keep nothing of its own there).
+ProcedureRAM FpCpuCc()
+  SetNZ(FxN, FxZ)
+  FlagV = FxV << 15
+  FlagC = FxC << 16
+EndProcedure
+
+; ---- the instruction -----------------------------------------------------
+; Op is the instruction, Reg(7) the PC after it (the handler synced it).
+Procedure FpExec()
+  If FpReady = 0
+    FpInit()
+  EndIf
+  FpBackupPc = Reg(7)
+  FpChgOn = 0
+  FpQuit = 0
+  FxAc = (Op >> 6) & 3
+  FxDs = Op & $3F
+  FxQd = Fps & #FPS_D
+  If FxQd
+    FxLenf = #FP_QUAD
+  Else
+    FxLenf = #FP_LONG
+  EndIf
+  Select (Op >> 8) & $F
+    Case 0
+      Select FxAc
+        Case 0
+          If Op = $F000                       ; CFCC
+            FxN = (Fps >> 3) & 1 : FxZ = (Fps >> 2) & 1 : FxV = (Fps >> 1) & 1 : FxC = Fps & 1
+            FpCpuCc()
+          ElseIf Op = $F001                   ; SETF
+            Fps = Fps & ~#FPS_D
+          ElseIf Op = $F002                   ; SETI
+            Fps = Fps & ~#FPS_L
+          ElseIf Op = $F009                   ; SETD
+            Fps = Fps | #FPS_D
+          ElseIf Op = $F00A                   ; SETL
+            Fps = Fps | #FPS_L
+          Else
+            FpNoTrap(#FEC_OP)
+          EndIf
+        Case 1                                ; LDFPS
+          If FxDs <= 7
+            FxDst = Reg(FxDs)
+          Else
+            FpEa(FxDs, 2)
+            FxDst = FpRdW(FpAdr, FpSpace)
+          EndIf
+          If FpQuit = 0
+            Fps = FxDst & #FPS_RW
+          EndIf
+        Case 2                                ; STFPS
+          Fps = Fps & #FPS_RW
+          If FxDs <= 7
+            Reg(FxDs) = Fps
+          Else
+            FpEa(FxDs, 2)
+            If FpQuit = 0
+              FpWrW(FpAdr, FpSpace, Fps)
+            EndIf
+          EndIf
+        Case 3                                ; STST
+          If FxDs <= 7
+            Reg(FxDs) = Fec
+          Else
+            FpEa(FxDs, #FP_LONG)
+            FpWriteI((Fec << 16) | Fea, FxDs, #FP_LONG)
+          EndIf
+      EndSelect
+    Case 1
+      Select FxAc
+        Case 0                                ; CLRf
+          FpEa(FxDs, FxLenf)
+          FpWriteF(#P_ZERO, FxDs, FxLenf)
+          If FpQuit = 0
+            Fps = (Fps & ~#FPS_CC) | #FPS_Z
+          EndIf
+        Case 1                                ; TSTf
+          FpEa(FxDs, FxLenf)
+          If FpQuit = 0 And FpReadF(#P_SRC, FxDs, FxLenf)
+            Fps = FpSetCc(Fps, PH(#P_SRC), 0)
+          EndIf
+        Default                               ; 2 ABSf, 3 NEGf
+          FpEa(FxDs, FxLenf)
+          If FpQuit = 0 And FpReadF(#P_SRC, FxDs, FxLenf)
+            If FpExpOf(PH(#P_SRC)) = 0
+              FpCopy(#P_SRC, #P_ZERO)
+            ElseIf FxAc = 2
+              PH(#P_SRC) = PH(#P_SRC) & ~#FP_SIGN
+            Else
+              PH(#P_SRC) = PH(#P_SRC) ! #FP_SIGN
+            EndIf
+            FpWriteF(#P_SRC, FxDs, FxLenf)
+            If FpQuit = 0
+              Fps = FpSetCc(Fps, PH(#P_SRC), 0)
+            EndIf
+          EndIf
+      EndSelect
+    Case 5                                    ; LDf
+      FpEa(FxDs, FxLenf)
+      If FpQuit = 0 And FpReadF(#P_SRC, FxDs, FxLenf)
+        FpStoreAc(FxAc, #P_SRC, FxQd)
+        Fps = FpSetCc(Fps, PH(#P_SRC), 0)
+      EndIf
+    Case 8                                    ; STf
+      FpLoadAc(#P_FAC, FxAc, FxQd)
+      FpEa(FxDs, FxLenf)
+      FpWriteF(#P_FAC, FxDs, FxLenf)
+    Case $F                                   ; LDCff'
+      FpEa(FxDs, 12 - FxLenf)
+      If FpQuit = 0 And FpReadF(#P_SRC, FxDs, 12 - FxLenf)
+        If FpExpOf(PH(#P_SRC)) = 0
+          FpCopy(#P_SRC, #P_ZERO)
+        EndIf
+        FxNewv = 0
+        If (Fps & (#FPS_D | #FPS_T)) = 0
+          FxNewv = FpRound(#P_SRC)
+        EndIf
+        FpStoreAc(FxAc, #P_SRC, FxQd)
+        Fps = FpSetCc(Fps, PH(#P_SRC), FxNewv)
+      EndIf
+    Case $C                                   ; STCff'
+      FpLoadAc(#P_FAC, FxAc, FxQd)
+      If FpExpOf(PH(#P_FAC)) = 0
+        FpCopy(#P_FAC, #P_ZERO)
+      EndIf
+      FxNewv = 0
+      If (Fps & (#FPS_D | #FPS_T)) = #FPS_D
+        FxNewv = FpRound(#P_FAC)
+      EndIf
+      FpEa(FxDs, 12 - FxLenf)
+      FpWriteF(#P_FAC, FxDs, 12 - FxLenf)
+      If FpQuit = 0
+        Fps = FpSetCc(Fps, PH(#P_FAC), FxNewv)
+      EndIf
+    Case 7                                    ; CMPf
+      FpEa(FxDs, FxLenf)
+      If FpQuit = 0 And FpReadF(#P_SRC, FxDs, FxLenf)
+        FpLoadAc(#P_FAC, FxAc, FxQd)
+        If FpExpOf(PH(#P_SRC)) = 0
+          FpCopy(#P_SRC, #P_ZERO)
+        EndIf
+        If FpExpOf(PH(#P_FAC)) = 0
+          FpCopy(#P_FAC, #P_ZERO)
+        EndIf
+        If PH(#P_SRC) = PH(#P_FAC) And PL(#P_SRC) = PL(#P_FAC)
+          Fps = (Fps & ~#FPS_CC) | #FPS_Z
+          If (PH(#P_SRC) | PL(#P_SRC)) = 0
+            FpStoreAc(FxAc, #P_ZERO, FxQd)
+          EndIf
+        Else
+          Fps = (Fps & ~#FPS_CC) | ((PH(#P_SRC) >> 28) & #FPS_N)
+          If ((PH(#P_SRC) ! PH(#P_FAC)) & #FP_SIGN) = 0 And PH(#P_FAC) <> 0 And FpLt(#P_SRC, #P_FAC)
+            Fps = Fps ! #FPS_N
+          EndIf
+        EndIf
+      EndIf
+    Case $D                                   ; LDEXP
+      If FxDs <= 7
+        FxDst = Reg(FxDs)
+      Else
+        FpEa(FxDs, 2)
+        FxDst = FpRdW(FpAdr, FpSpace)
+      EndIf
+      If FpQuit = 0
+        FpLoadAc(#P_FAC, FxAc, FxQd)
+        PH(#P_FAC) = (PH(#P_FAC) & ~#FP_EXP) | (((FxDst + #FP_BIAS) & $FF) << 23)
+        FxNewv = 0
+        If FxDst > $7F And FxDst <= $FF80         ; 0177 < dst <= 0177600
+          If FxDst < $8000
+            If FpNoTrap(#FEC_OVFLO)
+              FpCopy(#P_FAC, #P_ZERO)
+            EndIf
+            FxNewv = #FPS_V
+          Else
+            If FpNoTrap(#FEC_UNFLO)
+              FpCopy(#P_FAC, #P_ZERO)
+            EndIf
+          EndIf
+        EndIf
+        FpStoreAc(FxAc, #P_FAC, FxQd)
+        Fps = FpSetCc(Fps, PH(#P_FAC), FxNewv)
+      EndIf
+    Case $A                                   ; STEXP
+      FxDst = (FpExpOf(FrH(FxAc)) - #FP_BIAS) & $FFFF
+      FxN = (FxDst >> 15) & 1
+      FxZ = Bool(FxDst = 0) : FxV = 0 : FxC = 0
+      FpCpuCc()
+      Fps = (Fps & ~#FPS_CC) | (FxN << 3) | (Bool(FxDst = 0) << 2)
+      If FxDs <= 7
+        Reg(FxDs) = FxDst
+      Else
+        FpEa(FxDs, 2)
+        If FpQuit = 0
+          FpWrW(FpAdr, FpSpace, FxDst)
+        EndIf
+      EndIf
+    Case $E                                   ; LDCif
+      If Fps & #FPS_L
+        FxLeni = #FP_LONG
+      Else
+        FxLeni = 2
+      EndIf
+      If FxDs <= 7
+        PL(#P_FAC) = Reg(FxDs) << 16
+      Else
+        FpEa(FxDs, FxLeni)
+        PL(#P_FAC) = FpReadI(FxDs, FxLeni)
+      EndIf
+      If FpQuit = 0
+        PH(#P_FAC) = 0
+        If PL(#P_FAC)
+          FxSign = (PL(#P_FAC) >> 31) & 1
+          If FxSign
+            PL(#P_FAC) = (PL(#P_FAC) ! -1) + 1
+          EndIf
+          FxI = 0
+          While ((PL(#P_FAC) >> 31) & 1) = 0
+            PL(#P_FAC) = PL(#P_FAC) << 1
+            FxI = FxI + 1
+          Wend
+          If Fps & #FPS_L
+            FxEx = #FP_BIAS + 32 - FxI
+          Else
+            FxEx = #FP_BIAS + 16 - FxI
+          EndIf
+          PH(#P_FAC) = (FxSign << 31) | (FxEx << 23) | ((PL(#P_FAC) >> 8) & #FP_FRACH)
+          PL(#P_FAC) = PL(#P_FAC) << 24
+          If (Fps & (#FPS_D | #FPS_T)) = 0
+            FpRound(#P_FAC)
+          EndIf
+        EndIf
+        FpStoreAc(FxAc, #P_FAC, FxQd)
+        Fps = FpSetCc(Fps, PH(#P_FAC), 0)
+      EndIf
+    Case $B                                   ; STCfi
+      FxSign = (FrH(FxAc) >> 31) & 1
+      FxEx = FpExpOf(FrH(FxAc))
+      PH(#P_FAC) = (FrH(FxAc) & #FP_FRACH) | #FP_HB       ; F_LOAD_FRAC
+      If FxQd
+        PL(#P_FAC) = FrL(FxAc)
+      Else
+        PL(#P_FAC) = 0
+      EndIf
+      If Fps & #FPS_L
+        FxLeni = #FP_LONG : FxI = #FP_BIAS + 32
+      Else
+        FxLeni = 2 : FxI = #FP_BIAS + 16
+      EndIf
+      FxC = 0
+      If FxEx <= #FP_BIAS
+        FxDst = 0
+      ElseIf FxEx > FxI
+        FxDst = 0 : FxC = 1
+      Else
+        FpRsh(#P_SRC, #P_FAC, 23 + 1 + FxI - FxEx)
+        If FxLeni = 2
+          PL(#P_SRC) = PL(#P_SRC) & ~$FFFF
+        EndIf
+        ; i_limit[leni == LONG][sign]: word $80000000 / $80010000, long $80000000 / $80000001
+        If FxLeni = #FP_LONG
+          If FxSign
+            FxN = $80000001
+          Else
+            FxN = $80000000
+          EndIf
+        Else
+          If FxSign
+            FxN = $80010000
+          Else
+            FxN = $80000000
+          EndIf
+        EndIf
+        If ULt(PL(#P_SRC), FxN) = 0
+          FxDst = 0 : FxC = 1
+        Else
+          FxDst = PL(#P_SRC)
+          If FxSign
+            FxDst = 0 - FxDst
+          EndIf
+        EndIf
+      EndIf
+      FxN = (FxDst >> 31) & 1
+      FxZ = Bool(FxDst = 0) : FxV = 0
+      FpCpuCc()
+      If FxC
+        FpNoTrap(#FEC_ICVT)
+      EndIf
+      Fps = (Fps & ~#FPS_CC) | (FxN << 3) | (Bool(FxDst = 0) << 2) | FxC
+      If FxDs <= 7
+        Reg(FxDs) = (FxDst >> 16) & $FFFF
+      Else
+        FpEa(FxDs, FxLeni)
+        FpWriteI(FxDst, FxDs, FxLeni)
+      EndIf
+    Default                                   ; 2 MULf, 3 MODf, 4 ADDf, 6 SUBf, 9 DIVf (every other code has its Case)
+      FpEa(FxDs, FxLenf)
+      If FpQuit = 0 And FpReadF(#P_SRC, FxDs, FxLenf)
+        FpLoadAc(#P_FAC, FxAc, FxQd)
+        FxC = (Op >> 8) & $F
+        If FxC = 2
+          FxNewv = FpMulOp()
+          FpStoreAc(FxAc, #P_FAC, FxQd)
+          Fps = FpSetCc(Fps, PH(#P_FAC), FxNewv)
+        ElseIf FxC = 3
+          FxNewv = FpModOp()
+          FpStoreAc(FxAc | 1, #P_FAC, FxQd)
+          FpStoreAc(FxAc, #P_MOD, FxQd)
+          Fps = FpSetCc(Fps, PH(#P_MOD), FxNewv)
+        ElseIf FxC = 9
+          If FpExpOf(PH(#P_SRC)) = 0
+            FpNoTrap(#FEC_DZRO)
+          Else
+            FxNewv = FpDivOp()
+            FpStoreAc(FxAc, #P_FAC, FxQd)
+            Fps = FpSetCc(Fps, PH(#P_FAC), FxNewv)
+          EndIf
+        Else
+          If FxC = 6 And FpExpOf(PH(#P_SRC)) <> 0
+            PH(#P_SRC) = PH(#P_SRC) ! #FP_SIGN
+          EndIf
+          FxNewv = FpAddOp()
+          FpStoreAc(FxAc, #P_FAC, FxQd)
+          Fps = FpSetCc(Fps, PH(#P_FAC), FxNewv)
+        EndIf
+      EndIf
+  EndSelect
+  If FpChgOn And FpQuit = 0                    ; the specifier's register change, at the end
+    Reg(FpChgReg) = (Reg(FpChgReg) + FpChgVal) & $FFFF
+  EndIf
+EndProcedure
+

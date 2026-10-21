@@ -594,8 +594,9 @@ def asm_mov(sm, dm, ref):
 #  the 6-bit mode and register. Out: r0 = the address, with EaReg, EaBase,
 #  Tmp, Adr, the register and MMR1 left exactly as EaWordM leaves them.
 #  X(R), -(R), (R)+ and (R) are done here (96% of V6's mapped operands);
-#  anything else - the index word outside the I fast window or odd, -(R) on
-#  R7 or taking SP below 000400, the other modes - goes on to EaWordM itself
+#  anything else - the index word outside the I fast window or odd, -(R) or
+#  (R) on R7 (I space: cpu.pico2, THE PC'S SPACE) or -(R) taking SP below
+#  000400, the other modes - goes on to EaWordM itself
 #  with the spec, nothing changed that EaWordM does not set again, and lr
 #  still the handler's, so EaWordM returns straight to the handler. It
 #  clobbers r0-r3, r12 and lr only. asm_check.pico2 holds it to EaWordM.
@@ -691,6 +692,8 @@ __eaw_m2a:
 __eaw_m1:
     cmp r0, #1
     bne __eaw_slow
+    cmp r1, #7
+    beq __eaw_slow
     ldr r2, =global_tmp
     str r0, [r2]
     ldr r2, =global_reg

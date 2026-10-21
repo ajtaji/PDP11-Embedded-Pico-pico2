@@ -298,6 +298,8 @@ __eaw_m2a:
 __eaw_m1:
     cmp r0, #1
     bne __eaw_slow
+    cmp r1, #7
+    beq __eaw_slow
     ldr r2, =global_tmp
     str r0, [r2]
     ldr r2, =global_reg
@@ -2102,6 +2104,13 @@ InstructionCC_00024M:          ; 00024x-00027x   entries $0014-$0017
   ;disassembly("CC")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNativeM()
+
+CompilerIf #FP11 = 1
+InstructionFPM:                ; 17xxxx: the FPJ11 (pico2/fp11.pico2, FpExec; #FP11 is 0 on the Pico)
+  PcOutM()
+  FpExec()
+  NextSyncedM()
+CompilerEndIf
 
 InstructionReservedM:          ; every opcode this model does not execute
   PcOutM()
@@ -3912,7 +3921,9 @@ BuildTableM:
   OpsM($1A00, 512, ?InstructionBISB_15M)
   OpsM($1C00, 512, ?InstructionSUB_16M)
 
-  ; 17xxxx (floating point, $1E00-$1FFF) stays reserved until the FPJ11 is modelled.
+  CompilerIf #FP11 = 1
+  OpsM($1E00, 512, ?InstructionFPM)        ; 17xxxx: the FPJ11 (pico2/fp11.pico2; #FP11 is 0 on the Pico)
+  CompilerEndIf
   ; ---- register fast paths: overlay the general entries (Op >> 3 keeps
   ; the source register in bits 5-3 and both modes; R7 as the source stays
   ; general, R7 as the destination is sent back by the handler) ----

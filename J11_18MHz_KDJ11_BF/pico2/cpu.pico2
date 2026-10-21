@@ -271,6 +271,15 @@ Global Dim Fw.i(4)
 ; EaWordM's four commonest modes in assembly, called by the mapped handlers
 ; (tools/mmu_gen.py, ASM_EAW; held to EaWordM by asm_check.pico2). 0: they call EaWordM.
 #ASM_EA = 1
+; The FPJ11 floating point unit (fp11.pico2, included after this file): 1
+; executes 170000-177777; 0 leaves them reserved instructions (trap to 10).
+#FP11 = 1
+; Its fraction multiply and divide in assembly (fp11.pico2, FpFracMulAsm and
+; FpDivQAsm; held to FpFracMulRef and FpDivQRef by asm_check.pico2). 0: the Basic.
+#ASM_FP = 1
+Global Fps.i, Fec.i, Fea.i       ; its status, exception code and address (fp11.pico2)
+Global Dim FrH.i(6)              ; its six accumulators, high and low halves
+Global Dim FrL.i(6)
 ; Measured on a Pico 2 W, 2026-10-19 (V6 `time od /rkunix`, host-timed): 13.24 s
 ; before, 11.14 s with #ASM_MOV, 10.36 s with both; a Pico Plus 2 W 13.37 -> 10.44 s.
 Global MmuPcRec.i           ; the instruction MMR1 holds the changes of
@@ -965,7 +974,11 @@ ProcedureRAM.i IoRead(a.i)                  ; a is even and past the end of RAM
   ElseIf a = #CPUERR_ADDR                ; THE CPU ERROR AND MAINTENANCE REGISTERS
     ProcedureReturn CpuErr
   ElseIf a = #MAINT_ADDR
+    CompilerIf #FP11 = 1
+    ProcedureReturn #MAINT_FIXED | $0100 | MaintTrap   ; bit 8: the FPA is fitted
+    CompilerElse
     ProcedureReturn #MAINT_FIXED | MaintTrap
+    CompilerEndIf
   EndIf
   CpuErr = CpuErr | #CPUE_IO
   BusError()
@@ -1612,6 +1625,15 @@ EndMacro
 ; THE BODY IS A MACRO so that the same text is both EaWordM's slow path and,
 ; in asm_check.pico2 only, the plain procedure its assembly is held to
 ; (EaWordMRef there); a program that does not call EaWordMRef does not keep it.
+; THE PC'S SPACE. With I and D space separate, every reference made through
+; R7 by modes 1 to 5 is to I space - (PC), (PC)+ (an immediate), @(PC)+'s
+; pointer (an absolute address), -(PC), @-(PC)'s pointer - as are the index
+; words of modes 6 and 7; only the operands of X(PC) and @X(PC), and what an
+; absolute address points to, are in D space (simh pdp11_cpu.c: ds = (reg ==
+; 7) ? isenable : dsenable). Seventh Edition's kernel relies on it: its
+; optimizer turns a constant shared with an index word into BITB (PC),1(R3)
+; (swtch), and with (PC) read from D space V7 idled for ever after its first
+; disk read (2026-10-21).
 Macro EaWordMBody()
   EaReg = spec & 7
   EaBase = CurD
@@ -1628,6 +1650,8 @@ Macro EaWordMBody()
     MmrRecord(EaReg, -2)
     If EaReg = 6
       StackCheckFast()
+    ElseIf EaReg = 7
+      EaBase = CurI                      ; -(PC): I space (THE PC'S SPACE, below)
     EndIf
     ProcedureReturn Reg(EaReg)
   ElseIf Tmp = 2                             ; (R)+   #n when R = PC
@@ -1640,6 +1664,9 @@ Macro EaWordMBody()
     EndIf
     ProcedureReturn Tmp
   ElseIf Tmp = 1                                 ; (R)
+    If EaReg = 7
+      EaBase = CurI                      ; (PC): I space (THE PC'S SPACE, below)
+    EndIf
     ProcedureReturn Reg(EaReg)
   ElseIf Tmp = 3                             ; @(R)+  @#a when R = PC
     Adr = Reg(EaReg)
@@ -1658,7 +1685,11 @@ Macro EaWordMBody()
     If EaReg = 6
       StackCheckFast()
     EndIf
-    MMReadWordE(Tmp, Adr, CurD)
+    If EaReg = 7
+      MMReadWordE(Tmp, Adr, CurI)        ; @-(PC): the pointer from I space
+    Else
+      MMReadWordE(Tmp, Adr, CurD)
+    EndIf
     ProcedureReturn Tmp
   ElseIf Tmp = 7                             ; @X(R)  @a when R = PC
     Adr = Reg(7)
@@ -1704,6 +1735,8 @@ ProcedureRAM.i EaByteM(spec.i)
     MmrRecord(EaReg, 0 - EaStep)
     If EaReg = 6
       StackCheckFast()
+    ElseIf EaReg = 7
+      EaBase = CurI                      ; -(PC): I space
     EndIf
     ProcedureReturn Reg(EaReg)
   EndIf
@@ -2003,6 +2036,9 @@ ProcedureRAM CpuReset()
   Next
   CpuErr = 0                             ; the CPU error register and the halt/trap option
   MaintTrap = 0
+  Fps = 0                                ; the FPJ11: status, exception code and address
+  Fec = 0
+  Fea = 0
   Dl11TxRdy = 1
   PswSet($00E0)            ; kernel, priority 7
   TrapVector = 0

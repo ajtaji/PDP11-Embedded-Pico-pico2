@@ -79,6 +79,7 @@ XIncludeFile "RP2350/Lib/usb_serial.pico2"
 XIncludeFile "RP2350/Lib/safety.pico2"
 XIncludeFile "RP2350/Lib/multicore_smp.pico2"
 XIncludeFile "cpu.pico2"
+XIncludeFile "fp11.pico2"
 XIncludeFile "instructions_mmu.pico2"
 XIncludeFile "instructions.pico2"
 XIncludeFile "disk.pico2"
@@ -1018,6 +1019,36 @@ Procedure TypedCommand()
   Define c.i
   Define d.i
   Define sw.i
+  CompilerIf #PSRAM = 1
+  ; MEM n - the machine's memory in KB, from 56 up to all of it (#PS_MEM_TOP),
+  ; for the next BOOT and until the board restarts. A smaller machine is what
+  ; some systems need: Seventh Edition Unix counts memory in 64-byte clicks in
+  ; signed 16-bit words (its machdep.c, startup) and breaks at 2048 KB or more.
+  If TypedLen >= 5
+    If TypedLine(0) = 77 And TypedLine(1) = 69 And TypedLine(2) = 77 And TypedLine(3) = 32
+      d = 0
+      For i = 4 To TypedLen - 1
+        c = TypedLine(i)
+        If c >= 48 And c <= 57 And d < 100000
+          d = d * 10 + c - 48
+        ElseIf c <> 32
+          d = -1
+          Break
+        EndIf
+      Next
+      If PsramOk = 0
+        Say("MEM: no PSRAM in use, so the memory is 56 KB and cannot change") : Eol()
+      ElseIf d < 56 Or d * 1024 > #PS_MEM_TOP
+        Say("MEM: give the memory in KB, from 56 to ") : Num(#PS_MEM_TOP / 1024) : Eol()
+      Else
+        MemTop = d * 1024                ; read by core 0 at the next BOOT (CpuReset, MmuReset)
+        SmpBarrier()
+        Say("memory ") : Num(d) : Say(" KB from the next BOOT") : Eol()
+      EndIf
+      ProcedureReturn
+    EndIf
+  EndIf
+  CompilerEndIf
   ; BOOT RKn [octal]
   If TypedLen >= 8
     If TypedLine(0) = 66 And TypedLine(1) = 79 And TypedLine(2) = 79 And TypedLine(3) = 84 And TypedLine(4) = 32 And TypedLine(5) = 82 And TypedLine(6) = 75
@@ -1041,7 +1072,11 @@ Procedure TypedCommand()
     EndIf
   EndIf
   If TypedLen > 0
+    CompilerIf #PSRAM = 1
+    Say("? type BOOT RK0 (or BOOT RK0 173030 to set the switch register as well), or MEM n to give the machine n KB") : Eol()
+    CompilerElse
     Say("? type BOOT RK0 (or BOOT RK0 173030 to set the switch register as well)") : Eol()
+    CompilerEndIf
   EndIf
 EndProcedure
 

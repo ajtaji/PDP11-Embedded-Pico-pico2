@@ -47,6 +47,7 @@ XIncludeFile "RP2350/Lib/uart.pico2"
 XIncludeFile "RP2350/Lib/usb_serial.pico2"
 XIncludeFile "RP2350/Lib/safety.pico2"
 XIncludeFile "cpu.pico2"
+XIncludeFile "fp11.pico2"
 XIncludeFile "instructions_mmu.pico2"
 XIncludeFile "instructions.pico2"
 XIncludeFile "disk.pico2"
@@ -525,6 +526,91 @@ Procedure EaOne()
 EndProcedure
 
 
+; ---- the FPU's assembly (fp11.pico2) ----------------------------------------
+; FpFracMulAsm against FpFracMulRef, and FpDivQAsm against FpDivQRef, on the
+; same fractions: random ones (the hidden bit set, the low word 0 a third of
+; the time - the 24 x 24 case), and every pairing of the extremes (the
+; smallest fraction, the largest, and the two equal). Only the results are
+; the procedures' contract - #P_FF for the multiply, #P_Q for the quotient -
+; and the assembly must leave #P_SF as it found it.
+Global FpChecks.i, FpFailures.i, FpFirst.i
+Global Fa.i, Fb.i, Fc.i, Fd.i, Fr0.i, Fr1.i, Fk.i
+Global Dim EdgeH.i(3)
+Global Dim EdgeL.i(3)
+
+Procedure.i RndW()                      ; 32 random bits
+  ProcedureReturn (Rnd() << 1) ! Rnd()
+EndProcedure
+
+Procedure FpOneCase(ah.i, al.i, bh.i, bl.i, qd.i)
+  ; the multiply
+  PH(#P_FF) = ah : PL(#P_FF) = al : PH(#P_SF) = bh : PL(#P_SF) = bl
+  FpFracMulRef()
+  Fr0 = PH(#P_FF) : Fr1 = PL(#P_FF)
+  PH(#P_FF) = ah : PL(#P_FF) = al : PH(#P_SF) = bh : PL(#P_SF) = bl
+  FpFracMulAsm()
+  FpChecks = FpChecks + 1
+  If PH(#P_FF) <> Fr0 Or PL(#P_FF) <> Fr1 Or PH(#P_SF) <> bh Or PL(#P_SF) <> bl
+    FpFailures = FpFailures + 1
+    If FpFirst < 0
+      FpFirst = FpChecks
+      Say("FP FIRST FAIL mul a=") : Num(ah) : Ch(32) : Num(al) : Say(" b=") : Num(bh) : Ch(32) : Num(bl)
+      Say(" asm=") : Num(PH(#P_FF)) : Ch(32) : Num(PL(#P_FF)) : Say(" plain=") : Num(Fr0) : Ch(32) : Num(Fr1) : Eol()
+    EndIf
+  EndIf
+  ; the quotient, of the guarded fractions; F keeps only the high words
+  If qd = 0
+    al = 0 : bl = 0
+  EndIf
+  Fa = (ah << 3) | ((al >> 29) & 7) : Fb = al << 3
+  Fc = (bh << 3) | ((bl >> 29) & 7) : Fd = bl << 3
+  FqQd = qd
+  If qd
+    FqCount = 23 + #FP_GUARD + 33
+  Else
+    FqCount = 23 + #FP_GUARD + 1
+  EndIf
+  PH(#P_FF) = Fa : PL(#P_FF) = Fb : PH(#P_SF) = Fc : PL(#P_SF) = Fd
+  FpDivQRef()
+  Fr0 = PH(#P_Q) : Fr1 = PL(#P_Q)
+  PH(#P_FF) = Fa : PL(#P_FF) = Fb : PH(#P_SF) = Fc : PL(#P_SF) = Fd
+  PH(#P_Q) = RndW() : PL(#P_Q) = RndW()
+  FpDivQAsm()
+  FpChecks = FpChecks + 1
+  If PH(#P_Q) <> Fr0 Or PL(#P_Q) <> Fr1 Or PH(#P_SF) <> Fc Or PL(#P_SF) <> Fd
+    FpFailures = FpFailures + 1
+    If FpFirst < 0
+      FpFirst = FpChecks
+      Say("FP FIRST FAIL div qd=") : Num(qd) : Say(" ff=") : Num(Fa) : Ch(32) : Num(Fb) : Say(" sf=") : Num(Fc) : Ch(32) : Num(Fd)
+      Say(" asm=") : Num(PH(#P_Q)) : Ch(32) : Num(PL(#P_Q)) : Say(" plain=") : Num(Fr0) : Ch(32) : Num(Fr1) : Eol()
+    EndIf
+  EndIf
+EndProcedure
+
+Procedure FpOne()
+  Define ah.i, al.i, bh.i, bl.i
+  ah = (RndW() & $7FFFFF) | $800000
+  bh = (RndW() & $7FFFFF) | $800000
+  al = RndW() : bl = RndW()
+  If RndN(3) = 0
+    al = 0 : bl = 0
+  EndIf
+  FpOneCase(ah, al, bh, bl, RndN(2))
+EndProcedure
+
+Procedure FpEdges()
+  Define i.i, j.i
+  EdgeH(0) = $800000 : EdgeL(0) = 0            ; 0.5, the smallest
+  EdgeH(1) = $FFFFFF : EdgeL(1) = -1           ; the largest
+  EdgeH(2) = $800000 : EdgeL(2) = 1
+  For i = 0 To 2
+    For j = 0 To 2
+      FpOneCase(EdgeH(i), EdgeL(i), EdgeH(j), EdgeL(j), 0)
+      FpOneCase(EdgeH(i), EdgeL(i), EdgeH(j), EdgeL(j), 1)
+    Next
+  Next
+EndProcedure
+
 Procedure Main()
   SafetyBoot()
   ClockInitKhz(#CLOCK_KHZ)
@@ -551,6 +637,8 @@ Procedure Main()
   Next
   FirstBad = -1
   EaFirst = -1
+  FpFirst = -1
+  FpInit()
   Say("ASMCHECK start: the mapped loop's MOV handlers and __eaw, assembly against plain") : Eol()
   Repeat
     Mt0 = Micros()
@@ -579,6 +667,20 @@ Procedure Main()
       Say(" PASS")
     Else
       Say(" FAIL first=") : Num(EaFirst) : Say(" spec=") : Oct(EaFirstSpec) : Say(" field=") : Num(EaFirstField)
+    EndIf
+    Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
+    Mt0 = Micros()
+    FpEdges()
+    For Mr = 1 To #ROUND * 5
+      FpOne()
+      UsbSerialTask()
+      SafetyPet()
+    Next
+    Say("ASMCHECK fp checks=") : Num(FpChecks) : Say(" failures=") : Num(FpFailures)
+    If FpFailures = 0
+      Say(" PASS")
+    Else
+      Say(" FAIL first=") : Num(FpFirst)
     EndIf
     Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
   ForEver

@@ -1879,6 +1879,13 @@ InstructionCC_00024:          ; 00024x-00027x   entries $0014-$0017
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+CompilerIf #FP11 = 1
+InstructionFP:                ; 17xxxx: the FPJ11 (pico2/fp11.pico2, FpExec; #FP11 is 0 on the Pico)
+  PcOut()
+  FpExec()
+  NextSynced()
+CompilerEndIf
+
 InstructionReserved:          ; every opcode this model does not execute
   PcOut()
   ;name = "reserved"
@@ -3430,7 +3437,9 @@ BuildTable:
   Ops($1A00, 512, ?InstructionBISB_15)
   Ops($1C00, 512, ?InstructionSUB_16)
 
-  ; 17xxxx (floating point, $1E00-$1FFF) stays reserved until the FPJ11 is modelled.
+  CompilerIf #FP11 = 1
+  Ops($1E00, 512, ?InstructionFP)        ; 17xxxx: the FPJ11 (pico2/fp11.pico2; #FP11 is 0 on the Pico)
+  CompilerEndIf
   ; ---- register fast paths: overlay the general entries (Op >> 3 keeps
   ; the source register in bits 5-3 and both modes; R7 as the source stays
   ; general, R7 as the destination is sent back by the handler) ----

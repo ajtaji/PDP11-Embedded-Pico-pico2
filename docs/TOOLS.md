@@ -225,7 +225,13 @@ and how many left it for the Basic. It prints a line per round:
 ```
 ASMCHECK mov checks=17977 fast=6733 slow=11244 failures=0 PASS
 ASMCHECK ea checks=80000 fast=60679 slow=19321 failures=0 PASS
+ASMCHECK fp checks=20036 failures=0 PASS
 ```
+
+The `fp` line (Pico 2 only) holds the floating point unit's assembly - the
+fraction multiply and divide, `FpFracMulAsm` and `FpDivQAsm` in
+`fp11.pico2` - to their Basic, `FpFracMulRef` and `FpDivQRef`, on random
+fractions and every pairing of the extremes, in F and D.
 
 ```
 cd J11_18MHz_KDJ11_BF/pico2
@@ -267,13 +273,77 @@ One open of the port; each line of the script is typed and timed from the Return
 
 Six cases per board on the PureMetal ARM emulator's PSRAM model (the chip present, left in QPI mode, absent, no model, a 4 MB chip, the other board's pin). Not run since the firmware moved to the compiler's PSRAM library; see its header.
 
-## `v7ld.py` - a V7 link editor (archive and reference only)
+## `v7_pack.py` - the Seventh Edition pack, from the tape
 
-V7 is not supported on this emulator (its kernel needs about 74 KB; the
-machine has 56 KB). This tool is kept for reference. It links a Seventh
-Edition kernel from the objects and libraries on the V7 tape
-(`/usr/sys/conf/l.o mch.o c.o`, `/usr/sys/sys/LIB1`, `/usr/sys/dev/LIB2`),
-as the tape's own makefile does:
+Builds a bootable V7 RK05 pack from `media/unix/v7.tap.gz` with the tools
+below, for the PSRAM boards (V7 needs more memory than the others have):
+
+```
+python tools/v7_pack.py -o v7root.rk [--add LOCALDIR:/usr/name ...]
+python tools/rk_image.py pack v7root.rk --chip picoplus2 --blocks 4872 --swap 4000,872 --name v7root -o v7root.uf2
+```
+
+It restores the root dump (tape file 5) into a 4000-block file system,
+adds `/usr/include` from the /usr dump (file 6), links `rkunix` from the
+tape's own kernel objects (`v7ld.py`), pads the pack to 4872 blocks (V7
+swaps at blocks 4000-4871), makes `/dev/rk0 rk1 rrk0 rrk1 swap`, takes the
+mount of `/dev/rp3` out of `/etc/rc`, writes the boot block
+(`rkuboot.py`), and copies each `--add` directory's files into a new
+directory. Two patches, both about the Unibus map (the script's header has
+the whole story):
+
+- `/boot` switches the map on without loading its registers, so its own
+  disk reads go nowhere; patched to leave it off (MMR3 025, not 065).
+- `rkunix`, started by `/boot` with memory management already on, takes
+  the machine for an 11/70 and sends every swap and raw transfer through
+  the map - which `/boot` left off. Patched so that it switches the map on
+  itself (`bis $60,SSR3` for `bit $20,SSR3`); `startup()` loads the map one
+  to one before the first transfer. Without it, programs whose text comes
+  back from the swap area (cc's `c0`, `awk`) die or hang on their second run.
+
+## `v7fs.py` - read and change a V7 file system in a disk image
+
+`v6fs.py`'s commands for the Seventh Edition file system (512-byte blocks,
+4-byte block numbers, 3-byte addresses in the inode), plus `mkdir` (its
+`mkfs` is a function `v7tape.py` builds new file systems with):
+
+```
+python tools/v7fs.py ls    IMAGE /usr
+python tools/v7fs.py cat   IMAGE /etc/rc
+python tools/v7fs.py get   IMAGE /rkunix HOSTFILE
+python tools/v7fs.py put   IMAGE HOSTFILE /usr/x/file [--mode 0644] -o OUT
+python tools/v7fs.py rm    IMAGE /usr/x/file -o OUT
+python tools/v7fs.py ln    IMAGE /rkunix /unix -o OUT
+python tools/v7fs.py mkdir IMAGE /usr/x -o OUT
+python tools/v7fs.py mknod IMAGE /dev/rk0 b 0 0 [--mode 0640] -o OUT
+python tools/v7fs.py check IMAGE
+```
+
+`put` over an existing file rewrites it in place (its inode, links and mode
+stay unless `--mode` is given). A special file keeps its device number as
+the kernel does: the first address, `di_addr[1]` the minor and
+`di_addr[2]` the major.
+
+## `v7tape.py` - the V7 distribution tape, read on the host
+
+```
+python tools/v7tape.py files   TAPE OUTDIR
+python tools/v7tape.py ls      TAPE N
+python tools/v7tape.py restore TAPE N -o IMAGE --blocks B --inodes I [--skip PATH ...] [--only PATH ...] [--into IMAGE] [--at DIR]
+```
+
+The tape is `media/unix/v7.tap.gz` gunzipped (SIMH format). Files 0-4 are
+the boot programs, file 5 a dump of the root and file 6 of /usr. `restore`
+builds a file system (or adds to one, `--into`) from a dump, with modes,
+owners, times, hard links and device numbers kept; `--at` puts the dump's
+root at a directory of the image.
+
+## `v7ld.py` - a V7 link editor
+
+Links a Seventh Edition kernel from the objects and libraries on the V7
+tape (`/usr/sys/conf/l.o mch.o c.o`, `/usr/sys/sys/LIB1`,
+`/usr/sys/dev/LIB2`), as the tape's own makefile does; `v7_pack.py` uses
+it:
 
 ```
 python tools/v7ld.py -i -o rkunix l.o mch.o c.o LIB1 LIB2
@@ -281,13 +351,11 @@ python tools/v7ld.py --check rkunix hptmunix
 ```
 
 The first gives an 0411 kernel (text 32,704, data 1,854, bss 39,812 bytes).
-The objects come off `media/unix/v7.tap.gz` (a dump-format tape); the
-script that extracts them is not in this repository.
 
-## `rkuboot.py` - the RK05 boot block for V7 (archive and reference only)
+## `rkuboot.py` - the RK05 boot block for V7
 
-V7's `/mdec/rpuboot.s` with its disk routine rewritten for the RK11, kept
-for reference; V7 is not supported. (The V6 image uses V6's own
+V7's `/mdec/rpuboot.s` with its disk routine rewritten for the RK11;
+`v7_pack.py` writes it to block 0. (The V6 image uses V6's own
 `/usr/mdec/rkuboot`, taken from its pack by `rk_image.py --boot-block`.)
 
 ```
@@ -295,6 +363,25 @@ python tools/rkuboot.py -o rkuboot.bin
 python tools/rkuboot.py --into PACK
 python tools/rkuboot.py --test-pack OUT NAME=FILE ...
 ```
+
+## `fp11_model.py` - the floating point unit, in Python
+
+A second port of SIMH's `pdp11_fp.c` (the FP11 / FPJ11), made apart from
+the firmware's `pico2/fp11.pico2`, for checking it: every arithmetic and
+conversion instruction with register operands, every FPS mode and enable,
+FEC and the trap request.
+
+```
+python tools/fp11_model.py --selftest
+python tools/fp11_model.py --check TRANSCRIPT
+```
+
+It also holds the two identities the firmware's assembly is built on (the
+shift-and-add fraction multiply is exactly `floor(a * (b << 3) / 2^56)`;
+the restoring divide is `floor(a * 2^(n-1) / b)`). Results printed by a
+program on V7 can be held to it: on 2026-10-21, 400 random D-format sums,
+differences, products and quotients typed out by a C program on a Pico
+Plus 2 W were the model's, bit for bit.
 
 ## Not in the repository yet
 
