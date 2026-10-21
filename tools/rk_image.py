@@ -10,6 +10,7 @@ USE
                        [--layout dense|mapped] [--blocks N] [--name TEXT]
                        [--swap auto|LO,N|none] [--boot-block FILE|@/PATH]
                        [--autoboot KERNEL[,SWITCHES]] [--autoboot-psram KERNEL]
+                       [--autoboot-then C:TEXT] [--autoboot-mem KB]
                        [--psram-patch FILE,SYMBOL,VALUE] [--drive1 IMAGE]
                        [--firmware FW.bin [--desk OUT.bin] [--combined OUT.uf2]
                                           [--firmware-uf2 OUT.uf2]]
@@ -50,7 +51,10 @@ THE FLASH REGION
                 at +72 u32 auto-boot (bit 16 on, bits 15-0 the switch
                 register) and at +80 the kernel's name, NUL-terminated; at
                 +96 the PSRAM patch and at +128 the kernel's name for a
-                board whose PSRAM is working (both below)
+                board whose PSRAM is working (both below); at +144 u32 the
+                memory in KB the auto-boot gives the machine (0: as it is),
+                and at +148 a second auto-boot step: the prompt character,
+                then the text to type at it, NUL-terminated (AUTO-BOOT)
         +4 KB   mapped layout only: 3 sectors, one u16 per RK05 block,
                 0 = not stored (reads as zeros), n = slot n - 1
         then    512-byte slots
@@ -97,7 +101,8 @@ THE PSRAM BUILD (--chip feather or picoplus2; pico2/psram_pdp11.pico2)
     swap area there, while the flash - and so the fallback - keeps the
     kernel patched for the RAM disk. The word's present value is recorded
     too, and the firmware changes nothing unless it finds it.
-    --drive1 IMAGE packs a second RK05 image for RK1 (dense, whole).
+    --drive1 IMAGE packs a second RK05 image for RK1 (dense, whole; at most
+    4000 blocks, its place in the PSRAM).
     --autoboot-psram KERNEL names the kernel the auto-boot types when the
     PSRAM is working (header +128): a kernel that needs the PSRAM's memory,
     such as the 22-bit /rk70unix. The fallback types --autoboot's.
@@ -108,6 +113,14 @@ AUTO-BOOT
     default 173030), then the kernel's name typed at the boot block's '@'.
     Esc within 2 s of the banner leaves the board at the diagnostic
     console instead.
+    --autoboot-then C:TEXT adds a second step: when the system prints the
+    character C, the firmware types TEXT and a CR. V7 boots in two steps:
+    its boot block prints '@' and reads the name of the standalone boot,
+    which prints ':' and reads the kernel's -
+        --autoboot boot,0 --autoboot-then ":rk(0,0)rkunix"
+    --autoboot-mem KB (PSRAM builds) gives the machine KB of memory before
+    the auto-boot, as the MEM command would: V7 counts memory in signed
+    16-bit clicks and breaks at 2048 KB or more (--autoboot-mem 1024).
 """
 import argparse
 import os
@@ -263,7 +276,10 @@ SWAP = (0, 0)
 
 AUTOBOOT = (0, b"")      # (switches | 1 << 16, kernel name) or (0, "") for none
 AUTOBOOT_PSRAM = b""     # the kernel's name when the PSRAM is working, or "" for the same one
+PS_RK1_BLOCKS = 4000     # RK1's place in the PSRAM (pico2/psram_pdp11.pico2)
 PSPATCH = None           # (block, byte offset, old word, new word) for the PSRAM copy
+AUTOBOOT_MEM = 0         # KB for the machine at the auto-boot, 0 for as it is
+AUTOBOOT_THEN = b""      # the second step: prompt character, then the text
 
 
 def header(layout, stored, slots, name):
@@ -278,6 +294,8 @@ def header(layout, stored, slots, name):
     h[128:128 + len(AUTOBOOT_PSRAM)] = AUTOBOOT_PSRAM
     if PSPATCH:
         struct.pack_into("<IIIII", h, 96, 1, *PSPATCH)
+    struct.pack_into("<I", h, 144, AUTOBOOT_MEM)
+    h[148:148 + len(AUTOBOOT_THEN)] = AUTOBOOT_THEN
     return bytes(h)
 
 
@@ -349,6 +367,8 @@ def main():
     ap.add_argument("--boot-block")
     ap.add_argument("--autoboot")
     ap.add_argument("--autoboot-psram")
+    ap.add_argument("--autoboot-then")
+    ap.add_argument("--autoboot-mem", type=int)
     ap.add_argument("--combined")
     ap.add_argument("--firmware-uf2")
     a = ap.parse_args()
@@ -402,6 +422,18 @@ def main():
             fail("--autoboot: the kernel's name is 1 to 15 printable characters, the switches 0-177777.")
         AUTOBOOT = (sw | 1 << 16, kern.encode("ascii"))
         print("rk_image: auto-boot: RK0, switches %06o, then %s at the @ prompt" % (sw, kern))
+    global AUTOBOOT_THEN, AUTOBOOT_MEM
+    if a.autoboot_then:
+        c, colon, text = a.autoboot_then[:1], a.autoboot_then[1:2], a.autoboot_then[2:]
+        if not a.autoboot or colon != ":" or not c.isprintable() or not text or len(text) > 40                 or not text.isascii() or not text.isprintable():
+            fail("--autoboot-then takes C:TEXT (one character, a colon, 1 to 40 printable characters), with --autoboot as well.")
+        AUTOBOOT_THEN = c.encode("ascii") + text.encode("ascii")
+        print("rk_image: auto-boot, then: %s at the %s prompt" % (text, c))
+    if a.autoboot_mem is not None:
+        if a.chip not in PSRAM_CHIPS or not a.autoboot or not 56 <= a.autoboot_mem <= 3812:
+            fail("--autoboot-mem takes 56 to 3812 (KB), with --autoboot, on --chip feather or picoplus2.")
+        AUTOBOOT_MEM = a.autoboot_mem
+        print("rk_image: auto-boot gives the machine %d KB" % a.autoboot_mem)
     global PSPATCH, AUTOBOOT_PSRAM
     if a.psram_patch or a.drive1 or a.autoboot_psram:
         if a.chip not in PSRAM_CHIPS:
@@ -435,14 +467,17 @@ def main():
     if a.drive1:
         img1 = open(a.drive1, "rb").read()
         n1 = blocks_of(img1)
+        if n1 > PS_RK1_BLOCKS:
+            fail("RK1's pack has %d blocks; on the PSRAM boards its place holds %d (pico2/psram_pdp11.pico2, "
+                 "#PS_RK1_BLOCKS): make its file system %d blocks or fewer." % (n1, PS_RK1_BLOCKS, PS_RK1_BLOCKS))
         if REGION1 + SECTOR + RK_BLOCKS * 512 > FLASH[a.chip]:
             fail("RK1 does not fit the %s's flash." % a.chip)
         if max(off + len(d) for off, d in parts.items()) > REGION1:
             fail("RK0 runs into RK1's region at 0x%08X." % (XIP + REGION1))
-        keep = (SWAP, AUTOBOOT, PSPATCH, AUTOBOOT_PSRAM)
-        SWAP, AUTOBOOT, PSPATCH, AUTOBOOT_PSRAM = (0, 0), (0, b""), None, b""
+        keep = (SWAP, AUTOBOOT, PSPATCH, AUTOBOOT_PSRAM, AUTOBOOT_MEM, AUTOBOOT_THEN)
+        SWAP, AUTOBOOT, PSPATCH, AUTOBOOT_PSRAM, AUTOBOOT_MEM, AUTOBOOT_THEN = (0, 0), (0, b""), None, b"", 0, b""
         parts[REGION1] = header(0, n1, n1, os.path.basename(a.drive1))
-        SWAP, AUTOBOOT, PSPATCH, AUTOBOOT_PSRAM = keep
+        SWAP, AUTOBOOT, PSPATCH, AUTOBOOT_PSRAM, AUTOBOOT_MEM, AUTOBOOT_THEN = keep
         parts[REGION1 + SECTOR] = img1
         print("rk_image: RK1 <- %s, dense, %d blocks, at 0x%08X" % (a.drive1, n1, XIP + REGION1))
     if a.chip == "pico":

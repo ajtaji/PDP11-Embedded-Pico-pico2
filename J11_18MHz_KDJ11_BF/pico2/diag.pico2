@@ -288,11 +288,41 @@ Global Dim AutoName.a(#AUTO_NAME_MAX + 1)
 Global AutoLen.i
 Global AutoAt.i                          ; where in the pack's header the name is taken from (80 or 128)
 Global LastCr.i                          ; the last console byte was a CR (a CR LF counts once)
+; A second step (rk_image.py --autoboot-then, header +148): when the system
+; prints AutoThenCh after the first step, type AutoThen and a CR - V7's
+; standalone boot asks for the kernel at ':' after its boot block's '@'.
+; And the memory the auto-boot gives the machine (--autoboot-mem, +144; the
+; PSRAM builds; 0 = as it is): V7 breaks at 2048 KB or more.
+#AUTO_THEN_MAX = 40
+Global AutoThenCh.i, AutoThenLen.i, AutoStage.i, AutoMemKb.i
+Global Dim AutoThen.a(#AUTO_THEN_MAX + 1)
+
+; Type n characters of a(), then a CR, into the console receiver.
+Procedure AutoTypeChar(c.i)
+  If (ConInHead - ConInTail) < #CON_SIZE
+    ConIn(ConInHead & (#CON_SIZE - 1)) = c
+    SmpBarrier()
+    ConInHead = ConInHead + 1
+  EndIf
+EndProcedure
+
+; The second step's prompt has come: type its text.
+Procedure AutoThenType()
+  Define i.i
+  AutoStage = 0
+  For i = 0 To AutoThenLen - 1
+    AutoTypeChar(AutoThen(i))
+  Next
+  AutoTypeChar(13)
+EndProcedure
 
 ; The boot block has printed its '@': type the kernel's name.
 Procedure AutoBootType()
   Define i.i
   AutoPending = 0
+  If AutoThenLen > 0
+    AutoStage = 2                        ; then wait for the second step's prompt
+  EndIf
   For i = 0 To AutoLen - 1
     If (ConInHead - ConInTail) < #CON_SIZE
       ConIn(ConInHead & (#CON_SIZE - 1)) = AutoName(i)
@@ -338,6 +368,8 @@ Procedure DrainConsole()
     If FromDisk                          ; a booted system owns the terminal: as typed
       If AutoPending <> 0 And c = 64          ; the boot block's '@': auto-boot types the kernel
         AutoBootType()
+      ElseIf AutoStage = 2 And c = AutoThenCh ; the second step's prompt
+        AutoThenType()
       EndIf
       If c <> 0 And c <> 127
         Ch(c)
@@ -933,6 +965,23 @@ Procedure DiskBanner()
         AutoName(AutoLen) = c
         AutoLen = AutoLen + 1
       Next
+      AutoMemKb = DkHeader32(144)
+      AutoThenLen = 0
+      AutoThenCh = LlXip16(#DISK_REGION + 148) & $FF
+      If AutoThenCh <> 0
+        For i = 0 To #AUTO_THEN_MAX - 1
+          c = LlXip16(#DISK_REGION + 149 + i - ((149 + i) & 1)) ; the word holding byte 149 + i
+          If (149 + i) & 1
+            c = c >> 8
+          EndIf
+          c = c & $FF
+          If c = 0
+            Break
+          EndIf
+          AutoThen(AutoThenLen) = c
+          AutoThenLen = AutoThenLen + 1
+        Next
+      EndIf
     EndIf
     Say(", ") : Num(DkStored) : Say(" blocks")
     If DkMapped
@@ -1380,7 +1429,15 @@ Procedure AutoBootWait()
   For t0 = 0 To AutoLen - 1
     Ch(AutoName(t0))
   Next
-  Ch(34) : Say(" at the @ prompt. Press Esc within 2 s for the diagnostic console.") : Eol()
+  Ch(34) : Say(" at the @ prompt")
+  If AutoThenLen > 0
+    Say(", then ") : Ch(34)
+    For t0 = 0 To AutoThenLen - 1
+      Ch(AutoThen(t0))
+    Next
+    Ch(34) : Say(" at the ") : Ch(AutoThenCh) : Say(" prompt")
+  EndIf
+  Say(". Press Esc within 2 s for the diagnostic console.") : Eol()
   UsbSerialFlush()
   AutoWindow = 1
   AutoCancel = 0
@@ -1396,7 +1453,15 @@ Procedure AutoBootWait()
     Say("auto-boot cancelled: the diagnostic console. Type BOOT RK0 173030 to boot by hand.") : Eol()
     ProcedureReturn
   EndIf
+  CompilerIf #PSRAM = 1
+  If AutoMemKb >= 56 And PsramOk <> 0 And AutoMemKb * 1024 <= #PS_MEM_TOP
+    MemTop = AutoMemKb * 1024            ; as MEM n: read by core 0 at the BOOT (CpuReset, MmuReset)
+    SmpBarrier()
+    Say("memory ") : Num(AutoMemKb) : Say(" KB, as the pack asks") : Eol()
+  EndIf
+  CompilerEndIf
   Say("booting RK0, switches ") : Oct(AutoSw) : Eol()
+  AutoStage = 0
   BootRk(0, AutoSw)
   AutoPending = 1
 EndProcedure

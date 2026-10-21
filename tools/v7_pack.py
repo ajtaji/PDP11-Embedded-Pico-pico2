@@ -72,6 +72,13 @@ BLOCKS, FS_BLOCKS, INODES = 4872, 4000, 512
 KERNEL_OBJECTS = ["/sys/conf/l.o", "/sys/conf/mch.o", "/sys/conf/c.o", "/sys/sys/LIB1", "/sys/dev/LIB2"]
 DEVICES = [("rk0", "b", 0, 0), ("rk1", "b", 0, 1), ("rrk0", "c", 9, 0), ("rrk1", "c", 9, 1), ("swap", "b", 0, 0)]
 RC_MOUNT = "/etc/mount /dev/rp3 /usr"
+# --usr: what of the /usr dump goes on RK1 - what fits RK1's place on the PSRAM boards,
+# 4,000 blocks (pico2/psram_pdp11.pico2, #PS_RK1_BLOCKS): the libraries and nroff's
+# macros (2,230 blocks), the manual (1,424), the headers (141). Left out: /src (6,808
+# blocks), /doc (3,247), /sys (1,169; the kernel's objects are linked here instead),
+# /dict (715), /games (532).
+USR_SET = ["/lib", "/man", "/include", "/mdec", "/spool", "/pub", "/tmp", "/dmr"]
+USR_BLOCKS, USR_INODES = 4000, 600
 
 
 def fail(msg):
@@ -90,6 +97,7 @@ def main():
     ap.add_argument("-o", required=True, help="the pack image to write")
     ap.add_argument("--tape", default=TAPE)
     ap.add_argument("--add", action="append", default=[], metavar="LOCALDIR:/PATH")
+    ap.add_argument("--usr", metavar="IMAGE", help="also write RK1: a /usr file system (USR_SET), mounted by /etc/rc")
     a = ap.parse_args()
     out = os.path.abspath(a.o)
     v7fs, v7ld = os.path.join(HERE, "v7fs.py"), os.path.join(HERE, "v7ld.py")
@@ -140,10 +148,22 @@ def main():
         rc = run(v7fs, "cat", out, "/etc/rc")
         if RC_MOUNT not in rc.splitlines():
             fail("/etc/rc has no '%s' line" % RC_MOUNT)
-        rc = "\n".join(": " + RC_MOUNT + " (no RP disk here; /usr/include is in the root file system)"
-                       if line == RC_MOUNT else line for line in rc.split("\n"))
+        if a.usr:                                # multi-user mounts RK1's /usr over the root's
+            rc = "\n".join("/etc/mount /dev/rk1 /usr" if line == RC_MOUNT else line for line in rc.split("\n"))
+        else:
+            rc = "\n".join(": " + RC_MOUNT + " (no RP disk here; /usr/include is in the root file system)"
+                           if line == RC_MOUNT else line for line in rc.split("\n"))
         open(os.path.join(tmp, "rc"), "w", newline="\n").write(rc)
         run(v7fs, "put", out, os.path.join(tmp, "rc"), "/etc/rc", "--mode", "0644", "-o", out)
+        # root logs in with no password (the distribution's is not known): multi-user is usable
+        pw = run(v7fs, "cat", out, "/etc/passwd").split("\n")
+        if not pw[0].startswith("root:"):
+            fail("/etc/passwd does not start with root")
+        f = pw[0].split(":")
+        f[1] = ""
+        pw[0] = ":".join(f)
+        open(os.path.join(tmp, "passwd"), "w", newline="\n").write("\n".join(pw))
+        run(v7fs, "put", out, os.path.join(tmp, "passwd"), "/etc/passwd", "-o", out)
         boot = os.path.join(tmp, "boot")
         run(v7fs, "get", out, "/boot", boot)
         b = bytearray(open(boot, "rb").read())
@@ -169,7 +189,18 @@ def main():
                 if os.path.isfile(os.path.join(local, f)):
                     run(v7fs, "put", out, os.path.join(local, f), path + "/" + f, "--mode", "0644", "-o", out)
         print(run(v7fs, "check", out).strip().splitlines()[-1])
-    print("v7_pack: %s - %d blocks; RK0 for MEM 1024, BOOT RK0, then rk(0,0)rkunix" % (a.o, BLOCKS))
+        # 5. RK1: /usr
+        if a.usr:
+            usr_out = os.path.abspath(a.usr)
+            run(os.path.join(HERE, "v7tape.py"), "restore", tape, 6, "-o", usr_out, "--blocks", USR_BLOCKS,
+                "--inodes", USR_INODES, "--name", "usr", "--only", *USR_SET)
+            print(run(v7fs, "check", usr_out).strip().splitlines()[-1])
+            print("v7_pack: %s - RK1, /usr (%s); multi-user mounts it on /usr, single-user: /etc/mount /dev/rk1 /usr"
+                  % (a.usr, " ".join(USR_SET)))
+            for spec in a.add:
+                if spec.rpartition(":")[2].startswith("/usr/"):
+                    print("v7_pack: note: %s is on RK0's /usr, which RK1 covers once mounted (multi-user)" % spec)
+    print("v7_pack: %s - %d blocks; RK0 for MEM 1024, BOOT RK0, boot at the @, rk(0,0)rkunix at the :" % (a.o, BLOCKS))
 
 
 if __name__ == "__main__":

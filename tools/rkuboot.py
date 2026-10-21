@@ -6,7 +6,8 @@ programs that sit in block 0 of an RP03 or RP04 pack. This is rpuboot.s
 with its disk driver (rblk) rewritten for the RK11 - everything else is
 the same program, line for line: the RK05 bootstrap ROM (or the emulator's
 BOOT RK0) reads block 0 to address 0 and jumps there; it copies itself to
-the top of 28K words (157000), reads a path name from the console, walks
+the top of 28K words (157000), prints '@' (an addition: rpuboot.s prints
+nothing) and reads a path name from the console, walks
 the V7 file system from the root inode to that file, loads it at 0 (over
 the a.out header, if it has one) and calls it. The file is normally /boot,
 the standalone boot, which then loads the kernel.
@@ -77,7 +78,11 @@ clr0:   CLR (R0)+
         CMP R0,SP
         BLO clr0
 ; at origin, read pathname; spread out in array 'names', one component
-; every 14 bytes
+; every 14 bytes. (Not in rpuboot.s, which reads the name without a prompt:
+; an '@' first, as V6's boot block prints, so a person - and the firmware's
+; auto-boot, which answers an '@' - knows it is waiting.)
+        MOV #100,R0
+        JSR PC,putc
         MOV #NAMES,R1
 nam1:   MOV R1,R2
 nam2:   JSR PC,getc

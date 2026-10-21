@@ -104,6 +104,7 @@ Global PsramCopyUs.i             ; the start-up copy and its check, us
 Global PsCopyUs.i, PsCheckUs.i   ; its two parts: flash to PSRAM, and the read back
 Global PsClearUs.i               ; clearing the PDP-11's memory in the PSRAM, us
 Global PsRk1Blocks.i
+Global PsRk1TooBig.i                     ; an RK1 pack with more blocks than its place holds (said in the banner)
 Global PsReads.i, PsWrites.i     ; blocks read and written in PSRAM
 Global PsSumA.i, PsSumB.i        ; the checksum being added up
 Global PsRk0A.i, PsRk0B.i, PsRk1A.i, PsRk1B.i   ; the pack regions' checksums ...
@@ -328,7 +329,10 @@ Procedure PsramLoad()
       PsRk0B = PsSumB
       PsRk0Sum = 1
       PsDrives = 1
-      If n1 >= 0 And n1 <= #PS_RK1_BLOCKS   ; RK1: optional; a bad one, or one too big for its place, is simply absent
+      If n1 > #PS_RK1_BLOCKS
+        PsRk1TooBig = n1                 ; too big for its place: absent, and the banner says why
+      EndIf
+      If n1 >= 0 And n1 <= #PS_RK1_BLOCKS   ; RK1: optional; a bad one is absent
         If PsCopy(#DISK_REGION1, #PS_RK1, n1, #PS_RK1_BLOCKS)
           PsRk1A = PsSumA
           PsRk1B = PsSumB
@@ -425,6 +429,10 @@ Procedure PsramBanner()
       Say(" exist: blocks ") : Num(#PS_RK1_BLOCKS) : Say("-4871 of RK1 answer with a drive error)")
     EndIf
     Say(" writable in PSRAM, never written to flash")
+    If PsRk1TooBig
+      Say("; RK1 NOT copied: its pack has ") : Num(PsRk1TooBig) : Say(" blocks and its place in the PSRAM holds ")
+      Num(#PS_RK1_BLOCKS) : Say(" - RK1 is absent")
+    EndIf
     If PeekL($10000000 + #DISK_REGION + 96) = 1
       Say("; the PSRAM copy's kernel patch applied (block ") : Num(PeekL($10000000 + #DISK_REGION + 100))
       Say(" +") : Num(PeekL($10000000 + #DISK_REGION + 104)) : Say(")")
