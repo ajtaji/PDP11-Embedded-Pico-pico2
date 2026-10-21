@@ -26,7 +26,7 @@ The emulated machine has a console on the USB serial port, an RK11 disk controll
 | Flash images | `combined.uf2` (one file) | `firmware.uf2` then `minix.uf2` (two files) |
 | Disk | RK05 pack in flash, read-only | RK05 pack in flash, read-only |
 | DEC diagnostic ladder | 17 of 19 pass (the other two halt by design for a J-11) | 17 of 19 pass (the same two) |
-| Seventh Edition (V7) | on the PSRAM boards (a megabyte of memory): see [Seventh Edition and floating point](#seventh-edition-v7-and-floating-point) | not supported |
+| Seventh Edition (V7) | on the Pico Plus 2 W: `images/picoplus2-v7/combined.uf2`, boots itself ([Seventh Edition and floating point](#seventh-edition-v7-and-floating-point)) | not supported |
 
 ## Features
 
@@ -48,6 +48,8 @@ The emulated machine has a console on the USB serial port, an RK11 disk controll
 |---|---|---|
 | Pico 2 W (RP2350) | `images/pico2w-v6/combined.uf2` | Sixth Edition Unix (V6), memory management on |
 | Pico W (RP2040) | `images/picow-mini-unix/firmware.uf2`, then `images/picow-mini-unix/minix.uf2` | Mini-Unix |
+| Pimoroni Pico Plus 2 W | `images/picoplus2/combined.uf2` | Sixth Edition Unix (V6), 248 KB |
+| Pimoroni Pico Plus 2 W | `images/picoplus2-v7/combined.uf2` | Seventh Edition Unix (V7), 1 MB, floating point |
 
 1. Hold the board's **BOOTSEL** button while plugging it into USB. A drive appears (`RP2350` on the Pico 2 W, `RPI-RP2` on the Pico W).
 2. Copy the UF2 file onto it. The board writes it and restarts by itself.
@@ -169,7 +171,7 @@ RK0: v6root, 4872 blocks, running from its PSRAM copy: writable, every write los
 
 ## Seventh Edition (V7) and floating point
 
-On the PSRAM boards the machine has the J-11's floating point unit and a megabyte for V7. `tools/v7_pack.py` builds V7's pack from the distribution tape in `media/unix/`; at the firmware's prompt `MEM 1024`, `BOOT RK0`, and at `/boot`'s `:` type `rk(0,0)rkunix` ([docs/HOWTO.md, section 12](docs/HOWTO.md#12-seventh-edition-v7-on-the-pico-plus-2-w)). It comes up single-user with `cc` (floating point included), `awk`, `adb` and the rest of the root file system.
+On the PSRAM boards the machine has the J-11's floating point unit and a megabyte for V7. `images/picoplus2-v7/combined.uf2` boots V7 by itself to its single-user `#` (the firmware gives it 1 MB and answers its two boot prompts); Ctrl-D goes multi-user, where root logs in with no password and `/usr` - the libraries, nroff's macros, the manual - is mounted from the second drive. `cc` (floating point included), `awk`, `dc`, `adb`, `ps`, `man` work. `tools/v7_pack.py` builds the packs from the distribution tape in `media/unix/` ([docs/HOWTO.md, section 12](docs/HOWTO.md#12-seventh-edition-v7-on-the-pico-plus-2-w)).
 
 Measured on a Pico Plus 2 W on 2026-10-21 ([docs/BENCHMARKS.md](docs/BENCHMARKS.md)):
 
@@ -191,7 +193,7 @@ For comparison, a PDP-11/70 with its FP11 ran the double precision Whetstone at 
   - When the file-write blocks are used up, a write to a new block fails: Unix sees a disk error, the console prints once `[RK0: the RAM overlay for file writes is full ...]`, and the statistics block shows `FULL: n writes refused`. Nothing already written changes and nothing reaches the flash; power off to start clean.
 - **Nothing is saved across a power cycle.** Every disk write, the swap area included, goes to RAM; the next power-up starts from the pack as flashed. `sync` does no harm but saves nothing. (The flash-wear warnings in [disk_boot_readme.md](disk_boot_readme.md) concern emulators that write the flash; this firmware never does.)
 - **V6 on the Pico 2 W:** `ps` works; `df` with no argument looks for V6's built-in `/dev/rk2` and `/dev/rp0`, which this machine does not have, so type **`df /dev/rk0`**. `cc` and `dc` run (both needed more memory than the 56 KB the machine had before 2026-10-21).
-- **Seventh Edition (V7) runs on the PSRAM boards only** (built and run there; the Pico W has 56 KB, and V7 has not been tried on the 152 KB Pico 2 W). No ready image of it is in `images/`: build the pack with `tools/v7_pack.py` ([docs/HOWTO.md, section 12](docs/HOWTO.md#12-seventh-edition-v7-on-the-pico-plus-2-w)).
+- **Seventh Edition (V7) runs on the PSRAM boards only** (`images/picoplus2-v7/combined.uf2` for the Pico Plus 2 W; the Pico W has 56 KB, and V7 has not been tried on the 152 KB Pico 2 W). Its `/usr` on RK1 holds the libraries, the manual and the headers; the sources, `/usr/doc`, the dictionary and the games do not fit. `df` with no argument looks for the RP disks V7 was configured for: `df /dev/rk0 /dev/rk1`. `date` takes a year from 70 to 99.
 - **Packs:** RK05 only (up to 4872 blocks), drive 0 only (RK1 as well on the PSRAM boards). On the RP2350 boards the pack starts at 0x10240000, so the Pico 2 W's 4 MB hold 1.75 MB of pack: the V6 root pack is stored mapped (2,891 blocks in use). `images/pico2w-v6/combined.uf2` is that build; it ran on a Pico 2 W on 2026-10-20.
 - **The Pico W image uses the flash where the radio's firmware would go; a Pico W running it cannot use its radio.** Its 2 MB cannot hold Mini-Unix (3,061 blocks in use) clear of that region; the firmware says so at start-up and `tools/rk_image.py` when it packs. The Pico W image of 2026-10-20 ran on a Pico W.
 - **Mini-Unix:** a refused swap write can restart the shell.
@@ -218,7 +220,7 @@ Known differences, found by those tapes and left as they are:
 
 | Path | What it is |
 |---|---|
-| `images/` | Ready-to-flash UF2 files: `pico2w-v6/combined.uf2`, `picow-mini-unix/firmware.uf2` and `minix.uf2`, `picoplus2/combined.uf2`, `feather/combined.uf2`, with sizes and SHA-256 values in [images/README.md](images/README.md) |
+| `images/` | Ready-to-flash UF2 files: `pico2w-v6/combined.uf2`, `picow-mini-unix/firmware.uf2` and `minix.uf2`, `picoplus2/combined.uf2`, `picoplus2-v7/combined.uf2`, `feather/combined.uf2`, with sizes and SHA-256 values in [images/README.md](images/README.md) |
 | `media/unix/` | Unix distributions from the Unix Heritage Society archive: V6 root and source packs, the V7 tape (the V7 pack is built from it: `tools/v7_pack.py`), Mini-Unix tapes, 1BSD and 2BSD |
 | `media/diagnostics/` | DEC MAINDEC and XXDP diagnostics, the ladder plan `ladder.txt` and `INDEX.md` |
 | `media/papertape/` | DEC Absolute Loader and Single-User BASIC paper tape images, with a SIM-H configuration file |

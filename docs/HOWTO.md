@@ -393,57 +393,75 @@ Checked 2026-10-20 with the release compiler of 2026-10-19, on a Pico 2 W and a 
 
 ## 12. Seventh Edition (V7) on the Pico Plus 2 W
 
-V7 is built and run on the PSRAM boards, where it gets a megabyte. The Pico 2 firmware has the J-11's floating point unit (FPJ11,
-`pico2/fp11.pico2`), which V7's C compiler needs.
+V7 runs on the PSRAM boards, where it gets a megabyte, with the J-11's
+floating point unit (FPJ11, `pico2/fp11.pico2`), which V7's C compiler needs.
 
-**Build the pack** (from the V7 tape in `media/unix/`; `tools/v7_pack.py`
+**Flash the ready image.** `images/picoplus2-v7/combined.uf2`: hold BOOT,
+plug the board in, copy the file to the drive (section 10 has the way with no
+button). It is the PSRAM firmware with two packs: RK0, V7's root file system
+and kernel; RK1, a `/usr` (the libraries and nroff's macros, the manual, the
+headers).
+
+**It boots by itself.** Open the board's serial port; after the banner:
+
+```
+auto-boot: RK0, switches 000000, then "boot" at the @ prompt, then "rk(0,0)rkunix" at the : prompt. Press Esc within 2 s for the diagnostic console.
+memory 1024 KB, as the pack asks
+booting RK0, switches 000000
+@boot
+Boot
+: rk(0,0)rkunix
+mem = 973120
+#
+```
+
+The pack asks for 1 MB (V7 counts memory in a signed number of 64-byte
+clicks, so 2 MB or more reads as negative); the firmware types `boot` at the
+boot block's `@` and the kernel's name at `/boot`'s `:`. `#` is the
+single-user shell, root, in lower case. To boot by hand instead, press Esc,
+then `MEM 1024`, `BOOT RK0`, type `boot` at the `@` and `rk(0,0)rkunix` at
+the `:`.
+
+**Single-user.** `/usr` is the root pack's own (`/usr/include`); mount RK1
+with `/etc/mount /dev/rk1 /usr`. `df` with no argument looks for the RP
+disks V7 was configured for: type `df /dev/rk0 /dev/rk1`. DEL interrupts a
+program.
+
+**Multi-user.** Ctrl-D at the single-user `#`: `/etc/rc` mounts RK1 on
+`/usr` and prints `login:`. Log in as `root` (no password).
+
+**Set the date** with `date yymmddhhmm`, a year from 70 to 99 (V7 counts
+from 1970 and was written in its century).
+
+**What works** (each tried on the board): the shell and the root's
+commands, `cc` with floating point (constants, `double`, `-lm`), `awk`,
+`dc`, `adb`, `ps`, `who`, `man` and `nroff` through RK1's manual and macros.
+Everything written is lost at power-off, as on the other boards.
+
+**Build it yourself** (from the V7 tape in `media/unix/`; `tools/v7_pack.py`
 in [TOOLS.md](TOOLS.md) says what it does and why it patches `/boot` and
 the kernel):
 
 ```
 python tools/psram_build.py --board picoplus2 --compiler PureMetalForge.exe --out build_picoplus2
-python tools/v7_pack.py -o v7root.rk
-python tools/rk_image.py pack v7root.rk --chip picoplus2 --blocks 4872 --swap 4000,872 --name v7root --firmware build_picoplus2/diag.bin --combined v7-combined.uf2 -o v7root.uf2
+python tools/v7_pack.py -o v7root.rk --usr v7usr.rk
+python tools/rk_image.py pack v7root.rk --chip picoplus2 --blocks 4872 --swap 4000,872 --name v7root --autoboot boot,0 --autoboot-then "::rk(0,0)rkunix" --autoboot-mem 1024 --drive1 v7usr.rk --firmware build_picoplus2/diag.bin --combined v7-combined.uf2 -o v7root.uf2
 ```
 
-`--add DIR:/usr/name` copies a directory of your files onto the pack.
-`v7-combined.uf2` is the PSRAM firmware with the V7 pack as RK0: copy it to
-the board's boot drive, or send it with no button as in section 10
-(`pack_install.py --image v7-combined.uf2 --region rk0`, then the firmware
-with `psram_build.py`). A firmware upload alone keeps the pack.
-
-**Boot it.** At the firmware's prompt:
-
-```
-MEM 1024
-BOOT RK0
-```
-
-`MEM 1024` gives the machine 1 MB (V7 counts memory in a signed number of
-64-byte clicks, so more than 2 MB reads as negative at boot). `/boot` prints
-`Boot` and `:`; type
-
-```
-rk(0,0)rkunix
-```
-
-V7 prints `mem = 973120` and stops at the single-user prompt `#`, in lower
-case (the pack's kernel opens the console without the Teletype's upper case
-and carriage-return delay: `tools/v7_pack.py`). DEL interrupts a program. Stay single-user: Ctrl-D goes to multi-user and asks for a root
-password this pack does not give.
-
-**What works.** The shell, the tools of the root file system, `cc` with
-floating point (constants, `double`, `-lm`), `awk`, `adb`. Everything
-written is lost at power-off, as on the other boards.
+`--add DIR:/path` copies a directory of your files onto the root pack (a
+directory under `/usr` there is covered by RK1 once it is mounted). Send
+`v7-combined.uf2` to the board's boot drive, or with no button as in section
+10 (`pack_install.py --image v7-combined.uf2`, then the firmware with
+`psram_build.py`). A firmware upload alone keeps the packs.
 
 **A floating point benchmark.** E. J. Olson's `givens` from the pichart
 suite ([givens-pdp.tar](https://fractal.math.unr.edu/~ejolson/pi/pichart/givens-pdp.tar))
 builds unchanged:
 
 ```
-python tools/v7_pack.py -o v7root.rk --add givens-pdp:/usr/givens
+python tools/v7_pack.py -o v7root.rk --usr v7usr.rk --add givens-pdp:/givens
 ...
-# cd /usr/givens
+# cd /givens
 # cc -O -DKANDR -DASCII -c weyl32.c
 # cc -O -DKANDR -DASCII -c tictoc.c
 # cc -O -DKANDR -DASCII -o givens givens.c weyl32.o tictoc.o -lm
@@ -456,4 +474,3 @@ each against a golden run, and prints FLOPS per size; it ends at 63x63 with
 
 Dhrystone, Whetstone and the BYTE Sieve, and how to run them, are in
 [BENCHMARKS.md](BENCHMARKS.md).
-

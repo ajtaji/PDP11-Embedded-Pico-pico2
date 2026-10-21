@@ -279,8 +279,8 @@ Builds a bootable V7 RK05 pack from `media/unix/v7.tap.gz` with the tools
 below, for the PSRAM boards (V7 needs more memory than the others have):
 
 ```
-python tools/v7_pack.py -o v7root.rk [--add LOCALDIR:/usr/name ...]
-python tools/rk_image.py pack v7root.rk --chip picoplus2 --blocks 4872 --swap 4000,872 --name v7root -o v7root.uf2
+python tools/v7_pack.py -o v7root.rk [--usr v7usr.rk] [--add LOCALDIR:/path ...]
+python tools/rk_image.py pack v7root.rk --chip picoplus2 --blocks 4872 --swap 4000,872 --name v7root --autoboot boot,0 --autoboot-then "::rk(0,0)rkunix" --autoboot-mem 1024 --drive1 v7usr.rk -o v7root.uf2
 ```
 
 It restores the root dump (tape file 5) into a 4000-block file system,
@@ -289,7 +289,11 @@ tape's own kernel objects (`v7ld.py`), pads the pack to 4872 blocks (V7
 swaps at blocks 4000-4871), makes `/dev/rk0 rk1 rrk0 rrk1 swap`, takes the
 mount of `/dev/rp3` out of `/etc/rc`, writes the boot block
 (`rkuboot.py`), and copies each `--add` directory's files into a new
-directory. It patches the kernel's console flags (V7 opens the console as a
+directory, and with `--usr IMAGE` writes RK1 as well: a 4,000-block `/usr` (the
+libraries and nroff's macros, the manual, the headers; what fits RK1's place on
+the PSRAM boards) that `/etc/rc` mounts. Root logs in with no password (the
+distribution's is not known) and `/unix` is a link to `/rkunix` (`ps` reads its
+names there). It patches the kernel's console flags (V7 opens the console as a
 model 33 Teletype: upper case, and a pause of 10 clock ticks after each
 newline - 13 s of a 31 s Dhrystone run went to it), and makes two patches
 about the Unibus map (the script's header has the whole story):
@@ -356,7 +360,9 @@ The first gives an 0411 kernel (text 32,704, data 1,854, bss 39,812 bytes).
 
 ## `rkuboot.py` - the RK05 boot block for V7
 
-V7's `/mdec/rpuboot.s` with its disk routine rewritten for the RK11;
+V7's `/mdec/rpuboot.s` with its disk routine rewritten for the RK11, and one
+addition: it prints `@` before reading the name (rpuboot.s prints nothing), so
+the firmware's auto-boot can answer it;
 `v7_pack.py` writes it to block 0. (The V6 image uses V6's own
 `/usr/mdec/rkuboot`, taken from its pack by `rk_image.py --boot-block`.)
 

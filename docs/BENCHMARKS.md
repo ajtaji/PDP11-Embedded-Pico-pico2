@@ -33,14 +33,14 @@ FORTRAN.
 V7 (HOWTO section 12):
 
 ```
-python tools/v7_pack.py -o v7root.rk --add docs/bench/v7:/usr/bench --add DIR_WITH_DHRYSTONE:/usr/dhry
+python tools/v7_pack.py -o v7root.rk --usr v7usr.rk --add docs/bench/v7:/bench --add DIR_WITH_DHRYSTONE:/dhry
 ...
-# cd /usr/bench
+# cd /bench
 # cc -O -o sieve sieve.c
 # cc -O -o whet whet.c -lm
 # time ./sieve
 # time ./whet 30
-# cd /usr/dhry
+# cd /dhry
 # cc -O -DHZ=60 -o dhry dhry_1.c dhry_2.c
 # echo 20000 | time ./dhry
 ```

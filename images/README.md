@@ -1,10 +1,10 @@
 # Ready-to-flash Unix images
 
 **Read this first (2026-10-21).** The Pico 2 W, Pico Plus 2 W and Pico W files were rebuilt on
-2026-10-21 from the source of commit `5064ad4` (the Pico 2 W's 152 KB of memory and 254-block write
-overlay, so V6's cc runs there; the J-11's floating point unit on the RP2350 builds; the PC's references
-in I space; on top of the hot paths in assembly and Mini-Unix's swap by process slot of 2026-10-20), from
-a clean `git archive`, and each file was run on its board as described
+2026-10-21 from the source of commit `658cc72` (V7's two-step auto-boot; the Pico 2 W's 152 KB of memory
+and 254-block write overlay, so V6's cc runs there; the J-11's floating point unit on the RP2350 builds;
+the PC's references in I space; on top of the hot paths in assembly and Mini-Unix's swap by process slot
+of 2026-10-20), from a clean `git archive`, and each file was run on its board as described
 below. The DEC diagnostic ladder gives 17 of 19 (the two J-11 HALTs) on the Pico 2 W and the Pico W
 with firmware built from the same source. The RP2350 files keep
 their packs at 0x10240000 and 0x104C0000, clear of the region a radio's firmware is kept in
@@ -33,7 +33,7 @@ The UNIX files inside the disk packs are covered by the Caldera licence in
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `pico2w-v6/combined.uf2` | 3,231,744 | `262af6be9a2561d4de92497e1e04f2adddc467260c983a71f579470387fa2cc1` |
+| `pico2w-v6/combined.uf2` | 3,232,768 | `449a50681e5e1146c67a85592bfbfb17173ae8fe10771f70c36deff5226c8fd4` |
 
 Firmware and disk pack in one UF2: hold BOOTSEL, plug in, copy the file to
 the `RP2350` drive. At the serial console:
@@ -46,7 +46,7 @@ mem = 556
 #
 ```
 
-`time od /rkunix >/dev/null` takes real 10.0 s, user 9.8 s, 10.47 s timed from the host, on a Pico 2 W
+`time od /rkunix >/dev/null` takes real 10.0 s, user 9.8 s, 10.46 s timed from the host, on a Pico 2 W
 with this file (2026-10-21; 10.36 s timed from the host with the file of 2026-10-20; 13.24 s before the hot paths in assembly of 2026-10-19, 13.86 s before
 the paste fix, 14.22 s before the dispatch tails in assembly, 17.43 s before the compiler's code
 generation pass of 2026-10-03, 19.3 s before the dispatch pass of 2026-10-03, 21.7 s before the
@@ -67,7 +67,7 @@ works; use `df /dev/rk0` (plain `df` looks for V6's built-in `/dev/rk2` and
 
 | Board | File | Size | SHA-256 |
 |---|---|---|---|
-| Pimoroni Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w)): RP2350B, PSRAM chip select GPIO47, 16 MB flash | `picoplus2/combined.uf2` | 9,420,288 | `23d8ed003cd3d6b122c69ff18f398679854a11f89f16ed9bcaf95ba50fdf3279` |
+| Pimoroni Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w)): RP2350B, PSRAM chip select GPIO47, 16 MB flash | `picoplus2/combined.uf2` | 9,421,824 | `be5ffdae89ddf4d29765c51a4fa5f270f9d6a62faf336615a6794f0906887cee` |
 | Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM ([6130](https://www.adafruit.com/product/6130)): RP2350A, GPIO8, 8 MB flash | `feather/combined.uf2` | 9,378,816 | `cebc0629fda95a4975144c330f84a7baf9ac5b1219e5e6392b043d0653a8d722` |
 
 Each is one UF2 with the firmware, RK0 (the V6 root pack, as in `pico2w-v6/`,
@@ -75,12 +75,11 @@ plus `/dev/rk1`) and RK1 (V6's source pack, `../media/unix/v6src.gz`).
 
 `picoplus2/combined.uf2` was copied to a Pico Plus 2 W's boot drive on 2026-10-21 and
 `docs/psram/proof.txt` passes (`mem = 1036`, `ps`, `df`, RK1 mounted, the C compiler builds and
-runs a program), `time od /rkunix >/dev/null` takes 10.75 s timed from the host (10.42 s with the file
+runs a program), `time od /rkunix >/dev/null` takes 10.66 s timed from the host (10.42 s with the file
 built from `dccf68e`; 13.37 s before the hot paths in assembly), and no clock tick is dropped. Its
-firmware (SHA-256 `d1e6ab8a...184c`) has the floating point unit, which V7 and the benchmarks of
+firmware (SHA-256 `1264284c...b2d1`) has the floating point unit, which V7 and the benchmarks of
 `../docs/BENCHMARKS.md` use; the pack regions have the checksums the board prints at start-up
-(`RK0 21C285A3 5CA82BF0 RK1 1215D2AC 967B3EC6`). V7 is not in this file: its pack is built with
-`tools/v7_pack.py` (HOWTO section 12). It is for the Pico Plus 2 and the Pico Plus
+(`RK0 21C285A3 5CA82BF0 RK1 1215D2AC 967B3EC6`). V7 is in `picoplus2-v7/` (below). It is for the Pico Plus 2 and the Pico Plus
 2 W (same chip, pin and flash by the makers' board files); the radio is not used.
 
 `feather/combined.uf2` is the 2026-10-07 build of the earlier layout (see the top of this file):
@@ -94,6 +93,33 @@ python tools/tape2pico.py --empty
 python tools/psram_build.py --board picoplus2 --compiler PureMetalForge.exe
 python tools/psram_build.py --board feather   --compiler PureMetalForge.exe
 ```
+
+## Pimoroni Pico Plus 2 W: Seventh Edition Unix (V7), 1 MB, floating point
+
+| File | Size | SHA-256 |
+|---|---|---|
+| `picoplus2-v7/combined.uf2` | 9,421,824 | `4b67b68eedacd69c9439f1079b6fdb7ec271c1893e9d5ad3ecb0377ac236d218` |
+
+The same firmware as `picoplus2/combined.uf2` (SHA-256 `1264284c...b2d1`, with the J-11's floating
+point unit), with V7's packs: RK0 the root file system and kernel (`tools/v7_pack.py`), RK1 a `/usr`
+of 4,000 blocks (the libraries and nroff's macros, the manual, the headers). Copied to a Pico Plus 2 W's
+boot drive on 2026-10-21, it boots by itself:
+
+```
+auto-boot: RK0, switches 000000, then "boot" at the @ prompt, then "rk(0,0)rkunix" at the : prompt. Press Esc within 2 s for the diagnostic console.
+memory 1024 KB, as the pack asks
+booting RK0, switches 000000
+@boot
+: rk(0,0)rkunix
+mem = 973120
+#
+```
+
+Tried on the board with this file: a C program with `double` arithmetic compiles and prints the right
+answer; `awk` (3.5 1.41421 2.71828), `dc` (2^100), RK1 mounted on `/usr`, `df /dev/rk0 /dev/rk1`, `man
+echo`, `ps` and `ps alx`; Ctrl-D to multi-user, where `/etc/rc` mounts RK1 and root logs in with no
+password. The pack checksums the board prints: `RK0 6795FB47 3E7B1015 RK1 CE4E3DF9 8FC9D376`. Memory
+1024 KB; 0 flash writes. HOWTO section 12 has the use and the build.
 
 ## Pico W (RP2040): Mini-Unix
 
