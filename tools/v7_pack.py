@@ -143,6 +143,8 @@ def main():
         d = open(out, "rb").read()
         open(out, "wb").write(d + bytes(BLOCKS * 512 - len(d)))
         run(v7fs, "put", out, kern, "/rkunix", "--mode", "0644", "-o", out)
+        if "unix" not in run(v7fs, "ls", out, "/").split():  # ps reads its names from /unix: the kernel that runs
+            run(v7fs, "ln", out, "/rkunix", "/unix", "-o", out)
         for name, kind, major, minor in DEVICES:
             run(v7fs, "mknod", out, "/dev/" + name, kind, major, minor, "--mode", "0640", "-o", out)
         rc = run(v7fs, "cat", out, "/etc/rc")
