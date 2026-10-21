@@ -11,8 +11,7 @@ then, for a PSRAM board (the only boards with memory enough for V7):
 
 and at the firmware's prompt: MEM 1024, BOOT RK0, then at /boot's ':'
     rk(0,0)rkunix
-which comes up single-user ('#'; type stty -lcase first - the console
-starts in upper-case mode).
+which comes up single-user ('#', in lower case: THE CONSOLE below).
 
 THE STEPS, each one a tool of this directory:
   1. v7tape.py restore: tape file 5 (the root dump) into a new 4000-block
@@ -29,7 +28,14 @@ THE STEPS, each one a tool of this directory:
      block 0 the boot block (rkuboot.py).
   4. --add: each LOCALDIR's files into a new directory of the pack.
 
-THE TWO PATCHES - both about the Unibus map, which the RK11 (an 18-bit
+THE CONSOLE. The kernel opens the console with the flags of a model 33
+Teletype (kl.c: EVENP|LCASE|ECHO|XTABS|CRMOD|CR2): upper case only, and CR2,
+a pause of 10 clock ticks after every newline for the carriage to get back.
+On a USB terminal the pause is all there is to it - 60 lines of output took
+10 s (Dhrystone's report: real 31 s for 18 s of computing). The kernel's
+constant is patched to EVENP|ECHO|XTABS|CRMOD: no pause, lower case.
+
+THE TWO MEMORY PATCHES - both about the Unibus map, which the RK11 (an 18-bit
 Unibus controller) reaches memory through on a 22-bit machine:
   /boot  (M.s) sets MMR3 to 065, the map switched on, and never loads the
          map's registers; its own RK reads then go nowhere (/boot reports
@@ -116,6 +122,14 @@ def main():
                 break
         else:
             fail("rkunix: no 'bit $20,SSR3' in its text")
+        # kl.c klopen: tp->t_flags = EVENP|LCASE|ECHO|XTABS|CRMOD|CR2 (mov $026234,36(r3));
+        # without CR2 and LCASE: 006230
+        for o in range(0, len(text) - 6, 2):
+            if struct.unpack_from("<3H", text, o) == (0o012763, 0o026234, 0o36):
+                struct.pack_into("<H", k, 16 + o + 2, 0o006230)
+                break
+        else:
+            fail("rkunix: no 'mov $026234,36(r3)' (the console's flags) in its text")
         open(kern, "wb").write(k)
         # 3. the pack
         d = open(out, "rb").read()

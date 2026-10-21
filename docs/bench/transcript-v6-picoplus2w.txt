@@ -1,0 +1,114 @@
+PDP-11 J-11 on Pico 2: serial tape reader ready
+PSRAM: 8 MB on GPIO47, ID 0D 5D 53, clock 75000 kHz; packs copied and checked in 1669 ms (copy 881, check 303), memory cleared in 483 ms; memory 3812 KB; RK0 (whole, 4872 blocks) and RK1 (4000 blocks stored, 4000 exist: blocks 4000-4871 of RK1 answer with a drive error) writable in PSRAM, never written to flash; the PSRAM copy's kernel patch applied (block 1517 +90)
+PSRAM windows: packs uncached, memory cached
+pack checksums: RK0 864FFAE5 2FB6EAC0 RK1 1215D2AC 967B3EC6
+RK0: v6root, 4872 blocks, running from its PSRAM copy: writable, every write lost at power-off, the whole swap area (4000-4871); the flash is never written
+auto-boot: RK0, switches 173030, then "rkunix" at the @ prompt. Press Esc within 2 s for the diagnostic console.
+booting RK0, switches 173030
+@rkunix
+mem = 1036
+
+# S#T TY -LCASE
+# 
+[host: 0.13 s]
+# chdir /usr
+# 
+[host: 0.03 s]
+# cc -O sieve.c
+# 
+[host: 3.74 s]
+# mv a.out sieve
+# 
+[host: 0.17 s]
+# cc -O whet.c
+14: No floating point!
+14: No floating point!
+14: No floating point!
+19: No floating point!
+19: No floating point!
+19: No floating point!
+19: No floating point!
+26: No floating point!
+26: No floating point!
+26: No floating point!
+26: No floating point!
+49: No floating point!
+49: No floating point!
+51: No floating point!
+52: No floating point!
+54: No floating point!
+54: No floating point!
+54: No floating point!
+57: No floating point!
+57: No floating point!
+57: No floating point!
+64: No floating point!
+67: No floating point!
+# 
+[host: 2.16 s]
+# mv a.out whet
+Source file non-existent
+# 
+[host: 0.16 s]
+# time sieve
+10 iterations
+
+1899 primes
+
+real        3.0
+user        2.5
+sys         0.0
+# 
+[host: 2.83 s]
+# time sieve
+10 iterations
+
+1899 primes
+
+real        3.0
+user        2.5
+sys         0.1
+# 
+[host: 2.82 s]
+# time whet
+Command not found.
+
+real        0.0
+user        0.0
+sys         0.0
+# 
+[host: 0.24 s]
+# time whet
+Command not found.
+
+real        0.0
+user        0.0
+sys         0.0
+# 
+[host: 0.24 s]
+# 
+[board_session: exit 0]
+cc -f -O whet.c
+# 
+[host: 9.95 s]
+# mv a.out whet
+# 
+[host: 0.17 s]
+# time whet
+1000 KWhetstones done; X = 18178/10000
+
+real        5.0
+user        4.4
+sys         0.1
+# 
+[host: 4.78 s]
+# time whet
+1000 KWhetstones done; X = 18178/10000
+
+real        4.0
+user        4.4
+sys         0.1
+# 
+[host: 4.78 s]
+# 
+[board_session: exit 0]

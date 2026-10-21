@@ -1,0 +1,38 @@
+PDP-11 J-11 on Pico 2: serial tape reader ready
+PSRAM: 8 MB on GPIO47, ID 0D 5D 53, clock 75000 kHz; packs copied and checked in 1669 ms (copy 882, check 303), memory cleared in 483 ms; memory 3812 KB; RK0 (whole, 4872 blocks) and RK1 (4000 blocks stored, 4000 exist: blocks 4000-4871 of RK1 answer with a drive error) writable in PSRAM, never written to flash
+PSRAM windows: packs uncached, memory cached
+pack checksums: RK0 9E42FA8A C6E98136 RK1 1215D2AC 967B3EC6
+RK0: v7root, 4872 blocks, running from its PSRAM copy: writable, every write lost at power-off, the whole swap area (4000-4871); the flash is never written
+MEM 1024
+memory 1024 KB from the next BOOT
+BOOT RK0
+booting RK0, switches 000000
+boot
+Boot
+: 
+[term: no ": " within 5 s]
+rk(0,0)rkunix
+mem = 973120
+# STTY -LCASE
+# cd /usr/givens
+# cc -O -DKANDR -DASCII -c weyl32.c
+# cc -O -DKANDR -DASCII -c tictoc.c
+# cc -O -DKANDR -DASCII -o givens givens.c weyl32.o tictoc.o -lm
+# time ./givens
+givens--Solve Ax=b using Givens rotations
+PDP-11 Version 1
+
+#   m     n            t       q        FLOPS
+    4     4         5.65     512     85175.05
+    6     6        7.317     256     92500.07
+    9     9        9.883     128     97042.86
+   13    13        6.266      32     100297.4
+   19    19        8.633      16     100768.6
+   28    28        6.383       4     98937.95
+   42    42        9.517       2     103696.8
+Error allocating 31752 bytes for A!
+
+real     3:27.0
+user     3:26.3
+sys         0.9
+# 

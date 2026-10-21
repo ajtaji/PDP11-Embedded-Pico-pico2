@@ -1,0 +1,74 @@
+# Benchmarks
+
+Part of the [PDP-11 emulator for the Pico W and Pico 2 W](../README.md).
+Classic benchmarks run under Unix on the emulator, on a Pimoroni Pico Plus 2 W
+(RP2350B at 150 MHz, the PSRAM firmware of `images/picoplus2/`, which has the
+J-11's floating point unit), on 2026-10-21. Times are V7's or V6's own `time`
+(the 60 Hz line clock) unless marked as timed from the host. The transcripts
+are in [bench/](bench/).
+
+## Results
+
+| Benchmark | Unix | Result | For comparison |
+|---|---|---|---|
+| Dhrystone 2.1 (Weicker; netlib's C source unchanged, `cc -O -DHZ=60`, 20,000 runs) | V7 | **1,125.7 Dhrystones/s** (888 us a run), 0.64 DMIPS (VAX-11/780 = 1757); every "should be" in its self-check right | - |
+| Whetstone, double precision (netlib's C Whetstone, Painter 1998; [V7 port](bench/v7/whet.c): K&R declarations only) | V7 | 30 loops (3,000 KWhetstones) in 16.4 s CPU: **about 183 KWIPS** | PDP-11/70 with FPP, RSTS/E FORTRAN-IV-PLUS, double precision: 479 (the DECUS RSX80A Whetstone listing, `whet.ftn`); single precision 632 |
+| Whetstone, double precision ([V6 port](bench/v6/whet.c): the same arithmetic in 1975 C, int loop counts) | V6 | 1,000 KWhetstones in 4.4 s CPU (4.78 s from the host): **about 227 KWIPS** | the same |
+| Sieve of Eratosthenes (Gilbreath, BYTE September 1981: 8190 flags, 10 iterations, 1899 primes) | V7 | **2.5 s CPU** (2.9 s from the host) | C on a PDP-11/70: just over 1.12 s (BYTE 1981, as summarised by Wikipedia's "Byte Sieve") |
+| the same ([V6 port](bench/v6/sieve.c): `=+`) | V6 | **2.5 s CPU** (2.83 s from the host) | the same |
+| givens (E. J. Olson's pichart PDP-11 version: Givens-rotation least squares in double precision, golden run and consistency check at every size; unchanged, `cc -O -DKANDR -DASCII`) | V7 | **85,175 FLOPS at 4x4 to 103,697 at 42x42**; 63x63 ends "Error allocating" (64 KB of data per process) | - |
+
+V6's Whetstone beats V7's because its loop counters are 16-bit `int`s
+where the C Whetstone counts in `long`s, and V6's `cc -f` and V7's `cc`
+compile the floating point differently; the arithmetic done is the same.
+Dhrystone 2.1 needs `typedef` and `enum`, which V6's C compiler does not
+have, so it runs on V7 only.
+
+So, roughly: integer work at about half a PDP-11/70 (the Sieve), floating
+point at about 40% of an 11/70 with its FP11-C running DEC's optimising
+FORTRAN.
+
+## How to repeat them
+
+V7 (HOWTO section 12):
+
+```
+python tools/v7_pack.py -o v7root.rk --add docs/bench/v7:/usr/bench --add DIR_WITH_DHRYSTONE:/usr/dhry
+...
+# cd /usr/bench
+# cc -O -o sieve sieve.c
+# cc -O -o whet whet.c -lm
+# time ./sieve
+# time ./whet 30
+# cd /usr/dhry
+# cc -O -DHZ=60 -o dhry dhry_1.c dhry_2.c
+# echo 20000 | time ./dhry
+```
+
+Dhrystone's `dhry.h`, `dhry_1.c` and `dhry_2.c` are netlib's
+(<https://www.netlib.org/benchmark/dhry-c>, a shell archive) and are not
+copied here.
+
+V6 on a PSRAM board (the 56 KB Pico 2 W's `cc` stops with a memory fault -
+see Known limits in the README): put the two files of `docs/bench/v6/` on
+the pack with `tools/v6fs.py put`, then
+
+```
+# stty -lcase
+# cc -O sieve.c; mv a.out sieve
+# cc -f -O whet.c; mv a.out whet
+# time sieve
+# time whet
+```
+
+(`-f`: V6's C compiler refuses floating point without it - "No floating
+point!" - and links its floating point interpreter, which on this machine
+never runs: the instructions go to the FPU.)
+
+## What changed V7's times
+
+The console's carriage-return delay. V7 opens the console with a model 33
+Teletype's flags, among them a pause of 10 clock ticks after every newline;
+Dhrystone's 60-line report then took 13 s of a 31 s run. `tools/v7_pack.py`
+patches the kernel's constant (TOOLS.md); with it the same run takes 20.8 s
+from the host, its computing 18 s as before.

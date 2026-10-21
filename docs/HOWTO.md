@@ -428,9 +428,9 @@ BOOT RK0
 rk(0,0)rkunix
 ```
 
-V7 prints `mem = 973120` and stops at the single-user prompt `#`. Type
-`stty -lcase` first: the console starts in upper-case mode. DEL interrupts
-a program. Stay single-user: Ctrl-D goes to multi-user and asks for a root
+V7 prints `mem = 973120` and stops at the single-user prompt `#`, in lower
+case (the pack's kernel opens the console without the Teletype's upper case
+and carriage-return delay: `tools/v7_pack.py`). DEL interrupts a program. Stay single-user: Ctrl-D goes to multi-user and asks for a root
 password this pack does not give.
 
 **What works.** The shell, the tools of the root file system, `cc` with
@@ -454,4 +454,7 @@ python tools/v7_pack.py -o v7root.rk --add givens-pdp:/usr/givens
 It solves least-squares systems of growing size in double precision, checks
 each against a golden run, and prints FLOPS per size; it ends at 63x63 with
 `Error allocating 31752 bytes for A!` (a PDP-11 process has 64 KB of data).
+
+Dhrystone, Whetstone and the BYTE Sieve, and how to run them, are in
+[BENCHMARKS.md](BENCHMARKS.md).
 

@@ -26,7 +26,7 @@ The emulated machine has a console on the USB serial port, an RK11 disk controll
 | Flash images | `combined.uf2` (one file) | `firmware.uf2` then `minix.uf2` (two files) |
 | Disk | RK05 pack in flash, read-only | RK05 pack in flash, read-only |
 | DEC diagnostic ladder | 17 of 19 pass (the other two halt by design for a J-11) | 17 of 19 pass (the same two) |
-| Seventh Edition (V7) | not supported | not supported |
+| Seventh Edition (V7) | on the PSRAM boards (a megabyte of memory): see [Seventh Edition and floating point](#seventh-edition-v7-and-floating-point) | not supported |
 
 ## Features
 
@@ -167,6 +167,21 @@ RK0: v6root, 4872 blocks, running from its PSRAM copy: writable, every write los
 - **If the PSRAM is not found**, or is not a working 8 MB chip, the pin is given back and the board runs as the Pico 2 W build does (56 KB, the pack read-only in flash, `mem = 76`), and the first line says why. Shown on a board by building the Pimoroni image with the Feather's pin: `PSRAM: not in use - the PSRAM library found none (its error 5: no chip answered the ID read on this pin). Running as the Pico 2 build: 56 KB, the pack read-only in flash.` A 4 MB chip and a chip that fails its test could not be shown on these boards; `tools/psram_desk_check.py` covers them on the emulator and has not been run again since the firmware moved to the library.
 - **Getting it onto a board:** copy `combined.uf2` to the board's boot drive (hold BOOT while plugging in), or, with no button and no drive, send the packs over USB serial with `tools/pack_install.py` and upload the firmware with the compiler: [docs/HOWTO.md, section 10](docs/HOWTO.md#10-the-psram-boards). The boards here were loaded the second way; the firmware and pack bytes on them are the ones in the image files (the firmware's SHA-256 and the pack checksums were compared), but the files themselves were not copied to a boot drive.
 
+## Seventh Edition (V7) and floating point
+
+On the PSRAM boards the machine has the J-11's floating point unit and a megabyte for V7. `tools/v7_pack.py` builds V7's pack from the distribution tape in `media/unix/`; at the firmware's prompt `MEM 1024`, `BOOT RK0`, and at `/boot`'s `:` type `rk(0,0)rkunix` ([docs/HOWTO.md, section 12](docs/HOWTO.md#12-seventh-edition-v7-on-the-pico-plus-2-w)). It comes up single-user with `cc` (floating point included), `awk`, `adb` and the rest of the root file system.
+
+Measured on a Pico Plus 2 W on 2026-10-21 ([docs/BENCHMARKS.md](docs/BENCHMARKS.md)):
+
+| Benchmark | V7 | V6 |
+|---|---|---|
+| Dhrystone 2.1 | 1,125.7 Dhrystones/s (0.64 DMIPS) | - (needs `typedef` and `enum`) |
+| Whetstone, double precision | about 183 KWIPS | about 227 KWIPS |
+| BYTE Sieve, 10 iterations | 2.5 s | 2.5 s |
+| givens (pichart), double precision | 85,000-104,000 FLOPS | - |
+
+For comparison, a PDP-11/70 with its FP11 ran the double precision Whetstone at 479 under DEC's FORTRAN-IV-PLUS, and the Sieve in C in just over 1.1 s.
+
 ## Known limits
 
 - **56 KB of PDP-11 memory** (000000-157777) plus the I/O page. V6 reports `mem = 76` at boot; about 15 KB is left for user programs once its kernel is in.
@@ -176,7 +191,8 @@ RK0: v6root, 4872 blocks, running from its PSRAM copy: writable, every write los
   - When the file-write blocks are used up, a write to a new block fails: Unix sees a disk error, the console prints once `[RK0: the RAM overlay for file writes is full ...]`, and the statistics block shows `FULL: n writes refused`. Nothing already written changes and nothing reaches the flash; power off to start clean.
 - **Nothing is saved across a power cycle.** Every disk write, the swap area included, goes to RAM; the next power-up starts from the pack as flashed. `sync` does no harm but saves nothing. (The flash-wear warnings in [disk_boot_readme.md](disk_boot_readme.md) concern emulators that write the flash; this firmware never does.)
 - **V6 on the Pico 2 W:** `ps` works; `df` with no argument looks for V6's built-in `/dev/rk2` and `/dev/rp0`, which this machine does not have, so type **`df /dev/rk0`**. `dc` is too large for the 56 KB machine.
-- **Seventh Edition (V7) is not supported.** Its kernel alone needs about 74 KB of memory (text 32,704 + data 1,854 + bss 39,812 bytes) and the emulated machine has 56 KB. The V7 tape (`media/unix/v7.tap.gz`), `tools/v7ld.py` and `tools/rkuboot.py` are kept as archive and reference only.
+- **Seventh Edition (V7) runs on the PSRAM boards only.** Its kernel alone needs about 74 KB of memory (text 32,704 + data 1,854 + bss 39,812 bytes) and the Pico 2 W and Pico W have 56 KB. No ready image of it is in `images/`: build the pack with `tools/v7_pack.py` ([docs/HOWTO.md, section 12](docs/HOWTO.md#12-seventh-edition-v7-on-the-pico-plus-2-w)).
+- **V6's C compiler does not run on the 56 KB Pico 2 W:** `cc` stops with `Memory fault -- Core dumped` before compiling anything (seen on 2026-10-21, with the image of 2026-10-20 as well). It runs on the PSRAM boards.
 - **Packs:** RK05 only (up to 4872 blocks), drive 0 only (RK1 as well on the PSRAM boards). On the RP2350 boards the pack starts at 0x10240000, so the Pico 2 W's 4 MB hold 1.75 MB of pack: the V6 root pack is stored mapped (2,891 blocks in use). `images/pico2w-v6/combined.uf2` is that build; it ran on a Pico 2 W on 2026-10-20.
 - **The Pico W image uses the flash where the radio's firmware would go; a Pico W running it cannot use its radio.** Its 2 MB cannot hold Mini-Unix (3,061 blocks in use) clear of that region; the firmware says so at start-up and `tools/rk_image.py` when it packs. The Pico W image of 2026-10-20 ran on a Pico W.
 - **Mini-Unix:** a refused swap write can restart the shell.
@@ -184,7 +200,7 @@ RK0: v6root, 4872 blocks, running from its PSRAM copy: writable, every write los
 
 ## The emulated processor, and where it is known to differ from a real J-11
 
-The processor is a J-11 as far as the software run on it needs: the instruction set without floating point, the three modes, memory management with 18-bit and 22-bit mapping, the CPU error and maintenance registers, and on the PSRAM boards the Unibus map of a PDP-11/84. It boots the Unix systems named above and passes the diagnostic ladder as [media/diagnostics/ladder.txt](media/diagnostics/ladder.txt) states it. **It is not claimed to be an exact KDJ11.** No diagnostic written for the KDJ11 has been run on it (none is in the diagnostic image here); the diagnostics that have been run are for other processors (the 11/20 family, the 11/34, the 11/44, the F-11 of the 11/23), judged against the published manuals.
+The processor is a J-11 as far as the software run on it needs: the instruction set, with the FPJ11 floating point unit on the RP2350 builds (the Pico W has none: its floating point instructions trap as reserved), the three modes, memory management with 18-bit and 22-bit mapping, the CPU error and maintenance registers, and on the PSRAM boards the Unibus map of a PDP-11/84. It boots the Unix systems named above and passes the diagnostic ladder as [media/diagnostics/ladder.txt](media/diagnostics/ladder.txt) states it. **It is not claimed to be an exact KDJ11.** No diagnostic written for the KDJ11 has been run on it (none is in the diagnostic image here); the diagnostics that have been run are for other processors (the 11/20 family, the 11/34, the 11/44, the F-11 of the 11/23), judged against the published manuals.
 
 One behaviour was corrected from those runs: with a register as the source and memory as the destination, the register is read after the destination's address has been worked out, so `MOV R0,(R0)+` stores R0 already stepped and `MOV PC,X(R)` stores the address of the instruction plus 4 (KDJ11-A CPU Module User's Guide, EK-KDJ1A-UG-002, appendix B, table B-1, items 1 to 3). The F-11 CPU diagnostic CJKDBD0 halted at its test 264 before the change and runs to its test 405 after it; the 11/34 diagnostic DFKAA tests the 11/34's opposite behaviour in its test 145 and carries two patches in the ladder for that reason.
 
@@ -196,21 +212,22 @@ Known differences, found by those tapes and left as they are:
 - **A memory-management abort and an odd address in one instruction** (CKKTB test 13: the stacked PC is 4 higher than the 11/44 tape wants) and **the address errors of CKKTB test 34:** not settled by the manuals read.
 - **PDR bit 15 does not read back** (CKKTA test 31). On the KDJ11 it is the bit that bypasses the cache; the emulated machine has no cache.
 - **Tests of the F-11 tape that a J-11 must fail:** test 405 wants no trap from a word reference to an odd address (the F-11 has none; the J-11 traps: table B-1, item 21) and test 410 wants MFPT to answer 3 (the J-11 answers 5). The emulator behaves as the J-11 there; the tape was not run further.
-- **Not modelled at all:** floating point (the kernel for the PSRAM boards is built with the distribution's switch for a machine without it), the cache and its registers beyond what Unix reads, memory on the Unibus itself, the red stack trap, and the registers the KDJ11-B's boot ROM uses.
+- **The floating point unit is a port of SIMH's** (`pico2/fp11.pico2`, its notice kept), held to a second, separate port in Python (`tools/fp11_model.py`) and run by V7's C compiler, `awk` and the benchmarks; no DEC floating point diagnostic has been run on it (they are on an MSCP disk image, and the emulator has no MSCP controller).
+- **Not modelled at all:** the cache and its registers beyond what Unix reads, memory on the Unibus itself, the red stack trap, and the registers the KDJ11-B's boot ROM uses.
 
 ## Repository layout
 
 | Path | What it is |
 |---|---|
 | `images/` | Ready-to-flash UF2 files: `pico2w-v6/combined.uf2`, `picow-mini-unix/firmware.uf2` and `minix.uf2`, `picoplus2/combined.uf2`, `feather/combined.uf2`, with sizes and SHA-256 values in [images/README.md](images/README.md) |
-| `media/unix/` | Unix distributions from the Unix Heritage Society archive: V6 root and source packs, the V7 tape (archive only), Mini-Unix tapes, 1BSD and 2BSD |
+| `media/unix/` | Unix distributions from the Unix Heritage Society archive: V6 root and source packs, the V7 tape (the V7 pack is built from it: `tools/v7_pack.py`), Mini-Unix tapes, 1BSD and 2BSD |
 | `media/diagnostics/` | DEC MAINDEC and XXDP diagnostics, the ladder plan `ladder.txt` and `INDEX.md` |
 | `media/papertape/` | DEC Absolute Loader and Single-User BASIC paper tape images, with a SIM-H configuration file |
 | `media/README.md` | Sources and descriptions of everything in `media/` |
 | `mini-unix.rk05` | The Mini-Unix RK05 disk image the Pico W pack is built from |
-| `tools/` | Python host tools: `rk_image.py`, `tape2pico.py`, `tape_ladder.py`, `v6fs.py`, `rk_desk.py`, `rk11_model.py`, `pdp11asm.py`, `mmu_gen.py`, `psram_build.py`, `pack_install.py`, `board_session.py`, `psram_desk_check.py`, `v7ld.py`, `rkuboot.py` ([docs/TOOLS.md](docs/TOOLS.md)) |
+| `tools/` | Python host tools: `rk_image.py`, `tape2pico.py`, `tape_ladder.py`, `v6fs.py`, `rk_desk.py`, `rk11_model.py`, `pdp11asm.py`, `mmu_gen.py`, `psram_build.py`, `pack_install.py`, `board_session.py`, `psram_desk_check.py`, `od2bin.py`, `v7_pack.py`, `v7fs.py`, `v7tape.py`, `v7ld.py`, `rkuboot.py`, `fp11_model.py` ([docs/TOOLS.md](docs/TOOLS.md)) |
 | `J11_18MHz_KDJ11_BF/pico/`, `pico2/` | The firmware source for the RP2040 and the RP2350 (PureMetal; build with PureMetal Forge, which is not in this repository) |
-| `docs/HOWTO.md`, `docs/TOOLS.md` | The how-to and the tool reference |
+| `docs/HOWTO.md`, `docs/TOOLS.md`, `docs/BENCHMARKS.md` | The how-to, the tool reference, and benchmark results with their sources (`docs/bench/`) |
 | `disk_boot_readme.md` | Notes on RK05 disk storage and starting Unix, from the original emulator |
 | `boot-mini-unix.png`, `mini-unix-set-date.png` | Screenshots used on this page |
 | `EK-RK11D-OP-001.pdf`, `KL11_TeletypeControlManual.pdf`, `KW11-K_UsersMan.pdf` | DEC manuals for the RK11 disk controller, the KL11 teletype interface and the KW11-K clock |
@@ -229,5 +246,7 @@ Known differences, found by those tapes and left as they are:
 - **This repository's own work is under the [MIT licence](LICENSE):** the PureMetal firmware source, the tools and the docs. **Third-party material keeps its own terms and is not covered by it:** the Unix distributions and the disk images and UF2 files built from them (Caldera licence, [Caldera-license.pdf](Caldera-license.pdf), which also covers `tools/rkuboot.py`); the DEC manuals and diagnostics; and the files serialcomms contributed (the Mini-Unix pack `mini-unix.rk05`, `disk_boot_readme.md`, the two screenshots, the manuals and the paper tape files in `media/papertape/`; `git log --author=serialcomms` lists them).
 - The original C emulator is by **serialcomms**: [Serialcomms/Pico-PDP11-Pimoroni-RISCV-Staging](https://github.com/Serialcomms/Pico-PDP11-Pimoroni-RISCV-Staging). This repository holds the PureMetal work split out of that repository, with its history.
 - **UNIX:** the UNIX files in `media/unix/`, in the disk packs and in `images/` are covered by the Caldera licence ([Caldera-license.pdf](Caldera-license.pdf)). They come from the Unix Heritage Society archive (tuhs.org). The two Berkeley archives (1BSD, 2BSD) predate the BSD licence text and carry no separate licence file; they are kept as TUHS distributes them, with the University of California, Berkeley credits in their own READ_ME files. `tools/rkuboot.py` reproduces V7's `/mdec/rpuboot.s` and is covered by the same licence.
+- **SIMH:** `J11_18MHz_KDJ11_BF/pico2/fp11.pico2` and `tools/fp11_model.py` are ports of SIMH's `pdp11_fp.c`, Copyright (c) 1993-2023 Robert M Supnik, under its permission notice, which both files carry.
+- **Benchmarks:** `docs/bench/*/whet.c` derive from netlib's C Whetstone (Copyright 1998 Painter Engineering, Inc.; its comment block and terms kept in each).
 - **DEC material:** the diagnostics in `media/diagnostics/` are Digital Equipment Corporation diagnostics, from bitsavers.org and pcjs.org, kept here for testing the emulator. The paper tape images in `media/papertape/` come from <http://iamvirtual.ca/PDP-11/Basic-11/>. See [media/README.md](media/README.md).
 - **Questions and news:** <https://forum.ajtaji.com>

@@ -289,8 +289,10 @@ tape's own kernel objects (`v7ld.py`), pads the pack to 4872 blocks (V7
 swaps at blocks 4000-4871), makes `/dev/rk0 rk1 rrk0 rrk1 swap`, takes the
 mount of `/dev/rp3` out of `/etc/rc`, writes the boot block
 (`rkuboot.py`), and copies each `--add` directory's files into a new
-directory. Two patches, both about the Unibus map (the script's header has
-the whole story):
+directory. It patches the kernel's console flags (V7 opens the console as a
+model 33 Teletype: upper case, and a pause of 10 clock ticks after each
+newline - 13 s of a 31 s Dhrystone run went to it), and makes two patches
+about the Unibus map (the script's header has the whole story):
 
 - `/boot` switches the map on without loading its registers, so its own
   disk reads go nowhere; patched to leave it off (MMR3 025, not 065).
