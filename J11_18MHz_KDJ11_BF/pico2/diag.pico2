@@ -69,6 +69,7 @@ CompilerElse
 #PSRAM_CS_PIN = 8            ; its chip select: GPIO8 on the Adafruit Feather RP2350, GPIO47 on the Pimoroni Pico Plus 2
 #FLASH_CHIP = $400000        ; the flash: 4 MB on the Pico 2 W; 8 MB on the Feather RP2350, 16 MB on the Pico Plus 2 (#PSRAM = 1)
 CompilerEndIf
+#PSRAM_SRAM_KB = 224         ; with PSRAM: how much of the PDP-11 memory is in SRAM (cpu.pico2, #RAM_BYTES); the rest is in the PSRAM. 224: with CpuRun in SRAM too (psram_build.py), the most that leaves OpTable its 32 KB in one piece
 #SRAM_MEM_KB = 152           ; the PDP-11 memory without PSRAM, in SRAM (cpu.pico2, #RAM_BYTES): 152 KB, the rest of the SRAM going to the file-write overlay (disk.pico2)
 #PS_DISK_UNCACHED = 1        ; the packs in PSRAM: 1 = through the uncached window, 0 = through the XIP cache
 #PS_MEM_UNCACHED = 0         ; the PDP-11 memory in PSRAM: the same choice (psram_pdp11.pico2, WHICH WINDOW)

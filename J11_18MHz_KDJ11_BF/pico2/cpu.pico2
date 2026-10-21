@@ -128,13 +128,14 @@
 ; address - memory management off - reaches only #RAM16 of it (000000-157777;
 ; 160000 up is the I/O page), so the unmapped paths test against #RAM16 and
 ; the mapped ones (the MMU, its windows, the RK11's transfers) against
-; #RAM_BYTES. With PSRAM, Mem() is the first 56 KB and the rest is in the
-; PSRAM (#PS_MEM); without it the program says how much SRAM to give
+; #RAM_BYTES. With PSRAM, Mem() is the first #PSRAM_SRAM_KB (224 in diag.pico2:
+; most of what an 18-bit machine has, so the kernels and their first processes
+; run from SRAM; 2026-10-21) and the rest is in the PSRAM (#PS_MEM); without it the program says how much SRAM to give
 ; (#SRAM_MEM_KB, set beside #PSRAM: 152 in diag.pico2, which gives the rest of
 ; the SRAM to the file-write overlay; 56 in the test programs; at most 248, all
 ; an 18-bit machine reaches below its I/O page).
 CompilerIf #PSRAM = 1
-#RAM_BYTES   = $E000        ; 000000-157777, 56 KB in SRAM, the rest in the PSRAM
+#RAM_BYTES   = #PSRAM_SRAM_KB * 1024   ; the first #PSRAM_SRAM_KB in SRAM, the rest in the PSRAM
 CompilerElse
 #RAM_BYTES   = #SRAM_MEM_KB * 1024
 CompilerEndIf
@@ -273,6 +274,11 @@ Global RunSave.i            ; CpuRun's RunFrom while the mapped loop runs
 ; Fw(3) the address of the mapped instruction being run (MMR2). A literal
 ; index costs compiled code nothing: Fw(1) is the address of Fw plus 4.
 Global Dim Fw.i(4)
+; FwSave(m * 4 + 0..2): mode m's fetch window (Fw(0..2)) while another mode
+; runs - PswBanks keeps it and gives it back, so a trap or an interrupt and
+; its RTI do not find the window again each way (2026-10-21). Emptied with
+; the map: MmuRecompute (every mode), MmuRegChanged (an I entry's mode).
+Global Dim FwSave.i(16)
 ; The dispatch tails as assembly blocks (instructions.pico2, and the mapped
 ; ones tools/mmu_gen.py writes). They name the reserved registers through
 ; "ASM Uses", so they need PureMetal Forge main f408822d or later; 0 builds
@@ -285,6 +291,10 @@ Global Dim Fw.i(4)
 ; EaWordM's four commonest modes in assembly, called by the mapped handlers
 ; (tools/mmu_gen.py, ASM_EAW; held to EaWordM by asm_check.pico2). 0: they call EaWordM.
 #ASM_EA = 1
+; PushM and PopM's fast paths in assembly (__pushm, __popm), and JSR, RTS and DIV
+; in assembly in front of their plain handlers (tools/mmu_gen.py, pico2_ops; held to
+; the plain ones by asm_check.pico2). Needs #ASM_EA = 1. 0: the plain handlers alone.
+#ASM_OPS = 1
 ; The FPJ11 floating point unit (fp11.pico2, included after this file): 1
 ; executes 170000-177777; 0 leaves them reserved instructions (trap to 10).
 #FP11 = 1
@@ -477,6 +487,10 @@ ProcedureRAM PswBanks(v.i)
   If (v ! PswHigh) & $C000
     StackBank((PswHigh >> 14) & 3) = Reg(6)
     Reg(6) = StackBank((v >> 14) & 3)
+    t = CurI >> 2                        ; the old mode's fetch window, kept for its return
+    FwSave(t) = Fw(0)
+    FwSave(t + 1) = Fw(1)
+    FwSave(t + 2) = Fw(2)
   EndIf
   If (v ! PswHigh) & $0800
     For i = 0 To 5
@@ -488,8 +502,12 @@ ProcedureRAM PswBanks(v.i)
   CurI = ((v >> 14) & 3) << 4            ; the memory management unit's entry bases
   CurD = CurI + 8
   PrvBase = ((v >> 12) & 3) << 4
-  Fw(0) = #MAP_NONE                    ; and a new mode: a new fetch window
-  Fw(1) = 0
+  If (v ! PswHigh) & $C000             ; a new mode: its own fetch window, as it left it (or
+    t = CurI >> 2                        ; empty: FwSave, below). The register set and the
+    Fw(0) = FwSave(t)                    ; previous mode do not touch the fetch, so they keep it
+    Fw(1) = FwSave(t + 1)
+    Fw(2) = FwSave(t + 2)
+  EndIf
 EndProcedure
 
 ; The stack pointer of mode m (0 kernel, 1 supervisor, 3 user), wherever
@@ -705,8 +723,12 @@ ProcedureRAM MmuRecompute()
   CurI = ((PswHigh >> 14) & 3) << 4
   CurD = CurI + 8
   PrvBase = ((PswHigh >> 12) & 3) << 4
-  Fw(0) = #MAP_NONE                    ; the fetch window is found again
+  Fw(0) = #MAP_NONE                    ; the fetch window is found again, every mode's
   Fw(1) = 0
+  For e = 0 To 3
+    FwSave(e * 4) = #MAP_NONE
+    FwSave(e * 4 + 1) = 0
+  Next
 EndProcedure
 
 ; One register pair (entry r) changed - a PAR or PDR write, or W set: only
@@ -720,9 +742,13 @@ ProcedureRAM MmuRegChanged(r.i)
     If MapReg(r + 8) = r
       MmuMapEntry(r + 8)
     EndIf
+    FwSave((r >> 4) * 4) = #MAP_NONE     ; an I entry: its mode's fetch window is found again
+    FwSave((r >> 4) * 4 + 1) = 0         ; (a D entry is never fetched through)
+    If (r & $30) = CurI
+      Fw(0) = #MAP_NONE
+      Fw(1) = 0
+    EndIf
   EndIf
-  Fw(0) = #MAP_NONE                    ; the fetch window is found again
-  Fw(1) = 0
 EndProcedure
 
 ProcedureRAM MmuReset()                     ; power-up and the bus INIT: MMR0 and MMR3 cleared

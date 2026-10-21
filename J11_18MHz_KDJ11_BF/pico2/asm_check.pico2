@@ -19,6 +19,8 @@
 ;  is the only one that writes Src) and every early exit to the plain body
 ;  (outside a window, odd, R7, the stack limit, a page that is not there).
 ;
+;  It also holds JSR, RTS and DIV (tools/mmu_gen.py, pico2_ops: __pushm and
+;  __popm, SDIV) to their plain handlers the same way (ASMCHECK ops).
 ;  It also holds __eaw, the handlers' operand address (tools/mmu_gen.py,
 ;  ASM_EAW), to EaWord's own body (EaWordMRef below) on random specs and
 ;  registers. Every round prints
@@ -449,13 +451,17 @@ EndProcedure
 
 Procedure.i PickMode()
   Define k.i
-  k = RndN(4)
+  k = RndN(6)
   If k = 0
     ProcedureReturn 6
   ElseIf k = 1
     ProcedureReturn 4
   ElseIf k = 2
     ProcedureReturn 2
+  ElseIf k = 3
+    ProcedureReturn 3
+  ElseIf k = 4
+    ProcedureReturn 7
   EndIf
   ProcedureReturn 1
 EndProcedure
@@ -473,7 +479,7 @@ Procedure EaOne()
     EndIf
   EndIf
   ESpec = RndN(64)
-  If RndN(3) <> 0                       ; mostly the four modes the assembly does
+  If RndN(3) <> 0                       ; mostly the six modes the assembly does
     ESpec = (ESpec & 7) | (PickMode() << 3)
   EndIf
   NzWrite(Rnd()) : FlagV = Rnd() : FlagC = Rnd()
@@ -612,6 +618,111 @@ Procedure FpEdges()
   Next
 EndProcedure
 
+; ---- JSR, RTS and DIV (tools/mmu_gen.py, pico2_ops) -------------------------
+; Each assembly handler (OpAsmM) against its plain one (OpRefM), from the same
+; random state as the MOV check: JSR of every mode (0, illegal, too), RTS of
+; every register, DIV from every source mode, with the stack pointer anywhere
+; RndReg puts a register (in a window, odd, at the stack limit, unmapped) and
+; the dividend and divisor often at the edges (0, -1, 077777, 100000, a quotient
+; just out of range). The same fields and the same memory as the MOV check.
+Global OpChecks.i, OpFailures.i, OpFirst.i, OpKind.i, OpR.i
+Global Dim OpCount.i(3)
+Global Dim EdgeW.i(8)
+
+Procedure.i RndEdge()
+  If RndN(2)
+    ProcedureReturn EdgeW(RndN(8))
+  EndIf
+  ProcedureReturn RndN($10000)
+EndProcedure
+
+Procedure OpsOne()
+  PswSet($00E0)
+  RandomMap()
+  For Oi = 0 To 6 : Reg(Oi) = RndReg() : Next
+  TPc = PickPc()
+  If TPc < 0
+    ProcedureReturn
+  EndIf
+  OpKind = RndN(3)
+  OpR = RndN(8)
+  If OpKind = 0                         ; JSR R, dd
+    TOp = $0800 | (OpR << 6) | RndN(64)
+    If RndN(8) <> 0 And (TOp & $38) = 0
+      TOp = TOp | $08                   ; mostly a legal mode
+    EndIf
+  ElseIf OpKind = 1                     ; RTS R
+    TOp = $0080 | OpR
+  Else                                  ; DIV R, ss
+    TOp = $7200 | (OpR << 6) | RndN(64)
+    If RndN(3) = 0
+      Reg(OpR & 6) = RndEdge()
+      Reg(OpR | 1) = RndEdge()
+      Reg(TOp & 7) = RndEdge()
+      If RndN(2)                        ; a quotient at the edge of the range
+        Reg(TOp & 7) = 2 + RndN(3)
+        Reg(OpR & 6) = (RndN(3) + $FFFF) & $FFFF
+      EndIf
+    EndIf
+  EndIf
+  Ow = TPc + MapHost(CurI + (TPc >> 13))
+  PokeU(Ow, TOp)
+  PokeU(Ow + 2, RndN($10000))
+  If RndN(4) <> 0
+    PokeU(Ow + 2, (RndMapped() - Reg(RndN(7))) & $FFFF)
+  EndIf
+  For Oi = 0 To #RAM_WORDS - 1
+    Shadow(Oi) = Mem(Oi)
+  Next
+  NzWrite(Rnd()) : FlagV = Rnd() : FlagC = Rnd()
+  Mmr0 = 1 | (RndN(8) << 1)
+  If RndN(8) = 0
+    Mmr0 = Mmr0 | ((RndN(7) + 1) << 13)
+  EndIf
+  Mmr1 = RndN($10000)
+  MmuPcRec = RndN($10000)
+  If RndN(2)
+    MmuPcRec = TPc
+  EndIf
+  SaveState()
+  LoadState()
+  RunOnce(OpAsmM(OpKind))
+  Snap(@SnapA(0), @DiffA(0), @NDiffA)
+  LoadState()
+  RunOnce(OpRefM(OpKind))
+  Snap(@SnapB(0), @DiffB(0), @NDiffB)
+  OpTableM(TOp >> 3) = OpAsmM(OpKind)  ; the table as built
+  OpChecks = OpChecks + 1
+  OpCount(OpKind) = OpCount(OpKind) + 1
+  Ofield = -1
+  For Oi = 0 To 24
+    If SnapA(Oi) <> SnapB(Oi) And Ofield < 0
+      Ofield = Oi
+    EndIf
+  Next
+  If Ofield < 0 And NDiffA <> NDiffB
+    Ofield = 30
+  EndIf
+  If Ofield < 0
+    For Oi = 0 To 7
+      If Oi < NDiffA * 2 And DiffA(Oi) <> DiffB(Oi) And Ofield < 0
+        Ofield = 31
+      EndIf
+    Next
+  EndIf
+  If Ofield >= 0
+    OpFailures = OpFailures + 1
+    If OpFirst < 0
+      OpFirst = OpChecks
+      Say("OPS FIRST FAIL op=") : Oct(TOp) : Say(" pc=") : Oct(TPc) : Say(" sp=") : Oct(SReg(6)) : Say(" field=") : Num(Ofield)
+      If Ofield < 25
+        Say(" asm=") : Num(SnapA(Ofield)) : Say(" plain=") : Num(SnapB(Ofield))
+      EndIf
+      Eol()
+    EndIf
+  EndIf
+EndProcedure
+
 Procedure Main()
   SafetyBoot()
   ClockInitKhz(#CLOCK_KHZ)
@@ -639,6 +750,9 @@ Procedure Main()
   FirstBad = -1
   EaFirst = -1
   FpFirst = -1
+  OpFirst = -1
+  EdgeW(0) = 0 : EdgeW(1) = $FFFF : EdgeW(2) = $7FFF : EdgeW(3) = $8000
+  EdgeW(4) = 1 : EdgeW(5) = 2 : EdgeW(6) = $FFFE : EdgeW(7) = $8001
   FpInit()
   Say("ASMCHECK start: the mapped loop's MOV handlers and __eaw, assembly against plain") : Eol()
   Repeat
@@ -682,6 +796,20 @@ Procedure Main()
       Say(" PASS")
     Else
       Say(" FAIL first=") : Num(FpFirst)
+    EndIf
+    Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
+    Mt0 = Micros()
+    For Mr = 1 To #ROUND
+      OpsOne()
+      UsbSerialTask()
+      SafetyPet()
+    Next
+    Say("ASMCHECK ops checks=") : Num(OpChecks) : Say(" jsr=") : Num(OpCount(0)) : Say(" rts=") : Num(OpCount(1))
+    Say(" div=") : Num(OpCount(2)) : Say(" failures=") : Num(OpFailures)
+    If OpFailures = 0
+      Say(" PASS")
+    Else
+      Say(" FAIL first=") : Num(OpFirst)
     EndIf
     Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
   ForEver

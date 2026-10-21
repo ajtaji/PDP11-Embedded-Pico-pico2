@@ -593,7 +593,8 @@ def asm_mov(sm, dm, ref):
 #  (a call, a frame and a return cost about as much as the work). In: r0 =
 #  the 6-bit mode and register. Out: r0 = the address, with EaReg, EaBase,
 #  Tmp, Adr, the register and MMR1 left exactly as EaWordM leaves them.
-#  X(R), -(R), (R)+ and (R) are done here (96% of V6's mapped operands);
+#  X(R), -(R), (R)+, (R), @(R)+ and @X(R) are done here (2026-10-21: @#a
+#  and @a, the absolute and deferred forms, were 4% of V7's time in EaWordM);
 #  anything else - the index word outside the I fast window or odd, -(R) or
 #  (R) on R7 (I space: cpu.pico2, THE PC'S SPACE) or -(R) taking SP below
 #  000400, the other modes - goes on to EaWordM itself
@@ -691,7 +692,7 @@ __eaw_m2a:
     b __eaw_rec
 __eaw_m1:
     cmp r0, #1
-    bne __eaw_slow
+    bne __eaw_m3
     cmp r1, #7
     beq __eaw_slow
     ldr r2, =global_tmp
@@ -700,6 +701,113 @@ __eaw_m1:
     lsls r0, r1, #2
     ldr r0, [r2, r0]
     b __eaw_out
+__eaw_m3:
+    cmp r0, #3
+    bne __eaw_m7
+    ldr r2, =global_reg
+    lsls r3, r1, #2
+    ldr r3, [r2, r3]
+    lsls r0, r3, #31
+    bne __eaw_slow
+    cmp r1, #7
+    beq __eaw_m3i
+    ldr r2, =global_curd
+    b __eaw_m3e
+__eaw_m3i:
+    ldr r2, =global_curi
+__eaw_m3e:
+    ldr r2, [r2]
+    add.w r2, r2, r3, lsr #13
+    lsls r2, r2, #2
+    ldr r0, =global_maprlo
+    ldr r0, [r0, r2]
+    cmp r3, r0
+    blt __eaw_slow
+    ldr r0, =global_maprhi
+    ldr r0, [r0, r2]
+    cmp r3, r0
+    bge __eaw_slow
+    ldr r0, =global_adr
+    str r3, [r0]
+    ldr r0, =global_maphost
+    ldr r0, [r0, r2]
+    ldrh r0, [r0, r3]
+    ldr r2, =global_tmp
+    str r0, [r2]
+    adds r3, r3, #2
+    uxth r3, r3
+    ldr r2, =global_reg
+    add.w r2, r2, r1, lsl #2
+    str r3, [r2]
+    cmp r1, #7
+    beq __eaw_out
+    adds r1, #16
+    b __eaw_rec
+__eaw_m7:
+    cmp r0, #7
+    bne __eaw_slow
+    ldr r2, =global_reg
+    ldr r3, [r2, #28]
+    lsls r0, r3, #31
+    bne __eaw_slow
+    ldr r2, =global_curi
+    ldr r2, [r2]
+    add.w r2, r2, r3, lsr #13
+    lsls r2, r2, #2
+    ldr r0, =global_maprlo
+    ldr r0, [r0, r2]
+    cmp r3, r0
+    blt __eaw_slow
+    ldr r0, =global_maprhi
+    ldr r0, [r0, r2]
+    cmp r3, r0
+    bge __eaw_slow
+    ldr r0, =global_maphost
+    ldr r0, [r0, r2]
+    ldrh r0, [r0, r3]
+    adds r3, r3, #2
+    uxth r3, r3
+    cmp r1, #7
+    beq __eaw_m7p
+    ldr r2, =global_reg
+    add.w r2, r2, r1, lsl #2
+    ldr r2, [r2]
+    b __eaw_m7a
+__eaw_m7p:
+    movs r2, r3
+__eaw_m7a:
+    adds r0, r0, r2
+    uxth r0, r0
+    push {r5}
+    movs r5, r3
+    lsls r3, r0, #31
+    bne __eaw_m7x
+    ldr r2, =global_curd
+    ldr r2, [r2]
+    add.w r2, r2, r0, lsr #13
+    lsls r2, r2, #2
+    ldr r3, =global_maprlo
+    ldr r3, [r3, r2]
+    cmp r0, r3
+    blt __eaw_m7x
+    ldr r3, =global_maprhi
+    ldr r3, [r3, r2]
+    cmp r0, r3
+    bge __eaw_m7x
+    ldr r3, =global_adr
+    str r0, [r3]
+    ldr r3, =global_maphost
+    ldr r3, [r3, r2]
+    ldrh r0, [r3, r0]
+    ldr r3, =global_tmp
+    str r0, [r3]
+    ldr r3, =global_reg
+    str r5, [r3, #28]
+    pop {r5}
+    b __eaw_out
+__eaw_m7x:
+    pop {r5}
+    b __eaw_slow
 __eaw_rec:
     ldr r2, =global_mmr0
     ldr r2, [r2]
@@ -780,6 +888,232 @@ def pico2_eaw(text):
     return "\n".join(out)
 
 
+# ----------------------------------------------------------------------
+#  THE STACK AND DIV IN ASSEMBLY (#ASM_OPS = 1, cpu.pico2). __pushm and
+#  __popm are PushM and PopM's fast paths, reached by bl like __eaw: the
+#  word at SP in the current D space's fast window, SP even and (for a
+#  push) not going below 000400. In: r0 = the word to push / out: r0 = the
+#  word popped. Anything else goes on to PushM / PopM themselves, nothing
+#  changed, lr still the handler's. They clobber r0-r3 only.
+#  JSR, RTS and DIV get an assembly version in front of their plain one
+#  (InstructionXXXRefM, the reference): JSR and RTS call __eaw, __pushm and
+#  __popm and move the registers; DIV's arithmetic is SDIV and MLS. The
+#  plain versions stay as the slow path and as asm_check.pico2's reference
+#  (OpAsmM / OpRefM, filled with the table).
+# ----------------------------------------------------------------------
+ASM_STACK = """__pushm:
+    ldr r2, =global_reg
+    ldr r1, [r2, #24]
+    subs r1, r1, #2
+    uxth r1, r1
+    cmp.w r1, #0x100
+    blt __pushm_slow
+    lsls r2, r1, #31
+    bne __pushm_slow
+    ldr r3, =global_curd
+    ldr r3, [r3]
+    add.w r3, r3, r1, lsr #13
+    lsls r3, r3, #2
+    ldr r2, =global_mapwlo
+    ldr r2, [r2, r3]
+    cmp r1, r2
+    blt __pushm_slow
+    ldr r2, =global_mapwhi
+    ldr r2, [r2, r3]
+    cmp r1, r2
+    bge __pushm_slow
+    ldr r2, =global_maphost
+    ldr r2, [r2, r3]
+    strh r0, [r2, r1]
+    ldr r2, =global_reg
+    str r1, [r2, #24]
+    bx lr
+__pushm_slow:
+    b pushm
+__popm:
+    ldr r2, =global_reg
+    ldr r1, [r2, #24]
+    lsls r0, r1, #31
+    bne __popm_slow
+    ldr r3, =global_curd
+    ldr r3, [r3]
+    add.w r3, r3, r1, lsr #13
+    lsls r3, r3, #2
+    ldr r0, =global_maprlo
+    ldr r0, [r0, r3]
+    cmp r1, r0
+    blt __popm_slow
+    ldr r0, =global_maprhi
+    ldr r0, [r0, r3]
+    cmp r1, r0
+    bge __popm_slow
+    ldr r0, =global_maphost
+    ldr r0, [r0, r3]
+    ldrh r0, [r0, r1]
+    adds r1, r1, #2
+    uxth r1, r1
+    str r1, [r2, #24]
+    bx lr
+__popm_slow:
+    b popm
+"""
+
+JSR_ASM = """  PcOutM()
+  If (Op & $38) = 0
+    TrapVector = #VEC_BUS                ; JSR to a register is illegal
+  Else
+    ASM Uses Op
+      and.w r0, r8, #0x3f
+      bl __eaw
+      ldr r1, =global_ea
+      str r0, [r1]
+      ubfx r0, r8, #6, #3
+      lsls r0, r0, #2
+      ldr r1, =global_reg
+      ldr r0, [r1, r0]
+      bl __pushm
+      ubfx r0, r8, #6, #3
+      lsls r0, r0, #2
+      ldr r1, =global_reg
+      ldr r2, [r1, #28]
+      str r2, [r1, r0]
+      ldr r2, =global_ea
+      ldr r2, [r2]
+      str r2, [r1, #28]
+    EndASM
+  EndIf
+  NextSyncedM()
+"""
+
+RTS_ASM = """  PcOutM()
+  ASM Uses Op
+    ldr r1, =global_reg
+    and.w r0, r8, #7
+    lsls r0, r0, #2
+    ldr r2, [r1, r0]
+    str r2, [r1, #28]
+    bl __popm
+    and.w r1, r8, #7
+    lsls r1, r1, #2
+    ldr r2, =global_reg
+    str r0, [r2, r1]
+  EndASM
+  NextSyncedM()
+"""
+
+# after the operand is in Src: the quotient to R, the remainder to R|1 (in that
+# order: for an odd R the remainder is what stays), N and Z as SetNZ leaves them
+DIV_ASM = """  ASM Uses Op, FlagNZ
+    push {r5, r6}
+    ldr r0, =global_src
+    ldr r0, [r0]
+    sxth r0, r0
+    ldr r2, =global_reg
+    ubfx r1, r8, #6, #3
+    lsls r1, r1, #2
+    orr.w r3, r1, #4
+    adds r3, r3, r2
+    adds r1, r1, r2
+    ldr r2, [r1]
+    ldr r5, [r3]
+    orr.w r2, r5, r2, lsl #16
+    cmp r0, #0
+    beq __divm_zero
+    adds r5, r0, #1
+    bne __divm_go
+    cmp.w r2, #0x80000000
+    beq __divm_over
+__divm_go:
+    sdiv r5, r2, r0
+    sxth r6, r5
+    cmp r6, r5
+    bne __divm_over
+    mls r6, r5, r0, r2
+    uxth r0, r5
+    str r0, [r1]
+    uxth r6, r6
+    str r6, [r3]
+    movs r4, #1
+    cmp r5, #0
+    bgt __divm_nz
+    mov.w r4, #0x8000
+    blt __divm_nz
+    movs r4, #0
+__divm_nz:
+    movs r5, #0
+    movs r6, #0
+    b __divm_flags
+__divm_zero:
+    mov.w r5, #0x8000
+    mov.w r6, #0x10000
+    b __divm_flags
+__divm_over:
+    mov.w r5, #0x8000
+    movs r6, #0
+__divm_flags:
+    ldr r0, =global_flagv
+    str r5, [r0]
+    ldr r0, =global_flagc
+    str r6, [r0]
+    pop {r5, r6}
+  EndASM
+"""
+JMP_ASM = """CompilerIf #ASM_EA = 1
+    ASM Uses Op
+      and.w r0, r8, #0x3f
+      bl __eaw
+      ldr r1, =global_reg
+      str r0, [r1, #28]
+    EndASM
+CompilerElse
+"""
+OPS = ["JSR_004", "RTS_00020", "DIV_071"]
+
+
+def handler(text, name):
+    """The plain handler's lines after its label, up to and including its NextSyncedM()."""
+    lab = "\nInstruction%sM:" % name
+    if text.count(lab) != 1:
+        fail("pico2_ops: Instruction%sM is not there once; teach tools/mmu_gen.py." % name)
+    i = text.index("\n", text.index(lab) + 1) + 1
+    j = text.index("  NextSyncedM()\n", i) + len("  NextSyncedM()\n")
+    return i, j
+
+
+def pico2_ops(text):
+    """The Pico 2's file: __pushm/__popm after __eaw, and the assembly JSR, RTS, DIV."""
+    at = "__eaw_slow:\n    mov r0, r12\n    ldr r1, =global_easpec\n    str r0, [r1]\n    b eawordm\n  EndASM\nCompilerEndIf\n"
+    if text.count(at) != 1:
+        fail("pico2_ops: __eaw's end moved; teach tools/mmu_gen.py.")
+    no_scaled_index(ASM_STACK + JSR_ASM + RTS_ASM + DIV_ASM, "ASM_STACK")
+    text = text.replace(at, at + "CompilerIf #ASM_OPS = 1\n  ASM\n" + ASM_STACK + "  EndASM\nCompilerEndIf\n")
+    for name in OPS:
+        i, j = handler(text, name)
+        plain = text[i:j]
+        if name.startswith("DIV"):
+            a = plain.index("  Src = Src - ((Src & $8000) << 1)\n")
+            b = plain.index("  ; ClockCycles")
+            fast = plain[:a] + DIV_ASM + plain[b:]
+        else:
+            fast = JSR_ASM if name.startswith("JSR") else RTS_ASM
+        text = (text[:i] + "CompilerIf #ASM_OPS = 1\n" + fast + "CompilerEndIf\n"
+                + "Instruction%sRefM:         ; the plain version: the reference (asm_check.pico2)\n" % name
+                + plain + text[j:])
+    jmp = "    Reg(7) = EaWordM(Op & $3F)\n"
+    if text.count(jmp) != 1:
+        fail("pico2_ops: JMP's EaWordM line moved; teach tools/mmu_gen.py.")
+    text = text.replace(jmp, JMP_ASM + jmp + "CompilerEndIf\n")
+    fill = "".join("  OpAsmM(%d) = ?Instruction%sM\n  OpRefM(%d) = ?Instruction%sRefM\n" % (k, n, k, n)
+                   for k, n in enumerate(OPS))
+    if text.count("  OpTableReadyM = 1\n") != 1:
+        fail("pico2_ops: the table's end moved; teach tools/mmu_gen.py.")
+    text = text.replace("  OpTableReadyM = 1\n", fill + "  OpTableReadyM = 1\n")
+    decl = "Global Dim OpTableM.Label(8192)\n"
+    return text.replace(decl, decl + "Global Dim OpAsmM.Label(%d)                 ; JSR, RTS, DIV: the assembly "
+                        "entry ...\nGlobal Dim OpRefM.Label(%d)                 ; ... and the plain one "
+                        "(tools/mmu_gen.py, pico2_ops)\n" % (len(OPS), len(OPS)))
+
+
 def specialise(text):
     """The Pico 2's file: MOV handlers for MOV_PAIRS, and their table entries."""
     if NATIVE_EVEN:
@@ -835,6 +1169,7 @@ def main():
             text = specialise(text)
             text = pico2_tails(text)
             text = pico2_eaw(text)
+            text = pico2_ops(text)
         else:                                # the Pico: its SRAM holds CpuRun (Mini-Unix); CpuRunM stays in flash
             text = text.replace("\nProcedureRAM.i CpuRunM(n.i)", "\nProcedure.i CpuRunM(n.i)", 1)
         if "--check" in sys.argv:

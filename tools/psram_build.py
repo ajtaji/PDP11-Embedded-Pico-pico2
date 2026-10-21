@@ -25,7 +25,9 @@ WHAT IT DOES
     1. Compiles J11_18MHz_KDJ11_BF/pico2/diag.pico2 with the board's three
        constants (#PSRAM = 1, #PSRAM_CS_PIN, #FLASH_CHIP) - from a copy
        written beside diag.pico2 and removed afterwards; diag.pico2 itself
-       is never changed. Everything else is exactly the Pico 2 W build.
+       is never changed. The one other difference from the Pico 2 W build:
+       the unmapped run loop, CpuRun, runs from SRAM (a copy of
+       instructions.pico2 with ProcedureRAM, removed afterwards too).
     2. Makes the V6 root pack as the Pico 2 W image does (the README's
        v6fs.py lines: /dev/rk0, /dev/rrk0, /dev/swap, /unix -> /rkunix,
        _nswap 112 for the fallback's swap RAM disk), plus /dev/rk1 and
@@ -83,6 +85,20 @@ def main():
             sys.exit("psram_build: diag.pico2 does not hold exactly one '%s' line - the board "
                      "constants have moved; update CONSTS here to match." % old.strip())
         text = text.replace(old, new % (pin if "CS_PIN" in old else flash) if "%" in new else new)
+    # the unmapped run loop (CpuRun, 36 KB: Mini-Unix runs in it) from SRAM, where these
+    # boards have the room and the Pico 2 W does not: a copy of instructions.pico2 that
+    # says ProcedureRAM, beside the copy of diag.pico2 (the compiler takes no CompilerIf
+    # inside a procedure's first line)
+    inc = 'XIncludeFile "instructions.pico2"'
+    head = "\nProcedure.i CpuRun(n.i)\n"
+    ins = open(os.path.join(SRC, "instructions.pico2"), "rb").read().decode("utf-8").replace("\r\n", "\n")
+    if text.count(inc) != 1 or ins.count(head) != 1:
+        sys.exit("psram_build: diag.pico2's include of instructions.pico2, or CpuRun's first line, "
+                 "has moved; update psram_build.py to match.")
+    tmp_ins = os.path.join(SRC, "instructions_%s.pico2" % a.board)
+    text = text.replace(inc, 'XIncludeFile "instructions_%s.pico2"' % a.board)
+    ins = ins.replace(head, "\nProcedureRAM.i CpuRun(n.i)\n")
+    open(tmp_ins, "wb").write(ins.encode("utf-8"))
     tmp = os.path.join(SRC, "diag_%s.pico2" % a.board)
     fw = os.path.join(out, "diag.bin")
     open(tmp, "wb").write(text.encode("utf-8"))
@@ -95,6 +111,7 @@ def main():
         run(cmd, cwd=SRC)
     finally:
         os.remove(tmp)
+        os.remove(tmp_ins)
 
     # 2. the packs
     root = os.path.join(out, "v6root.rk")

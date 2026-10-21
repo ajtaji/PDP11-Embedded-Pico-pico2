@@ -70,6 +70,54 @@ With 152 KB of memory since 2026-10-21 the Pico 2 W runs V6's compiler too, and
 the same V6 benchmarks give the PSRAM board's times: the Sieve 2.5 s CPU (2.83 s
 from the host), the Whetstone 4.3 s CPU (4.67 s), `od /rkunix` 10.44 s.
 
+## The speed pass of 2026-10-21
+
+Four changes, each measured on the boards at 150 MHz, timed from the host
+(the same script each time; the runs repeat within 0.05 s):
+
+1. With PSRAM, the first 224 KB of the PDP-11's memory is in SRAM (it was
+   56 KB; `#PSRAM_SRAM_KB` in `diag.pico2`), so the kernel and the first
+   processes run from SRAM; the rest stays in the PSRAM.
+2. PushM and PopM in assembly (`__pushm`, `__popm`), JSR, RTS and DIV in
+   assembly (DIV with the M33's SDIV), and `@(R)+`, `@X(R)` - V7's
+   absolute and deferred operands - added to `__eaw` (JMP calls it too).
+   `asm_check.pico2` holds each to its plain version on random machine
+   states (`ASMCHECK ops`, `ASMCHECK ea`); a deliberately broken version of
+   each failed it within the first round.
+3. The fetch window is kept per mode: a trap or an interrupt and its RTI
+   find the window they left instead of building it again, a PSW write that
+   does not change the mode keeps it, and a map write empties only the
+   window of the mode whose I space it changed.
+4. With PSRAM, the unmapped run loop (CpuRun, used while memory management
+   is off: Mini-Unix) runs from SRAM, not flash (`tools/psram_build.py`; the
+   Pico 2 W has no room for its 36 KB).
+
+V7 on the Pico Plus 2 W (`images/picoplus2-v7/`):
+
+| Step | before | after | |
+|---|---|---|---|
+| `cc -O loop.c` | 4.62 s | 4.03 s | 1.15x |
+| `cc pi.c` (floating point) | 3.95 s | 3.46 s | 1.14x |
+| `time loop` (`%` in a loop: DIV) | 5.24 s | 4.77 s | 1.10x |
+| `time pi` | 1.83 s | 1.73 s | 1.06x |
+| `time od /unix >/dev/null` | 17.00 s | 15.03 s | 1.13x |
+| `ls -l /bin \| wc` | 4.25 s | 3.86 s | 1.10x |
+
+Mini-Unix on the Pico Plus 2 W (the pack and script of
+[COMPARISON.md](COMPARISON.md#all-three-on-mini-unix)):
+
+| Step | before | after | |
+|---|---|---|---|
+| `cc -O sieve.c` | 4.50 s | 2.86 s | 1.57x |
+| `time sieve` | 3.04 s | 2.56 s | 1.19x |
+| `time od /rkmx >/dev/null` | 10.53 s | 7.17 s | 1.47x |
+
+V6 on the Pico 2 W (`images/pico2w-v6/`; changes 2 and 3): `time od /rkunix
+>/dev/null` 10.46 s before, 9.43 s after (1.11x).
+
+The DEC diagnostics of `media/diagnostics/ladder.txt` give the same results
+as before on both boards.
+
 ## Against another emulator
 
 [COMPARISON.md](COMPARISON.md): Pico_1140 on the same board, at the same clock,
