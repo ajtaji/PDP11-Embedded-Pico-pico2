@@ -1,0 +1,47 @@
+
+# stty -lcase cr0
+# 
+[host: 0.24 s]
+chdir /usr
+# 
+[host: 0.06 s]
+cc -O sieve.c
+# 
+[host: 4.50 s]
+mv a.out sieve
+# 
+[host: 0.30 s]
+time sieve
+10 iterations
+
+1899 primes
+
+real        3.0
+user        2.5
+sys         0.1
+# 
+[host: 3.04 s]
+time sieve
+10 iterations
+
+1899 primes
+
+real        3.0
+user        2.6
+sys         0.1
+# 
+[host: 3.05 s]
+time od /rkmx >/dev/null
+
+real       10.0
+user        9.7
+sys         0.4
+# 
+[host: 10.53 s]
+time od /rkmx >/dev/null
+
+real       10.0
+user        9.7
+sys         0.4
+# 
+[host: 10.53 s]

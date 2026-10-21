@@ -1,0 +1,48 @@
+
+# stty -lcase cr0
+# 
+[host: 0.79 s]
+chdir /usr
+# 
+[host: 0.06 s]
+cc -O sieve.c
+# 
+[host: 9.68 s]
+mv a.out sieve
+# 
+[host: 0.85 s]
+time sieve
+10 iterations
+XIP Cache Stats, Count / Hit = 094562 / 085661, print count=001
+
+1899 primes
+
+real        1.0
+user        3.1
+sys         0.2
+# 
+[host: 4.19 s]
+time sieve
+10 iterations
+
+1899 primes
+
+real        1.0
+user        3.1
+sys         0.2
+# 
+[host: 4.20 s]
+time od /rkmx >/dev/null
+
+real        8.0
+user        9.5
+sys         0.5
+# 
+[host: 10.76 s]
+time od /rkmx >/dev/null
+
+real       10.0
+user        9.6
+sys         0.4
+# 
+[host: 10.73 s]

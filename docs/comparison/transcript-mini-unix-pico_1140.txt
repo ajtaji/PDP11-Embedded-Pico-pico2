@@ -1,0 +1,129 @@
+
+# stty -lcase cr0
+# 
+[host: 0.36 s]
+chdir /usr
+# 
+[host: 0.06 s]
+cc -O sieve.c
+# 
+[host: 5.36 s]
+mv a.out sieve
+# 
+[host: 0.37 s]
+time sieve
+10 iterations
+
+1899 primes
+
+real        5.0
+user        3.9
+sys         0.2
+# 
+[host: 4.69 s]
+time sieve
+10 iterations
+
+1899 primes
+
+real        4.0
+user        3.9
+sys         0.2
+# 
+[host: 4.69 s]
+time od /rkmx >/dev/null
+
+real       15.0
+user       12.5
+sys         0.5
+# 
+[host: 15.57 s]
+time od /rkmx >/dev/null
+
+real       13.0
+user       12.4
+sys         0.5
+# 
+[host: 13.57 s]
+
+# time od /rkmx >/dev/null
+
+real       13.0
+user       12.4
+sys         0.6
+# 
+[host: 13.57 s]
+time od /rkmx >/dev/null
+
+real       15.0
+user       12.5
+sys         0.5
+# 
+[host: 15.57 s]
+ps
+  PID TTY TIME COMMAND
+     6 8  1:20 -
+     7 8  0:00 ps
+# 
+[host: 0.79 s]
+
+# ps ax
+  PID TTY TIME COMMAND
+     0 8  0:00 /etc/init
+     6 8  1:20 -
+     8 8  0:00 ps ax
+     5 8  0:07 /etc/update
+# 
+[host: 0.91 s]
+
+# kill 5
+# 
+[host: 0.30 s]
+ps ax
+  PID TTY TIME COMMAND
+     0 8  0:00 /etc/init
+     6 8  1:20 -
+    10 8  0:00 ps ax
+# 
+[host: 0.85 s]
+time od /rkmx >/dev/null
+
+real       13.0
+user       12.4
+sys         0.5
+# 
+[host: 13.58 s]
+time od /rkmx >/dev/null
+
+real       13.0
+user       12.5
+sys         0.5
+# 
+[host: 13.57 s]
+time od /rkmx >/dev/null
+
+real       13.0
+user       12.4
+sys         0.6
+# 
+[host: 13.56 s]
+time /usr/sieve
+10 iterations
+
+1899 primes
+
+real        4.0
+user        3.9
+sys         0.2
+# 
+[host: 4.68 s]
+
+# chdir /usr
+# 
+[host: 0.06 s]
+cc -O sieve.c
+# 
+[host: 5.36 s]
+cc -O sieve.c
+# 
+[host: 5.35 s]

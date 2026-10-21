@@ -75,3 +75,49 @@ To run it here, the console (KL11) goes to USB serial in place of its UART
 pacing stays), its diagnostic printing is copied to the console, and the USB
 port waits up to 10 s for the host at start-up; the processor emulation is not
 touched.
+
+## All three on Mini-Unix
+
+serialcomms' emulator runs systems with memory management off, so the three
+were also compared on Mini-Unix (V6 for machines without memory management):
+the same Pico Plus 2 W at 150 MHz, the same pack - this repository's
+Mini-Unix pack as the Pico W image builds it (the kernel `/rkmx` with swap by
+process slot, `media/unix/rkmx-slotswap`) plus `/usr/sieve.c` - and the same
+script ([comparison/script-mini-unix.txt](comparison/script-mini-unix.txt)),
+each step timed from the host.
+
+| Step, timed from the host | this emulator | Pico_1140 | serialcomms' C emulator |
+|---|---|---|---|
+| `cc -O sieve.c` | **4.50 s** | 5.36 s | 9.68 s |
+| `time sieve` (BYTE Sieve, 10 iterations, 1899 primes) | **3.04 s** (user 2.5) | 4.68 s (user 3.9) | 4.19 s |
+| `time od /rkmx >/dev/null` (the same 19,036-byte kernel) | **10.53 s** (user 9.7) | 13.57 s (user 12.4) | 10.74 s |
+
+Transcripts: [this emulator](comparison/transcript-mini-unix-this-emulator.txt),
+[Pico_1140](comparison/transcript-mini-unix-pico_1140.txt),
+[serialcomms'](comparison/transcript-mini-unix-serialcomms.txt) (its boot:
+[here](comparison/transcript-mini-unix-serialcomms-boot.txt)). The runs repeat
+within 0.05 s.
+
+How each was run, and what was different:
+
+- **This emulator** booted single-user by itself (its pack header asks for
+  `rkmx`). Mini-Unix keeps memory management off, so it runs in this
+  emulator's unmapped loop, which runs from flash (V6 and V7 use the mapped
+  loop, in SRAM): per byte of `od` that loop is about 1.5 times slower than the
+  one V6 runs in.
+- **Pico_1140** (the flash-disk build, 150 MHz) came up multi-user, its switch
+  register not asking for single-user; root logged in, and its `update` daemon
+  was stopped (`kill 5`) because its sync every 30 s put 2 s into every other
+  `od`. Its compile was timed again with `update` stopped: 5.36 s both times.
+- **serialcomms' emulator** (Pimoroni-PDP11-SDK231 built for the Arm cores, 150
+  MHz, console on USB as above) booted single-user. Its first load of the
+  kernel after power-up fails at the boot block (the `@` comes back) and the
+  second loads it - the same on V6; with Mini-Unix's own boot block its first
+  `@` was not followed by a load either way, so its pack carries V6's boot
+  block in block 0 (the kernel, the programs and the files are the same
+  pack). It stops itself if no interrupt comes within 5 s of a WAIT. Its
+  `time` shows real time running slower than user time (`real 1.0`, `user
+  3.1`): its line clock does not keep time, so only the host's figures count.
+
+Measured 2026-10-21.
+

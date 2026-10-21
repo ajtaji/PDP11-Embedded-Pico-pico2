@@ -1,0 +1,9 @@
+# the Mini-Unix comparison script: the same on all three emulators (Pico Plus 2 W, 150 MHz)
+stty -lcase cr0
+chdir /usr
+cc -O sieve.c
+mv a.out sieve
+time sieve
+time sieve
+time od /rkmx >/dev/null
+time od /rkmx >/dev/null
