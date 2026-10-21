@@ -58,14 +58,20 @@ Measured 2026-10-21.
 
 ## serialcomms' C emulator
 
-[Serialcomms/Pico-PDP11-Pimoroni-RISCV-Staging](https://github.com/Serialcomms/Pico-PDP11-Pimoroni-RISCV-Staging)
-(commit `7c096d7`, 2026-10-01), the C emulator this repository's PureMetal
-work started from. **Not measured yet:** its CMakeLists names three sources
-that are not in the repository (`opcodes_option_eis.c`,
-`destination_address_byte.c`, `destination_address_word.c`) and four headers
-(`destination_address_byte.h`, `destination_address_word.h`,
-`opcode_specifiers_byte.h`, `opcode_specifiers_word.h`), and none of its 74
-commits has them. A build for the comparison is ready for when they are
-published: the Arm cores at 150 MHz, the console (KL11) on USB serial in
-place of its UART (each character handed to its own DMA-complete handler, so
-its character-time pacing stays), the processor emulation untouched.
+[Serialcomms/Pimoroni-PDP11-SDK231](https://github.com/Serialcomms/Pimoroni-PDP11-SDK231)
+(2026-10-21; it replaces the earlier staging repository), the C emulator this
+repository's PureMetal work started from: a PDP-11/40 for the Pimoroni Pico Plus
+2, its RK05 pack copied from flash (at 0x10100000) into the PSRAM. It builds
+(Pico SDK 2.3.1, the Arm cores, 150 MHz) and runs on the same Pico Plus 2 W:
+the pack is copied in 196 ms, V6's boot block prints its `@` and loads the
+kernel. **It cannot run the V6 comparison yet:** its memory management unit
+(KT11) is a placeholder - the kernel's page registers at 772300-772356 are not
+decoded - and V6's kernel stops at its first write to them (`no decode for
+address=0772340`). It runs systems that keep memory management off, such as
+Mini-Unix.
+
+To run it here, the console (KL11) goes to USB serial in place of its UART
+(each character handed to its own DMA-complete handler, so its character-time
+pacing stays), its diagnostic printing is copied to the console, and the USB
+port waits up to 10 s for the host at start-up; the processor emulation is not
+touched.
