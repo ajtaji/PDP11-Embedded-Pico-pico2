@@ -69,6 +69,7 @@ CompilerElse
 #PSRAM_CS_PIN = 8            ; its chip select: GPIO8 on the Adafruit Feather RP2350, GPIO47 on the Pimoroni Pico Plus 2
 #FLASH_CHIP = $400000        ; the flash: 4 MB on the Pico 2 W; 8 MB on the Feather RP2350, 16 MB on the Pico Plus 2 (#PSRAM = 1)
 CompilerEndIf
+#SRAM_MEM_KB = 152           ; the PDP-11 memory without PSRAM, in SRAM (cpu.pico2, #RAM_BYTES): 152 KB, the rest of the SRAM going to the file-write overlay (disk.pico2)
 #PS_DISK_UNCACHED = 1        ; the packs in PSRAM: 1 = through the uncached window, 0 = through the XIP cache
 #PS_MEM_UNCACHED = 0         ; the PDP-11 memory in PSRAM: the same choice (psram_pdp11.pico2, WHICH WINDOW)
 EnableExplicit
@@ -1134,7 +1135,7 @@ Procedure DoFrame()
     While i + 3 < FrameLen
       a = FrameBuf(i) | (FrameBuf(i + 1) << 8)
       w = FrameBuf(i + 2) | (FrameBuf(i + 3) << 8)
-      If (a & 1) = 0 And a < #RAM_BYTES
+      If (a & 1) = 0 And a < #RAM16
         Mem(a >> 1) = w
       EndIf
       i = i + 4
@@ -1145,7 +1146,7 @@ Procedure DoFrame()
     If a = $FFFF
       a = TapeStart
     EndIf
-    If (a & 1) <> 0 Or a >= #RAM_BYTES Or FrameLen < 4
+    If (a & 1) <> 0 Or a >= #RAM16 Or FrameLen < 4
       SayHost("ERR go: no start address (odd, outside RAM, or no tape loaded)") : Eol()
     Else
       StartProgram(a, FrameBuf(2) | (FrameBuf(3) << 8))

@@ -5,17 +5,22 @@
 ;  Requires cpu.pico2 - include it BEFORE this file. Call BuildOpcodeTable()
 ;  once (CpuRun does it itself if you do not), then CpuRun(n).
 ;
-;  THE TABLE has one entry per opcode (65,536), indexed by the whole
-;  instruction, so the commonest register forms get their own handlers -
-;  see REGISTER FAST PATHS and IMMEDIATE FAST PATHS near the foot. Entry comments below are in the
-;  Pico's 8192-entry numbering (Op >> 3); multiply by 8 for this table.
+;  THE TABLE has 8192 entries, indexed by Op >> 3 as the Pico's is: an
+;  entry knows the addressing modes and the source register but not the
+;  destination register, so each register fast path (REGISTER FAST PATHS
+;  and IMMEDIATE FAST PATHS near the foot) first sends a destination of R7
+;  to the general handler, and the eight instructions 000000-000007 share
+;  one entry and part at InstructionGroup0_0000. (Until 2026-10-21 it had
+;  one entry per opcode, 65,536 of them: 256 KB of SRAM for the loop that
+;  runs only with memory management off - boot and the diagnostics. That
+;  SRAM is now the PDP-11's memory above 56 KB: cpu.pico2, #RAM16.)
 ;
 ;  ONE PROCEDURE, EVERY INSTRUCTION A LABEL IN IT. CpuRun() below is the
 ;  whole emulator: each instruction's handler is a label inside it, named
 ;  Instruction<MNEMONIC>_<octal> in the 8080 core's layout, and
 ;  OpTable() is a '.Label' table filled with ?Name. An instruction is
 ;  fetched and then entered with one computed jump,
-;      Goto OpTable(Op)
+;      Goto OpTable(Op >> 3)
 ;  and every handler ENDS with the same few lines, which fetch the next
 ;  instruction and make that jump themselves - so no handler returns, and
 ;  there is no call, no frame and no return anywhere between two emulated
@@ -94,17 +99,18 @@
 ; ======================================================================
 ;  THE RUN LOOP - one procedure, every handler a label inside it
 ; ======================================================================
-Global Dim OpTable.Label(65536)
+Global Dim OpTable.Label(8192)
 Global OpTableReady.i                    ; 0 until the first CpuRun fills OpTable
 Global FillFrom.i, FillCount.i           ; Ops() - Globals, cheaper than locals
 Global FillS.i, FillD.i                  ; the fast-path loops below
 
-; OpTable(from) .. OpTable(from + count - 1) = target. A '.Label' can only
+; Opcodes from .. from + count - 1 = target: entries from >> 3 on, count >> 3 of
+; them (every range is whole groups of eight). A '.Label' can only
 ; be taken with ?Name inside the procedure that owns the label, so CpuRun
 ; itself passes its labels in; this only stores them.
 Procedure Ops(from.i, count.i, target.Label)
-  FillFrom = from
-  FillCount = count
+  FillFrom = from >> 3
+  FillCount = count >> 3
   While FillCount > 0
     OpTable(FillFrom) = target
     FillFrom = FillFrom + 1
@@ -147,7 +153,7 @@ Macro NextSynced()
     bne __ul_cpurun_slowtail
     subs.w r11, r11, #1
     beq __ul_cpurun_runend
-    cmp.w r0, ##RAM_BYTES
+    cmp.w r0, ##RAM16
     bhs __ul_cpurun_slowfetch
     lsls r1, r0, #31
     bne __ul_cpurun_slowfetch
@@ -155,6 +161,7 @@ Macro NextSynced()
     ldrh r2, [r1, r0]
     mov r8, r2
     adds.w r9, r9, #2
+    lsrs r2, r2, #3
     lsls r2, r2, #2
     ldr r1, =global_optable
     ldr r1, [r1, r2]
@@ -171,11 +178,11 @@ Macro NextSynced()
   If RunLeft = 0
     Goto RunEnd
   EndIf
-  If PC < #RAM_BYTES
+  If PC < #RAM16
     If (PC & 1) = 0
       Op = Mem(PC >> 1)
       PC = PC + 2
-      Goto OpTable(Op)
+      Goto OpTable(Op >> 3)
     EndIf
   EndIf
   Goto SlowFetch
@@ -191,12 +198,13 @@ Macro NextNative()
     subs.w r11, r11, #1
     beq __ul_cpurun_runend
     mov r0, r9
-    cmp.w r0, ##RAM_BYTES
+    cmp.w r0, ##RAM16
     bhs __ul_cpurun_slowfetch
     ldr r1, =global_mem
     ldrh r2, [r1, r0]
     mov r8, r2
     adds.w r9, r9, #2
+    lsrs r2, r2, #3
     lsls r2, r2, #2
     ldr r1, =global_optable
     ldr r1, [r1, r2]
@@ -209,10 +217,10 @@ Macro NextNative()
   If RunLeft = 0
     Goto RunEnd
   EndIf
-  If PC < #RAM_BYTES
+  If PC < #RAM16
     Op = Mem(PC >> 1)
     PC = PC + 2
-    Goto OpTable(Op)
+    Goto OpTable(Op >> 3)
   EndIf
   Goto SlowFetch
 EndMacro
@@ -248,11 +256,11 @@ RunStart:
   RunWindow = 0
   Goto RunEnd                            ; which lets the devices act, then opens a window
 Fetch:
-  If PC < #RAM_BYTES
+  If PC < #RAM16
     If (PC & 1) = 0
       Op = Mem(PC >> 1)                  ; fast fetch, straight from RAM
       PC = PC + 2
-      Goto OpTable(Op)
+      Goto OpTable(Op >> 3)
     EndIf
   EndIf
 SlowFetch:                               ; the I/O page, an odd PC, past the end of RAM
@@ -264,7 +272,7 @@ SlowFetch:                               ; the I/O page, an odd PC, past the end
   EndIf                                  ; 0, a HALT (MAINDEC-11-DFKAB test 100). The PC stays
                                          ; incremented, as on the J-11 (Architecture Handbook
                                          ; 1983, model differences 28 and 30)
-  Goto OpTable(Op)
+  Goto OpTable(Op >> 3)
 
 ;-MOV-------------------------------------------------------------------
 InstructionMOV_01:            ; 01SSDD   entries $0200-$03FF
@@ -1782,154 +1790,46 @@ InstructionReserved:          ; every opcode this model does not execute
   ; ---- next instruction (THE TAIL, top of file) ----
   NextSynced()
 
+;-the eight instructions 000000-000007 share one table entry---------------
+InstructionGroup0_0000:       ; 000000-000007   entry $0000
+  If (Op & 7) = 0
+    Goto InstructionHALT_000000
+  ElseIf (Op & 7) = 1
+    Goto InstructionWAIT_000001
+  ElseIf (Op & 7) = 2
+    Goto InstructionRTI_000002
+  ElseIf (Op & 7) = 3
+    Goto InstructionBPT_000003
+  ElseIf (Op & 7) = 4
+    Goto InstructionIOT_000004
+  ElseIf (Op & 7) = 5
+    Goto InstructionRESET_000005
+  ElseIf (Op & 7) = 6
+    Goto InstructionRTT_000006
+  EndIf
+  Goto InstructionMFPT_000007
+
 ; ======================================================================
-;  REGISTER FAST PATHS. One table entry per opcode means the entry already
-;  knows both addressing modes and both registers, so the commonest forms -
-;  both operands in registers, or a single operand in a register - get
-;  handlers with no mode test, no operand-helper call and no Reg(7)
-;  traffic. The table sends them R0-R6 only: a form naming R7 stays with
-;  the general handler, which keeps the PC right. Anything not listed here
-;  (ADC, SBC, the byte rotates...) is correct through its general handler.
+;  REGISTER FAST PATHS. The commonest single-operand forms - the operand
+;  in a register - get handlers with no mode test, no operand-helper call
+;  and no Reg(7) traffic. The table is indexed by Op >> 3, so an entry does
+;  not know the register: each fast path first sends R7 to the general
+;  handler. Anything not listed here (ADC, SBC, the byte rotates...) is
+;  correct through its general handler.
+;  The two-register forms (MOV Rs,Rd ...) had fast paths too while the
+;  table had an entry per opcode. Indexed by Op >> 3 they cost more than
+;  they gave: every form with Rd = PC went through the fast path to the
+;  general handler, two places in flash where there had been one, and the
+;  jump diagnostic T12-D0LA (full of them) took 158.9 s where it had taken
+;  60.9; without them 65.0 s. This loop runs only with memory management
+;  off (boot and the diagnostics), from flash; the two-register forms are
+;  the general handlers' (2026-10-21, Pico 2 W).
 ; ======================================================================
-
-InstructionMOV_01_RR:               ; 01SD, both operands in registers
-  ;name = "MOV Rs,Rd"
-  Src = Reg((Op >> 6) & 7)
-  Reg(Op & 7) = Src
-  FlagNZ = Src
-  FlagV = 0
-  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
-  ;disassembly("MOV " + ;name)
-  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  NextNative()
-
-InstructionCMP_02_RR:               ; 02SD, both operands in registers
-  ;name = "CMP Rs,Rd"
-  Src = Reg((Op >> 6) & 7)
-  Res = Src - Reg(Op & 7)
-  FlagC = Res                            ; the borrow is bit 16
-  FlagNZ = Res & $FFFF
-  FlagV = (Src ! (Src - Res)) & (Src ! Res)   ; bit 15; Src - Res is Rd
-  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
-  ;disassembly("CMP " + ;name)
-  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  NextNative()
-
-InstructionBIT_03_RR:               ; 03SD, both operands in registers
-  ;name = "BIT Rs,Rd"
-  FlagNZ = Reg((Op >> 6) & 7) & Reg(Op & 7)
-  FlagV = 0
-  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
-  ;disassembly("BIT " + ;name)
-  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  NextNative()
-
-InstructionBIC_04_RR:               ; 04SD, both operands in registers
-  ;name = "BIC Rs,Rd"
-  Res = Reg(Op & 7) & ~Reg((Op >> 6) & 7) & $FFFF
-  Reg(Op & 7) = Res
-  FlagNZ = Res
-  FlagV = 0
-  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
-  ;disassembly("BIC " + ;name)
-  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  NextNative()
-
-InstructionBIS_05_RR:               ; 05SD, both operands in registers
-  ;name = "BIS Rs,Rd"
-  Res = Reg(Op & 7) | Reg((Op >> 6) & 7)
-  Reg(Op & 7) = Res
-  FlagNZ = Res
-  FlagV = 0
-  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
-  ;disassembly("BIS " + ;name)
-  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  NextNative()
-
-InstructionADD_06_RR:               ; 06SD, both operands in registers
-  ;name = "ADD Rs,Rd"
-  Src = Reg((Op >> 6) & 7)
-  Res = Src + Reg(Op & 7)
-  FlagC = Res                            ; C is bit 16 of the sum
-  Res = Res & $FFFF
-  Reg(Op & 7) = Res
-  FlagNZ = Res
-  FlagV = (Src ! Res) & ((Res - Src) ! Res)   ; bit 15; Res - Src is the old Rd
-  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
-  ;disassembly("ADD " + ;name)
-  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  NextNative()
-
-InstructionMOVB_11_RR:              ; 11SD, both operands in registers
-  ;name = "MOVB Rs,Rd"
-  Src = Reg((Op >> 6) & 7) & $FF
-  Reg(Op & 7) = (Src | (0 - (Src & $80))) & $FFFF
-  FlagNZ = Src << 8
-  FlagV = 0
-  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
-  ;disassembly("MOVB " + ;name)
-  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  NextNative()
-
-InstructionCMPB_12_RR:              ; 12SD, both operands in registers
-  ;name = "CMPB Rs,Rd"
-  Src = Reg((Op >> 6) & 7) & $FF
-  Dst = Reg(Op & 7) & $FF
-  Res = Src - Dst
-  FlagC = Res << 8
-  FlagV = ((Src ! Dst) & (Src ! Res)) << 8
-  FlagNZ = (Res & $FF) << 8
-  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
-  ;disassembly("CMPB " + ;name)
-  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  NextNative()
-
-InstructionBITB_13_RR:              ; 13SD, both operands in registers
-  ;name = "BITB Rs,Rd"
-  FlagNZ = (Reg((Op >> 6) & 7) & Reg(Op & 7) & $FF) << 8
-  FlagV = 0
-  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
-  ;disassembly("BITB " + ;name)
-  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  NextNative()
-
-InstructionBICB_14_RR:              ; 14SD, both operands in registers
-  ;name = "BICB Rs,Rd"
-  Res = Reg(Op & 7) & ~Reg((Op >> 6) & 7) & $FF
-  Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
-  FlagNZ = Res << 8
-  FlagV = 0
-  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
-  ;disassembly("BICB " + ;name)
-  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  NextNative()
-
-InstructionBISB_15_RR:              ; 15SD, both operands in registers
-  ;name = "BISB Rs,Rd"
-  Res = (Reg(Op & 7) | Reg((Op >> 6) & 7)) & $FF
-  Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
-  FlagNZ = Res << 8
-  FlagV = 0
-  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
-  ;disassembly("BISB " + ;name)
-  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  NextNative()
-
-InstructionSUB_16_RR:               ; 16SD, both operands in registers
-  ;name = "SUB Rs,Rd"
-  Src = Reg((Op >> 6) & 7)
-  Res = Reg(Op & 7) - Src
-  FlagC = Res                            ; the borrow is bit 16
-  Res = Res & $FFFF
-  Reg(Op & 7) = Res
-  FlagNZ = Res
-  FlagV = (Src ! (Res + Src)) & ((Res + Src) ! Res)   ; bit 15; Res + Src is the old Rd
-  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
-  ;disassembly("SUB " + ;name)
-  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
-  NextNative()
 
 InstructionCLR_0050_R:              ; 0050R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionCLR_0050
+  EndIf
   ;name = "CLR Rd"
   Reg(Op & 7) = 0
   FlagNZ = 0
@@ -1941,6 +1841,9 @@ InstructionCLR_0050_R:              ; 0050R, operand in a register
   NextNative()
 
 InstructionCOM_0051_R:              ; 0051R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionCOM_0051
+  EndIf
   ;name = "COM Rd"
   Res = Reg(Op & 7) ! $FFFF
   Reg(Op & 7) = Res
@@ -1953,6 +1856,9 @@ InstructionCOM_0051_R:              ; 0051R, operand in a register
   NextNative()
 
 InstructionINC_0052_R:              ; 0052R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionINC_0052
+  EndIf
   ;name = "INC Rd"
   Dst = Reg(Op & 7)
   Res = (Dst + 1) & $FFFF
@@ -1968,6 +1874,9 @@ InstructionINC_0052_R:              ; 0052R, operand in a register
   NextNative()
 
 InstructionDEC_0053_R:              ; 0053R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionDEC_0053
+  EndIf
   ;name = "DEC Rd"
   Dst = Reg(Op & 7)
   Res = (Dst - 1) & $FFFF
@@ -1983,6 +1892,9 @@ InstructionDEC_0053_R:              ; 0053R, operand in a register
   NextNative()
 
 InstructionNEG_0054_R:              ; 0054R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionNEG_0054
+  EndIf
   ;name = "NEG Rd"
   Res = (0 - Reg(Op & 7)) & $FFFF
   Reg(Op & 7) = Res
@@ -2001,6 +1913,9 @@ InstructionNEG_0054_R:              ; 0054R, operand in a register
   NextNative()
 
 InstructionTST_0057_R:              ; 0057R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionTST_0057
+  EndIf
   ;name = "TST Rd"
   FlagNZ = Reg(Op & 7)
   FlagV = 0
@@ -2011,6 +1926,9 @@ InstructionTST_0057_R:              ; 0057R, operand in a register
   NextNative()
 
 InstructionROR_0060_R:              ; 0060R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionROR_0060
+  EndIf
   ;name = "ROR Rd"
   Dst = Reg(Op & 7)
   Res = (Dst >> 1) | ((FlagC >> 1) & $8000)
@@ -2024,6 +1942,9 @@ InstructionROR_0060_R:              ; 0060R, operand in a register
   NextNative()
 
 InstructionROL_0061_R:              ; 0061R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionROL_0061
+  EndIf
   ;name = "ROL Rd"
   Dst = Reg(Op & 7)
   Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FFFF
@@ -2037,6 +1958,9 @@ InstructionROL_0061_R:              ; 0061R, operand in a register
   NextNative()
 
 InstructionASR_0062_R:              ; 0062R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionASR_0062
+  EndIf
   ;name = "ASR Rd"
   Dst = Reg(Op & 7)
   Res = (Dst >> 1) | (Dst & $8000)
@@ -2050,6 +1974,9 @@ InstructionASR_0062_R:              ; 0062R, operand in a register
   NextNative()
 
 InstructionASL_0063_R:              ; 0063R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionASL_0063
+  EndIf
   ;name = "ASL Rd"
   Dst = Reg(Op & 7)
   Res = (Dst << 1) & $FFFF
@@ -2063,6 +1990,9 @@ InstructionASL_0063_R:              ; 0063R, operand in a register
   NextNative()
 
 InstructionSWAB_0003_R:             ; 0003R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionSWAB_0003
+  EndIf
   ;name = "SWAB Rd"
   Dst = Reg(Op & 7)
   Res = ((Dst >> 8) | (Dst << 8)) & $FFFF
@@ -2076,6 +2006,9 @@ InstructionSWAB_0003_R:             ; 0003R, operand in a register
   NextNative()
 
 InstructionCLRB_1050_R:             ; 1050R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionCLRB_1050
+  EndIf
   ;name = "CLRB Rd"
   Reg(Op & 7) = Reg(Op & 7) & $FF00
   FlagNZ = 0
@@ -2087,6 +2020,9 @@ InstructionCLRB_1050_R:             ; 1050R, operand in a register
   NextNative()
 
 InstructionINCB_1052_R:             ; 1052R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionINCB_1052
+  EndIf
   ;name = "INCB Rd"
   Dst = Reg(Op & 7) & $FF
   Res = (Dst + 1) & $FF
@@ -2102,6 +2038,9 @@ InstructionINCB_1052_R:             ; 1052R, operand in a register
   NextNative()
 
 InstructionDECB_1053_R:             ; 1053R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionDECB_1053
+  EndIf
   ;name = "DECB Rd"
   Dst = Reg(Op & 7) & $FF
   Res = (Dst - 1) & $FF
@@ -2117,6 +2056,9 @@ InstructionDECB_1053_R:             ; 1053R, operand in a register
   NextNative()
 
 InstructionTSTB_1057_R:             ; 1057R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionTSTB_1057
+  EndIf
   ;name = "TSTB Rd"
   FlagNZ = (Reg(Op & 7) & $FF) << 8
   FlagV = 0
@@ -2135,6 +2077,9 @@ InstructionTSTB_1057_R:             ; 1057R, operand in a register
 ; ======================================================================
 
 InstructionMOV_01_IR:            ; 0127DD  MOV #n,Rd, the source an immediate
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionMOV_01
+  EndIf
   ;name = "MOV #n,Rd"
   MReadWord(Src, PC)                     ; the word after the instruction
   PC = (PC + 2) & $FFFF
@@ -2145,6 +2090,9 @@ InstructionMOV_01_IR:            ; 0127DD  MOV #n,Rd, the source an immediate
   NextNativeTrap()
 
 InstructionCMP_02_IR:            ; 0227DD  CMP #n,Rd, the source an immediate
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionCMP_02
+  EndIf
   ;name = "CMP #n,Rd"
   MReadWord(Src, PC)                     ; the word after the instruction
   PC = (PC + 2) & $FFFF
@@ -2156,6 +2104,9 @@ InstructionCMP_02_IR:            ; 0227DD  CMP #n,Rd, the source an immediate
   NextNativeTrap()
 
 InstructionBIT_03_IR:            ; 0327DD  BIT #n,Rd, the source an immediate
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionBIT_03
+  EndIf
   ;name = "BIT #n,Rd"
   MReadWord(Src, PC)                     ; the word after the instruction
   PC = (PC + 2) & $FFFF
@@ -2165,6 +2116,9 @@ InstructionBIT_03_IR:            ; 0327DD  BIT #n,Rd, the source an immediate
   NextNativeTrap()
 
 InstructionBIC_04_IR:            ; 0427DD  BIC #n,Rd, the source an immediate
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionBIC_04
+  EndIf
   ;name = "BIC #n,Rd"
   MReadWord(Src, PC)                     ; the word after the instruction
   PC = (PC + 2) & $FFFF
@@ -2176,6 +2130,9 @@ InstructionBIC_04_IR:            ; 0427DD  BIC #n,Rd, the source an immediate
   NextNativeTrap()
 
 InstructionBIS_05_IR:            ; 0527DD  BIS #n,Rd, the source an immediate
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionBIS_05
+  EndIf
   ;name = "BIS #n,Rd"
   MReadWord(Src, PC)                     ; the word after the instruction
   PC = (PC + 2) & $FFFF
@@ -2187,6 +2144,9 @@ InstructionBIS_05_IR:            ; 0527DD  BIS #n,Rd, the source an immediate
   NextNativeTrap()
 
 InstructionADD_06_IR:            ; 0627DD  ADD #n,Rd, the source an immediate
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionADD_06
+  EndIf
   ;name = "ADD #n,Rd"
   MReadWord(Src, PC)                     ; the word after the instruction
   PC = (PC + 2) & $FFFF
@@ -2200,6 +2160,9 @@ InstructionADD_06_IR:            ; 0627DD  ADD #n,Rd, the source an immediate
   NextNativeTrap()
 
 InstructionSUB_16_IR:            ; 1627DD  SUB #n,Rd, the source an immediate
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionSUB_16
+  EndIf
   ;name = "SUB #n,Rd"
   MReadWord(Src, PC)                     ; the word after the instruction
   PC = (PC + 2) & $FFFF
@@ -2213,6 +2176,9 @@ InstructionSUB_16_IR:            ; 1627DD  SUB #n,Rd, the source an immediate
   NextNativeTrap()
 
 InstructionMOVB_11_IR:           ; 1127DD  MOVB #n,Rd, the source an immediate
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionMOVB_11
+  EndIf
   ;name = "MOVB #n,Rd"
   MReadByte(Src, PC)                     ; the low byte of the word after the instruction
   PC = (PC + 2) & $FFFF                  ; (R7 always steps by two)
@@ -2223,6 +2189,9 @@ InstructionMOVB_11_IR:           ; 1127DD  MOVB #n,Rd, the source an immediate
   NextNativeTrap()
 
 InstructionCMPB_12_IR:           ; 1227DD  CMPB #n,Rd, the source an immediate
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionCMPB_12
+  EndIf
   ;name = "CMPB #n,Rd"
   MReadByte(Src, PC)                     ; the low byte of the word after the instruction
   PC = (PC + 2) & $FFFF                  ; (R7 always steps by two)
@@ -2235,6 +2204,9 @@ InstructionCMPB_12_IR:           ; 1227DD  CMPB #n,Rd, the source an immediate
   NextNativeTrap()
 
 InstructionBITB_13_IR:           ; 1327DD  BITB #n,Rd, the source an immediate
+  If (Op & 7) = 7                        ; the destination is the PC: the general handler
+    Goto InstructionBITB_13
+  EndIf
   ;name = "BITB #n,Rd"
   MReadByte(Src, PC)                     ; the low byte of the word after the instruction
   PC = (PC + 2) & $FFFF                  ; (R7 always steps by two)
@@ -2482,14 +2454,7 @@ BuildTable:
   Ops(0, 65536, ?InstructionReserved)
 
   ; ---- 0000xx - 0003xx ----
-  OpTable($0000) = ?InstructionHALT_000000         ; 000000
-  OpTable($0001) = ?InstructionWAIT_000001         ; 000001
-  OpTable($0002) = ?InstructionRTI_000002          ; 000002
-  OpTable($0003) = ?InstructionBPT_000003          ; 000003
-  OpTable($0004) = ?InstructionIOT_000004          ; 000004
-  OpTable($0005) = ?InstructionRESET_000005        ; 000005
-  OpTable($0006) = ?InstructionRTT_000006          ; 000006
-  OpTable($0007) = ?InstructionMFPT_000007         ; 000007
+  OpTable(0) = ?InstructionGroup0_0000            ; 000000-000007
   Ops($0040, 64, ?InstructionJMP_0001)             ; 000100-000177
   Ops($0080, 8, ?InstructionRTS_00020)            ; 000200-000207
   Ops($0098, 8, ?InstructionSPL_00023)            ; 000230-000237
@@ -2580,68 +2545,45 @@ BuildTable:
   CompilerEndIf
 
   ; ---- register fast paths: overlay the general entries ----
-  For FillS = 0 To 6                     ; never R7: those stay general, which
-    For FillD = 0 To 6                   ; keeps the fast paths off the PC
-      OpTable($1000 | (FillS << 6) | FillD) = ?InstructionMOV_01_RR
-      OpTable($2000 | (FillS << 6) | FillD) = ?InstructionCMP_02_RR
-      OpTable($3000 | (FillS << 6) | FillD) = ?InstructionBIT_03_RR
-      OpTable($4000 | (FillS << 6) | FillD) = ?InstructionBIC_04_RR
-      OpTable($5000 | (FillS << 6) | FillD) = ?InstructionBIS_05_RR
-      OpTable($6000 | (FillS << 6) | FillD) = ?InstructionADD_06_RR
-      OpTable($9000 | (FillS << 6) | FillD) = ?InstructionMOVB_11_RR
-      OpTable($A000 | (FillS << 6) | FillD) = ?InstructionCMPB_12_RR
-      OpTable($B000 | (FillS << 6) | FillD) = ?InstructionBITB_13_RR
-      OpTable($C000 | (FillS << 6) | FillD) = ?InstructionBICB_14_RR
-      OpTable($D000 | (FillS << 6) | FillD) = ?InstructionBISB_15_RR
-      OpTable($E000 | (FillS << 6) | FillD) = ?InstructionSUB_16_RR
-    Next
-  Next
-  For FillD = 0 To 6
-    OpTable($0A00 | FillD) = ?InstructionCLR_0050_R
-    OpTable($0A40 | FillD) = ?InstructionCOM_0051_R
-    OpTable($0A80 | FillD) = ?InstructionINC_0052_R
-    OpTable($0AC0 | FillD) = ?InstructionDEC_0053_R
-    OpTable($0B00 | FillD) = ?InstructionNEG_0054_R
-    OpTable($0BC0 | FillD) = ?InstructionTST_0057_R
-    OpTable($0C00 | FillD) = ?InstructionROR_0060_R
-    OpTable($0C40 | FillD) = ?InstructionROL_0061_R
-    OpTable($0C80 | FillD) = ?InstructionASR_0062_R
-    OpTable($0CC0 | FillD) = ?InstructionASL_0063_R
-    OpTable($00C0 | FillD) = ?InstructionSWAB_0003_R
-    OpTable($8A00 | FillD) = ?InstructionCLRB_1050_R
-    OpTable($8A80 | FillD) = ?InstructionINCB_1052_R
-    OpTable($8AC0 | FillD) = ?InstructionDECB_1053_R
-    OpTable($8BC0 | FillD) = ?InstructionTSTB_1057_R
-  Next
-  ; ---- immediate fast paths: OP #n,R0-R6 ----
-  For FillD = 0 To 6
-    OpTable($15C0 | FillD) = ?InstructionMOV_01_IR
-    OpTable($25C0 | FillD) = ?InstructionCMP_02_IR
-    OpTable($35C0 | FillD) = ?InstructionBIT_03_IR
-    OpTable($45C0 | FillD) = ?InstructionBIC_04_IR
-    OpTable($55C0 | FillD) = ?InstructionBIS_05_IR
-    OpTable($65C0 | FillD) = ?InstructionADD_06_IR
-    OpTable($E5C0 | FillD) = ?InstructionSUB_16_IR
-    OpTable($95C0 | FillD) = ?InstructionMOVB_11_IR
-    OpTable($A5C0 | FillD) = ?InstructionCMPB_12_IR
-    OpTable($B5C0 | FillD) = ?InstructionBITB_13_IR
-  Next
-  ; ---- register source, memory destination (the handlers' header says why):
-  ; every source register, R7 too, and every destination that is not a register ----
+  OpTable($0A00 >> 3) = ?InstructionCLR_0050_R
+  OpTable($0A40 >> 3) = ?InstructionCOM_0051_R
+  OpTable($0A80 >> 3) = ?InstructionINC_0052_R
+  OpTable($0AC0 >> 3) = ?InstructionDEC_0053_R
+  OpTable($0B00 >> 3) = ?InstructionNEG_0054_R
+  OpTable($0BC0 >> 3) = ?InstructionTST_0057_R
+  OpTable($0C00 >> 3) = ?InstructionROR_0060_R
+  OpTable($0C40 >> 3) = ?InstructionROL_0061_R
+  OpTable($0C80 >> 3) = ?InstructionASR_0062_R
+  OpTable($0CC0 >> 3) = ?InstructionASL_0063_R
+  OpTable($00C0 >> 3) = ?InstructionSWAB_0003_R
+  OpTable($8A00 >> 3) = ?InstructionCLRB_1050_R
+  OpTable($8A80 >> 3) = ?InstructionINCB_1052_R
+  OpTable($8AC0 >> 3) = ?InstructionDECB_1053_R
+  OpTable($8BC0 >> 3) = ?InstructionTSTB_1057_R
+  OpTable($15C0 >> 3) = ?InstructionMOV_01_IR
+  OpTable($25C0 >> 3) = ?InstructionCMP_02_IR
+  OpTable($35C0 >> 3) = ?InstructionBIT_03_IR
+  OpTable($45C0 >> 3) = ?InstructionBIC_04_IR
+  OpTable($55C0 >> 3) = ?InstructionBIS_05_IR
+  OpTable($65C0 >> 3) = ?InstructionADD_06_IR
+  OpTable($E5C0 >> 3) = ?InstructionSUB_16_IR
+  OpTable($95C0 >> 3) = ?InstructionMOVB_11_IR
+  OpTable($A5C0 >> 3) = ?InstructionCMPB_12_IR
+  OpTable($B5C0 >> 3) = ?InstructionBITB_13_IR
   For FillS = 0 To 7
-    For FillD = 8 To 63
-      OpTable($1000 | (FillS << 6) | FillD) = ?InstructionMOV_01_RM
-      OpTable($2000 | (FillS << 6) | FillD) = ?InstructionCMP_02_RM
-      OpTable($3000 | (FillS << 6) | FillD) = ?InstructionBIT_03_RM
-      OpTable($4000 | (FillS << 6) | FillD) = ?InstructionBIC_04_RM
-      OpTable($5000 | (FillS << 6) | FillD) = ?InstructionBIS_05_RM
-      OpTable($6000 | (FillS << 6) | FillD) = ?InstructionADD_06_RM
-      OpTable($9000 | (FillS << 6) | FillD) = ?InstructionMOVB_11_RM
-      OpTable($A000 | (FillS << 6) | FillD) = ?InstructionCMPB_12_RM
-      OpTable($B000 | (FillS << 6) | FillD) = ?InstructionBITB_13_RM
-      OpTable($C000 | (FillS << 6) | FillD) = ?InstructionBICB_14_RM
-      OpTable($D000 | (FillS << 6) | FillD) = ?InstructionBISB_15_RM
-      OpTable($E000 | (FillS << 6) | FillD) = ?InstructionSUB_16_RM
+    For FillD = 1 To 7                   ; destination modes 1-7
+      OpTable(($1000 | (FillS << 6) | (FillD << 3)) >> 3) = ?InstructionMOV_01_RM
+      OpTable(($2000 | (FillS << 6) | (FillD << 3)) >> 3) = ?InstructionCMP_02_RM
+      OpTable(($3000 | (FillS << 6) | (FillD << 3)) >> 3) = ?InstructionBIT_03_RM
+      OpTable(($4000 | (FillS << 6) | (FillD << 3)) >> 3) = ?InstructionBIC_04_RM
+      OpTable(($5000 | (FillS << 6) | (FillD << 3)) >> 3) = ?InstructionBIS_05_RM
+      OpTable(($6000 | (FillS << 6) | (FillD << 3)) >> 3) = ?InstructionADD_06_RM
+      OpTable(($9000 | (FillS << 6) | (FillD << 3)) >> 3) = ?InstructionMOVB_11_RM
+      OpTable(($A000 | (FillS << 6) | (FillD << 3)) >> 3) = ?InstructionCMPB_12_RM
+      OpTable(($B000 | (FillS << 6) | (FillD << 3)) >> 3) = ?InstructionBITB_13_RM
+      OpTable(($C000 | (FillS << 6) | (FillD << 3)) >> 3) = ?InstructionBICB_14_RM
+      OpTable(($D000 | (FillS << 6) | (FillD << 3)) >> 3) = ?InstructionBISB_15_RM
+      OpTable(($E000 | (FillS << 6) | (FillD << 3)) >> 3) = ?InstructionSUB_16_RM
     Next
   Next
   OpTableReady = 1

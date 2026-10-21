@@ -13,7 +13,7 @@
 ;  A block with N = 0 ends the tape; its address is the transfer address
 ;  (odd = "do not start").
 ;
-;  Include after cpu.pico2 (it needs Mem and #RAM_BYTES).
+;  Include after cpu.pico2 (it needs Mem and #RAM16).
 ; ======================================================================
 
 #TAPE_ERR_SIGNATURE = 1      ; a block did not start 001 000
@@ -99,7 +99,7 @@ Procedure.i TapeByte(b.i)
       TapeState = 7
     EndIf
   ElseIf TapeState = 6                   ; a data byte
-    If TapeAddr >= #RAM_BYTES
+    If TapeAddr >= #RAM16
       TapeFail(#TAPE_ERR_RANGE)
       ProcedureReturn 0
     EndIf

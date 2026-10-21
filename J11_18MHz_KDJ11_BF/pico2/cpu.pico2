@@ -124,8 +124,22 @@
 ; ======================================================================
 
 ; ---- sizes -----------------------------------------------------------
-#RAM_BYTES   = $E000        ; 000000-157777, 56 KB
-#RAM_WORDS   = $7000
+; #RAM_BYTES is the memory in Mem(), from physical address 0. A 16-bit
+; address - memory management off - reaches only #RAM16 of it (000000-157777;
+; 160000 up is the I/O page), so the unmapped paths test against #RAM16 and
+; the mapped ones (the MMU, its windows, the RK11's transfers) against
+; #RAM_BYTES. With PSRAM, Mem() is the first 56 KB and the rest is in the
+; PSRAM (#PS_MEM); without it the program says how much SRAM to give
+; (#SRAM_MEM_KB, set beside #PSRAM: 152 in diag.pico2, which gives the rest of
+; the SRAM to the file-write overlay; 56 in the test programs; at most 248, all
+; an 18-bit machine reaches below its I/O page).
+CompilerIf #PSRAM = 1
+#RAM_BYTES   = $E000        ; 000000-157777, 56 KB in SRAM, the rest in the PSRAM
+CompilerElse
+#RAM_BYTES   = #SRAM_MEM_KB * 1024
+CompilerEndIf
+#RAM_WORDS   = #RAM_BYTES / 2
+#RAM16       = $E000        ; what a 16-bit address reaches: 000000-157777
 #IOPAGE      = $E000        ; 160000
 #PSW_ADDR    = $FFFE        ; 177776
 
@@ -1049,7 +1063,7 @@ ProcedureRAM.i ReadWord(a.i)
     BusError()
     ProcedureReturn 0
   EndIf
-  If a < #RAM_BYTES
+  If a < #RAM16
     ProcedureReturn Mem(a >> 1)
   EndIf
   ProcedureReturn IoRead(a)
@@ -1061,7 +1075,7 @@ ProcedureRAM WriteWord(a.i, v.i)
     BusError()
     ProcedureReturn
   EndIf
-  If a < #RAM_BYTES
+  If a < #RAM16
     Mem(a >> 1) = v & $FFFF
     ProcedureReturn
   EndIf
@@ -1075,7 +1089,7 @@ EndProcedure
 ; A byte read of a device register is a word read (the bus has no other
 ; kind), so reading either half of RBUF clears DONE, as on the real bus.
 ProcedureRAM.i ReadByte(a.i)
-  If a < #RAM_BYTES
+  If a < #RAM16
     If a & 1
       ProcedureReturn (Mem(a >> 1) >> 8) & $FF
     EndIf
@@ -1088,7 +1102,7 @@ ProcedureRAM.i ReadByte(a.i)
 EndProcedure
 
 ProcedureRAM WriteByte(a.i, v.i)
-  If a < #RAM_BYTES
+  If a < #RAM16
     If a & 1
       Mem(a >> 1) = (Mem(a >> 1) & $00FF) | ((v & $FF) << 8)
     Else
@@ -1163,7 +1177,7 @@ EndProcedure
 ; own parameter - MWriteWord(Adr, v) with a parameter v - makes the compiler
 ; exit with no message, 2026-09-23.)
 Macro MReadWord(mDest, mAdr)
-  If mAdr < #RAM_BYTES
+  If mAdr < #RAM16
     If (mAdr & 1) = 0
       mDest = Mem(mAdr >> 1)
     Else
@@ -1175,7 +1189,7 @@ Macro MReadWord(mDest, mAdr)
 EndMacro
 
 Macro MWriteWord(mAdr, mVal)                   ; Mem is .u: the store keeps the low 16 bits
-  If mAdr < #RAM_BYTES
+  If mAdr < #RAM16
     If (mAdr & 1) = 0
       Mem(mAdr >> 1) = mVal
     Else
@@ -1187,7 +1201,7 @@ Macro MWriteWord(mAdr, mVal)                   ; Mem is .u: the store keeps the 
 EndMacro
 
 Macro MReadByte(mDest, mAdr)
-  If mAdr < #RAM_BYTES
+  If mAdr < #RAM16
     If mAdr & 1
       mDest = (Mem(mAdr >> 1) >> 8) & $FF
     Else
@@ -1199,7 +1213,7 @@ Macro MReadByte(mDest, mAdr)
 EndMacro
 
 Macro MWriteByte(mAdr, mVal)
-  If mAdr < #RAM_BYTES
+  If mAdr < #RAM16
     If mAdr & 1
       Mem(mAdr >> 1) = (Mem(mAdr >> 1) & $00FF) | ((mVal & $FF) << 8)
     Else
@@ -1476,8 +1490,11 @@ ProcedureRAM.i MmuReadByte(va.i, e.i)
   If pa < 0
     ProcedureReturn 0
   EndIf
-  If pa < #RAM_BYTES
-    ProcedureReturn ReadByte(pa)
+  If pa < #RAM_BYTES                     ; Mem itself: ReadByte reaches only #RAM16 of it
+    If pa & 1
+      ProcedureReturn (Mem(pa >> 1) >> 8) & $FF
+    EndIf
+    ProcedureReturn Mem(pa >> 1) & $FF
   EndIf
   CompilerIf #PSRAM = 1
     If pa < MemLim
@@ -1508,8 +1525,14 @@ ProcedureRAM MmuWriteByte(va.i, e.i, v.i)
     If pa < 0
       ProcedureReturn
     EndIf
+    WriteByte(pa, v)
+    ProcedureReturn
   EndIf
-  WriteByte(pa, v)
+  If pa & 1                              ; Mem itself: WriteByte reaches only #RAM16 of it
+    Mem(pa >> 1) = (Mem(pa >> 1) & $00FF) | ((v & $FF) << 8)
+  Else
+    Mem(pa >> 1) = (Mem(pa >> 1) & $FF00) | (v & $FF)
+  EndIf
 EndProcedure
 
 ; The fast path, INLINE: in the entry's fast window, a load or store; else
