@@ -23,11 +23,12 @@ itself and Unix's `#` prompt appears with no typing. Press **Esc** within
 How to flash, connect and use them, and how to rebuild them from
 `../media/unix/` with the tools, is in **[../README.md](../README.md)**.
 
-Both run the emulated processor alone on core 0, with its run loop in
-SRAM, and USB, the console and the disk's storage on core 1. Both builds
-are **read-only**: the emulator never writes the flash. Swap
+They run the emulated processor alone on core 0, with its run loop in
+SRAM, and USB, the console and the disk's storage on core 1. All but the V7
+file are **read-only**: the emulator never writes the flash. Swap
 and every disk write go to RAM and are lost at power-off, so a board can be
-unplugged at any time and always starts again from the pack as flashed.
+unplugged at any time and always starts again from the pack as flashed. The
+V7 file saves what Unix writes into the flash (its section below).
 
 The UNIX files inside the disk packs are covered by the Caldera licence in
 `../Caldera-license.pdf`.

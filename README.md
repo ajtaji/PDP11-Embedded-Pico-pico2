@@ -33,7 +33,9 @@ The emulated machine has a console on the USB serial port, an RK11 disk controll
 | Feature | Notes |
 |---|---|
 | J-11 (KDJ11-BF) processor | Run loop in SRAM on core 0; code left in flash runs through a 16 KB cache the two cores share |
-| RK11 controller, RK05 pack | Pack held in the board's flash; **the emulator never writes the flash** |
+| RK11 controller, RK05 pack | Pack held in the board's flash; on the Pico 2 W and the Pico W **the emulator never writes the flash** |
+| RP11 controller, RP03 drive | PSRAM boards: V7's whole `/usr` on `/dev/rp3`, as V7 shipped it |
+| Saving to flash | PSRAM boards (the V7 image): changes are saved by themselves a few seconds after the disks go quiet, or at once with Ctrl-] `w`, into a wear-levelled store that a power cut cannot spoil |
 | KW11-L line clock | 60 Hz, kept by core 1 |
 | Console | USB serial, no baud rate to set |
 | Auto-boot | Powers up into Unix with no typing; Esc within 2 s for the diagnostic console |
@@ -49,7 +51,7 @@ The emulated machine has a console on the USB serial port, an RK11 disk controll
 | Pico 2 W (RP2350) | `images/pico2w-v6/combined.uf2` | Sixth Edition Unix (V6), memory management on |
 | Pico W (RP2040) | `images/picow-mini-unix/firmware.uf2`, then `images/picow-mini-unix/minix.uf2` | Mini-Unix |
 | Pimoroni Pico Plus 2 W | `images/picoplus2/combined.uf2` | Sixth Edition Unix (V6), 248 KB |
-| Pimoroni Pico Plus 2 W | `images/picoplus2-v7/combined.uf2` | Seventh Edition Unix (V7), 1 MB, floating point |
+| Pimoroni Pico Plus 2 W | `images/picoplus2-v7/combined.uf2` | Seventh Edition Unix (V7), 2 MB, floating point, the whole `/usr`, saves to flash |
 
 1. Hold the board's **BOOTSEL** button while plugging it into USB. A drive appears (`RP2350` on the Pico 2 W, `RPI-RP2` on the Pico W).
 2. Copy the UF2 file onto it. The board writes it and restarts by itself.
@@ -162,7 +164,7 @@ pack checksums: RK0 21C285A3 5CA82BF0 RK1 1215D2AC 967B3EC6
 RK0: v6root, 4872 blocks, running from its PSRAM copy: writable, every write lost at power-off, the whole swap area (4000-4871); the flash is never written
 ```
 
-- **What V6 gains:** the C compiler runs (`cc`), `/etc/mount /dev/rk1 /usr/source` mounts V6's source pack, and twelve 30 KB processes stayed alive at once with seven swapped out. Every write is lost at power-off, as on the other boards.
+- **What V6 gains:** the C compiler runs (`cc`), `/etc/mount /dev/rk1 /usr/source` mounts V6's source pack, and twelve 30 KB processes stayed alive at once with seven swapped out. With the V6 image's firmware (2026-10-21) every write is lost at power-off, as on the other boards; firmware built from the source of 2026-10-22 on saves the changes to flash (the V7 image has it: [Seventh Edition](#seventh-edition-v7-and-floating-point)).
 - **The chip is set up by the compiler's own library** (`RP2350/Lib/psram.pico2`); `pico2/psram_pdp11.pico2` holds what the PDP-11 does with the memory.
 - **A program in PSRAM runs as fast as one in SRAM.** The memory management unit's fast windows hold a host address for each page, in SRAM or in PSRAM alike. Before that change the same `od` job took 46.2 s with the program in PSRAM.
 - **Which window, measured on V6 itself:** the PDP-11's memory goes through the XIP cache (13.08 s for the `od` job; 18.56 s through the uncached window); the packs go through the uncached window, so a block transfer evicts nothing.
@@ -171,7 +173,7 @@ RK0: v6root, 4872 blocks, running from its PSRAM copy: writable, every write los
 
 ## Seventh Edition (V7) and floating point
 
-On the PSRAM boards the machine has the J-11's floating point unit and a megabyte for V7. `images/picoplus2-v7/combined.uf2` boots V7 by itself to its single-user `#` (the firmware gives it 1 MB and answers its two boot prompts); Ctrl-D goes multi-user, where root logs in with no password and `/usr` - the libraries, nroff's macros, the manual - is mounted from the second drive. `cc` (floating point included), `awk`, `dc`, `adb`, `ps`, `man` work. `tools/v7_pack.py` builds the packs from the distribution tape in `media/unix/` ([docs/HOWTO.md, section 12](docs/HOWTO.md#12-seventh-edition-v7-on-the-pico-plus-2-w)).
+On the PSRAM boards the machine has the J-11's floating point unit and 2 MB for V7. `images/picoplus2-v7/combined.uf2` boots V7 by itself to its single-user `#` (the firmware gives it 2040 KB and answers its two boot prompts); Ctrl-D goes multi-user, where root logs in with no password and `/usr` is mounted from an emulated RP03 - the distribution's whole `/usr`: sources, documents, the dictionary, the games, the libraries and the manual. `cc` (floating point included), `awk`, `dc`, `adb`, `ps`, `man` work. What Unix writes is saved to the flash by itself a few seconds after the disks go quiet (Ctrl-] `w` saves at once) and is there at the next power-up. `tools/v7_pack.py` builds the disks from the distribution tape in `media/unix/` ([docs/HOWTO.md, section 12](docs/HOWTO.md#12-seventh-edition-v7-on-the-pico-plus-2-w)).
 
 Measured on a Pico Plus 2 W on 2026-10-21 ([docs/BENCHMARKS.md](docs/BENCHMARKS.md)):
 
@@ -191,13 +193,13 @@ For comparison, a PDP-11/70 with its FP11 ran the double precision Whetstone at 
   - Pico 2 W: a **swap RAM disk of 112 blocks** (56 KB, blocks 4000-4111 of the pack) and **254 blocks (127 KB) for file-system writes**. The V6 kernel in the image is patched to swap only there (`_nswap` = 112), so swap can never be refused. 112 blocks hold about three of V6's largest processes (about 33 blocks each) or many small ones; if a session ever needs more, V6 stops with its own "panic: out of swap space".
   - Pico W: **124 blocks shared** by swap and file writes. Mini-Unix gives each process a fixed 66-block swap area. The distribution's kernel chose the area by process number, which moves on with every command, so the swap area was walked from end to end and the 124 blocks ran out after about three commands. The kernel in the image (since 2026-10-20, `media/unix/rkmx-slotswap`, [docs/minix/](docs/minix/)) chooses it by process slot, and slots are reused lowest first: ten `od` runs and more leave 53 of the 124 blocks in use. The blocks can still run out if many large processes are swapped out at once, or after many files are written.
   - When the file-write blocks are used up, a write to a new block fails: Unix sees a disk error, the console prints once `[RK0: the RAM overlay for file writes is full ...]`, and the statistics block shows `FULL: n writes refused`. Nothing already written changes and nothing reaches the flash; power off to start clean.
-- **Nothing is saved across a power cycle.** Every disk write, the swap area included, goes to RAM; the next power-up starts from the pack as flashed. `sync` does no harm but saves nothing. (The flash-wear warnings in [disk_boot_readme.md](disk_boot_readme.md) concern emulators that write the flash; this firmware never does.)
+- **Saving across a power cycle: the V7 image only.** On the Pico 2 W, the Pico W and with the V6 PSRAM image every disk write, the swap area included, goes to RAM and the next power-up starts from the pack as flashed; `sync` saves nothing there. The V7 image saves the changes into the top 1 MB of the flash, by itself or with Ctrl-] `w`, never over what it already holds, with the erases spread over the store's 256 sectors (HOWTO section 12, Saving). The swap area is never saved.
 - **V6 on the Pico 2 W:** `ps` works; `df` with no argument looks for V6's built-in `/dev/rk2` and `/dev/rp0`, which this machine does not have, so type **`df /dev/rk0`**. `cc` and `dc` run (both needed more memory than the 56 KB the machine had before 2026-10-21).
-- **Seventh Edition (V7) runs on the PSRAM boards only** (`images/picoplus2-v7/combined.uf2` for the Pico Plus 2 W; the Pico W has 56 KB, and V7 has not been tried on the 152 KB Pico 2 W). Its `/usr` on RK1 holds the libraries, the manual and the headers; the sources, `/usr/doc`, the dictionary and the games do not fit. `df` with no argument looks for the RP disks V7 was configured for: `df /dev/rk0 /dev/rk1`. `date` takes a year from 70 to 99.
-- **Packs:** RK05 only (up to 4872 blocks), drive 0 only (RK1 as well on the PSRAM boards). On the RP2350 boards the pack starts at 0x10240000, so the Pico 2 W's 4 MB hold 1.75 MB of pack: the V6 root pack is stored mapped (2,891 blocks in use). `images/pico2w-v6/combined.uf2` is that build; it ran on a Pico 2 W on 2026-10-20.
+- **Seventh Edition (V7) runs on the PSRAM boards only** (`images/picoplus2-v7/combined.uf2` for the Pico Plus 2 W; the Pico W has 56 KB, and V7 has not been tried on the 152 KB Pico 2 W). Its `/usr` is the whole distribution `/usr` on the RP03's `/dev/rp3`, a 20,800-block file system with about 1.9 MB free. `df` lists both disks. `date` takes a year from 00 to 99, 00-69 being 2000-2069.
+- **Packs:** RK05 (up to 4872 blocks), drive 0 only (RK1 as well on the PSRAM boards), and on the PSRAM boards one RP03 in RK1's place for V7's `/usr`. On the RP2350 boards the pack starts at 0x10240000, so the Pico 2 W's 4 MB hold 1.75 MB of pack: the V6 root pack is stored mapped (2,891 blocks in use). `images/pico2w-v6/combined.uf2` is that build; it ran on a Pico 2 W on 2026-10-20.
 - **The Pico W image uses the flash where the radio's firmware would go; a Pico W running it cannot use its radio.** Its 2 MB cannot hold Mini-Unix (3,061 blocks in use) clear of that region; the firmware says so at start-up and `tools/rk_image.py` when it packs. The Pico W image of 2026-10-20 ran on a Pico W.
 - **Mini-Unix:** a refused swap write can restart the shell.
-- **Year 2000:** the `date` command takes a two-digit year.
+- **Year 2000:** the `date` command takes a two-digit year; V6's and Mini-Unix's read it as 19yy, V7's (rebuilt on a board) 00-69 as 20yy.
 
 ## The emulated processor, and where it is known to differ from a real J-11
 

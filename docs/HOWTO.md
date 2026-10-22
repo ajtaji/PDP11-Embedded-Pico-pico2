@@ -142,7 +142,7 @@ Type **Ctrl-]** then `s` at any time. The firmware prints a block with the clock
 
 ### Shutting down
 
-Unplug at any time. The emulator never writes the flash: every disk write, the swap area included, goes to RAM and is lost at power-off, and the next power-up starts from the pack as flashed. `sync` does no harm but saves nothing across a power cycle.
+Unplug at any time. On these boards the emulator never writes the flash (the PSRAM boards' V7 image saves: section 12): every disk write, the swap area included, goes to RAM and is lost at power-off, and the next power-up starts from the pack as flashed. `sync` does no harm but saves nothing across a power cycle.
 
 ### If something looks wrong
 
