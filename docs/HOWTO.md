@@ -142,7 +142,7 @@ Type **Ctrl-]** then `s` at any time. The firmware prints a block with the clock
 
 ### Shutting down
 
-Unplug at any time. On these boards the emulator never writes the flash (the PSRAM boards' V7 image saves: section 12): every disk write, the swap area included, goes to RAM and is lost at power-off, and the next power-up starts from the pack as flashed. `sync` does no harm but saves nothing across a power cycle.
+Unplug at any time. On these boards the emulator never writes the flash (the Pico Plus 2 W images save: section 12): every disk write, the swap area included, goes to RAM and is lost at power-off, and the next power-up starts from the pack as flashed. `sync` does no harm but saves nothing across a power cycle.
 
 ### If something looks wrong
 
@@ -357,7 +357,7 @@ python tools/board_session.py --hub-port 9 --script docs/psram/proof.txt --out t
 
 `docs/psram/proof.txt` checks `mem = 1036`, runs `ps`, `df /dev/rk0`, mounts RK1, types and compiles a C program and runs it, times `od /rkunix` twice and takes the statistics block. `docs/psram/swap.txt` keeps twelve 30 KB processes alive at once. The transcripts of both boards are beside them.
 
-**V6 notes for these boards.** `stty -lcase` first if you type C: in upper-case mode `\n` in a string arrives as `N`. `#` and `@` are V6's erase and kill characters. Everything written is lost at power-off unless it is saved: firmware built from the source of 2026-10-22 on saves both packs' changes into the flash by itself, or at once with `sync`, then Ctrl-] and `w` (section 12, Saving). `images/picoplus2/combined.uf2` is older and has no save.
+**V6 notes for these boards.** `stty -lcase` first if you type C: in upper-case mode `\n` in a string arrives as `N`. `#` and `@` are V6's erase and kill characters. Everything written is lost at power-off unless it is saved: firmware built from the source of 2026-10-22 on - `images/picoplus2/combined.uf2` has it - saves both packs' changes into the flash by itself, or at once with `sync`, then Ctrl-] and `w` (section 12, Saving). `images/feather/combined.uf2` is older and has no save.
 
 ## 11. Flash and build from the PureMetal Forge IDE
 

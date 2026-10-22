@@ -1,19 +1,16 @@
 # Ready-to-flash Unix images
 
-**Read this first (2026-10-21).** The Pico 2 W and Pico Plus 2 W files were rebuilt on 2026-10-21
-from the source of commit `bb9c842` (the speed pass: the stack, JSR, RTS and DIV in assembly, the
-fetch window kept per mode, and on the PSRAM boards 224 KB of the memory and the unmapped run loop in
-SRAM - `../docs/BENCHMARKS.md`, "The speed pass"); the Pico W files from `658cc72`, whose RP2040
-source the speed pass does not touch (V7's two-step auto-boot; the Pico 2 W's 152 KB of memory
-and 254-block write overlay, so V6's cc runs there; the J-11's floating point unit on the RP2350 builds;
-the PC's references in I space; on top of the hot paths in assembly and Mini-Unix's swap by process slot
-of 2026-10-20), from a clean `git archive`, and each file was run on its board as described
-below. The DEC diagnostic ladder gives 17 of 19 (the two J-11 HALTs) on the Pico 2 W, the Pico Plus
-2 W and the Pico W with firmware built from the same source. The RP2350 files keep
-their packs at 0x10240000 and 0x104C0000, clear of the region a radio's firmware is kept in
-(`J11_18MHz_KDJ11_BF/pico2/flash_layout.pico2`). **The Feather file is still the 2026-10-07 build of
-the earlier layout** (packs at 0x10040000 and 0x102C0000): no Feather was at hand to run a new one,
-and `tools/pack_install.py` of the current source refuses it and says why; build a current one with
+**Read this first (2026-10-22).** The Pico 2 W and both Pico Plus 2 W files carry firmware built on
+2026-10-22 from a clean `git archive` of the current source (`ce1436f` and its successors, the same
+firmware bytes): the RP03 and the store of saved changes on the PSRAM boards, and the floating point
+fixes DEC's KDJ11 FPA diagnostics found. The DEC diagnostic ladder gives 19 of 21 on the Pico 2 W
+(the two J-11 HALTs; `../media/diagnostics/ladder.txt`). The Pico W files are from `658cc72`; the
+RP2040 source (`../J11_18MHz_KDJ11_BF/pico/`) has not changed since. Each file was run on its board
+as described below. The RP2350 files keep their packs at 0x10240000 and up, clear of the region a
+radio's firmware is kept in (`J11_18MHz_KDJ11_BF/pico2/flash_layout.pico2`), and the PSRAM files their
+store in the top 1 MB of the flash. **The Feather file is still the 2026-10-07 build of the earlier
+layout** (packs at 0x10040000 and 0x102C0000): no Feather was at hand to run a new one, and
+`tools/pack_install.py` of the current source refuses it and says why; build a current one with
 `tools/psram_build.py --board feather`. Built with PureMetal Forge's release binaries of 2026-10-19
 (compiler `37314eeb8`).
 
@@ -24,11 +21,11 @@ How to flash, connect and use them, and how to rebuild them from
 `../media/unix/` with the tools, is in **[../README.md](../README.md)**.
 
 They run the emulated processor alone on core 0, with its run loop in
-SRAM, and USB, the console and the disk's storage on core 1. All but the V7
-file are **read-only**: the emulator never writes the flash. Swap
+SRAM, and USB, the console and the disk's storage on core 1. The Pico 2 W, Pico W
+and Feather files are **read-only**: the emulator never writes the flash. Swap
 and every disk write go to RAM and are lost at power-off, so a board can be
 unplugged at any time and always starts again from the pack as flashed. The
-V7 file saves what Unix writes into the flash (its section below).
+two Pico Plus 2 W files save what Unix writes into the flash (their sections below).
 
 The UNIX files inside the disk packs are covered by the Caldera licence in
 `../Caldera-license.pdf`.
@@ -75,18 +72,19 @@ works; use `df /dev/rk0` (plain `df` looks for V6's built-in `/dev/rk2` and
 
 | Board | File | Size | SHA-256 |
 |---|---|---|---|
-| Pimoroni Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w)): RP2350B, PSRAM chip select GPIO47, 16 MB flash | `picoplus2/combined.uf2` | 9,421,312 | `b9af052c15aa49b5d0ad266b3779c9d212741140b30361e1c11defc5f6655d6a` |
+| Pimoroni Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w)): RP2350B, PSRAM chip select GPIO47, 16 MB flash | `picoplus2/combined.uf2` | 9,464,832 | `fba2c760935eb13f44dfba18ba8baefab8e90f591d1b7929ce5f63a33f4d34f3` |
 | Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM ([6130](https://www.adafruit.com/product/6130)): RP2350A, GPIO8, 8 MB flash | `feather/combined.uf2` | 9,378,816 | `cebc0629fda95a4975144c330f84a7baf9ac5b1219e5e6392b043d0653a8d722` |
 
 Each is one UF2 with the firmware, RK0 (the V6 root pack, as in `pico2w-v6/`,
 plus `/dev/rk1`) and RK1 (V6's source pack, `../media/unix/v6src.gz`).
 
-`picoplus2/combined.uf2` was copied to a Pico Plus 2 W's boot drive on 2026-10-21: `mem = 1036`, the
-C compiler builds and runs a program, `dc` runs, `time od /rkunix >/dev/null` takes 9.32 s timed from
-the host (10.66 s with the file built from `658cc72`, 10.42 s with the one from `dccf68e`; 13.37 s before the hot paths in assembly), and no clock tick is dropped. Its
-firmware (SHA-256 `f326ed7d...0bb6`) has the floating point unit, which V7 and the benchmarks of
-`../docs/BENCHMARKS.md` use; the pack regions have the checksums the board prints at start-up
-(`RK0 21C285A3 5CA82BF0 RK1 1215D2AC 967B3EC6`). V7 is in `picoplus2-v7/` (below; rebuilt on 2026-10-22: the whole `/usr`, saves to flash by itself). It is for the Pico Plus 2 and the Pico Plus
+`picoplus2/combined.uf2` was rebuilt on 2026-10-22 from a clean `git archive` (firmware SHA-256
+`abccd1ee...9526`, the same bytes as the V7 file's) and copied to a Pico Plus 2 W's boot drive: `mem =
+1036`, `/etc/mount /dev/rk1 /usr/source`, the C compiler builds and runs a program, `time od /rkunix
+>/dev/null` takes 9.0 s by V6's `time` (whole seconds; 9.32 s timed from the host with the file of
+2026-10-21, 13.37 s before the hot paths in assembly), and a file written and synced was saved by
+itself and was there after the same file was flashed again. The pack regions have the checksums the
+board prints at start-up (`RK0 F83C278F 752B2FB0 RK1 E88F7498 87385286`). V7 is in `picoplus2-v7/` (below; rebuilt on 2026-10-22: the whole `/usr`, saves to flash by itself). It is for the Pico Plus 2 and the Pico Plus
 2 W (same chip, pin and flash by the makers' board files); the radio is not used.
 
 `feather/combined.uf2` is the 2026-10-07 build of the earlier layout (see the top of this file):

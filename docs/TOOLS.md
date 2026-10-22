@@ -299,8 +299,8 @@ Unibus map, and a raw transfer wrote over another process's memory. `--usr`
 `rk_image.py` writes a random nonce at +192 of every pack header it makes. The
 PSRAM firmware's store of saved changes (`pico2/store.pico2`, the top 1 MB of
 the flash, which no pack may reach into) belongs to the packs whose nonces it
-was saved with: flash new packs, even the same image again, and they start
-from the store empty.
+was saved with. Packs made by a new run of `rk_image.py` start with the store empty;
+flashing the same file again keeps what was saved (a new firmware does too).
 
 It restores the root dump (tape file 5) into a 4000-block file system,
 adds `/usr/include` from the /usr dump (file 6), links `rkunix` from the
