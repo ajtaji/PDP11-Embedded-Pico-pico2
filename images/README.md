@@ -8,10 +8,7 @@ fixes DEC's KDJ11 FPA diagnostics found. The DEC diagnostic ladder gives 19 of 2
 RP2040 source (`../J11_18MHz_KDJ11_BF/pico/`) has not changed since. Each file was run on its board
 as described below. The RP2350 files keep their packs at 0x10240000 and up, clear of the region a
 radio's firmware is kept in (`J11_18MHz_KDJ11_BF/pico2/flash_layout.pico2`), and the PSRAM files their
-store in the top 1 MB of the flash. **The Feather file is still the 2026-10-07 build of the earlier
-layout** (packs at 0x10040000 and 0x102C0000): no Feather was at hand to run a new one, and
-`tools/pack_install.py` of the current source refuses it and says why; build a current one with
-`tools/psram_build.py --board feather`. Built with PureMetal Forge's release binaries of 2026-10-19
+store in the top 1 MB of the flash. The Feather file was rebuilt the same day from the same source and run on a Feather RP2350 HSTX. Built with PureMetal Forge's release binaries of 2026-10-19
 (compiler `37314eeb8`).
 
 Each board **powers up into Unix**: the firmware boots the disk pack by
@@ -21,11 +18,12 @@ How to flash, connect and use them, and how to rebuild them from
 `../media/unix/` with the tools, is in **[../README.md](../README.md)**.
 
 They run the emulated processor alone on core 0, with its run loop in
-SRAM, and USB, the console and the disk's storage on core 1. The Pico 2 W, Pico W
-and Feather files are **read-only**: the emulator never writes the flash. Swap
+SRAM, and USB, the console and the disk's storage on core 1. The Pico 2 W and Pico W
+files are **read-only**: the emulator never writes the flash. Swap
 and every disk write go to RAM and are lost at power-off, so a board can be
 unplugged at any time and always starts again from the pack as flashed. The
-two Pico Plus 2 W files save what Unix writes into the flash (their sections below).
+PSRAM boards' files (both Pico Plus 2 W files and the Feather's) save what Unix writes into the flash
+(their sections below).
 
 The UNIX files inside the disk packs are covered by the Caldera licence in
 `../Caldera-license.pdf`.
@@ -73,7 +71,7 @@ works; use `df /dev/rk0` (plain `df` looks for V6's built-in `/dev/rk2` and
 | Board | File | Size | SHA-256 |
 |---|---|---|---|
 | Pimoroni Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w)): RP2350B, PSRAM chip select GPIO47, 16 MB flash | `picoplus2/combined.uf2` | 9,464,832 | `fba2c760935eb13f44dfba18ba8baefab8e90f591d1b7929ce5f63a33f4d34f3` |
-| Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM ([6130](https://www.adafruit.com/product/6130)): RP2350A, GPIO8, 8 MB flash | `feather/combined.uf2` | 9,378,816 | `cebc0629fda95a4975144c330f84a7baf9ac5b1219e5e6392b043d0653a8d722` |
+| Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM ([6130](https://www.adafruit.com/product/6130)): RP2350A, GPIO8, 8 MB flash | `feather/combined.uf2` | 9,464,832 | `ab796eb1df80fad7de80dea234310ebabc0ea437aeed822deddc4b0b6e6e784d` |
 
 Each is one UF2 with the firmware, RK0 (the V6 root pack, as in `pico2w-v6/`,
 plus `/dev/rk1`) and RK1 (V6's source pack, `../media/unix/v6src.gz`).
@@ -87,11 +85,14 @@ itself and was there after the same file was flashed again. The pack regions hav
 board prints at start-up (`RK0 F83C278F 752B2FB0 RK1 E88F7498 87385286`). V7 is in `picoplus2-v7/` (below; rebuilt on 2026-10-22: the whole `/usr`, saves to flash by itself). It is for the Pico Plus 2 and the Pico Plus
 2 W (same chip, pin and flash by the makers' board files); the radio is not used.
 
-`feather/combined.uf2` is the 2026-10-07 build of the earlier layout (see the top of this file):
-on that day it ran `mem = 1036`, the C compiler, the second drive, a swap test and DFKAA,
-DFKAB and DFKAC on an Adafruit Feather RP2350 HSTX (firmware `d651c785...4101`, the same pack
-checksums). What each board printed then is in [../README.md](../README.md#psram-boards) and
-the transcripts are in `../docs/psram/`.
+`feather/combined.uf2` was rebuilt on 2026-10-22 from a clean `git archive` (firmware SHA-256
+`5a2ccc1c...7e5d`) and copied to an Adafruit Feather RP2350 HSTX's boot drive: `PSRAM: 8 MB on GPIO8`,
+`mem = 1036`, `/etc/mount /dev/rk1 /usr/source`, the C compiler builds and runs a program, `time od
+/rkunix >/dev/null` takes 9.0 s by V6's `time`, and a file written and synced was saved by itself (its
+store is the top 1 MB of the Feather's 8 MB, 0x10700000 up) and was there after the same file was
+flashed again. Pack checksums at start-up: `RK0 132574A5 10266B90 RK1 0378C1AE CAEA1666`. The
+2026-10-07 build of the earlier layout ran DFKAA, DFKAB and DFKAC and a swap test there; its
+transcripts are in `../docs/psram/`.
 
 ```
 python tools/tape2pico.py --empty

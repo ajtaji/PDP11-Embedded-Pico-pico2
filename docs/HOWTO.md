@@ -142,7 +142,7 @@ Type **Ctrl-]** then `s` at any time. The firmware prints a block with the clock
 
 ### Shutting down
 
-Unplug at any time. On these boards the emulator never writes the flash (the Pico Plus 2 W images save: section 12): every disk write, the swap area included, goes to RAM and is lost at power-off, and the next power-up starts from the pack as flashed. `sync` does no harm but saves nothing across a power cycle.
+Unplug at any time. On these boards the emulator never writes the flash (the PSRAM boards' images save: section 12): every disk write, the swap area included, goes to RAM and is lost at power-off, and the next power-up starts from the pack as flashed. `sync` does no harm but saves nothing across a power cycle.
 
 ### If something looks wrong
 
@@ -319,7 +319,7 @@ first bell.
 
 ## 10. The PSRAM boards
 
-**Read first (2026-10-20).** `images/picoplus2/combined.uf2` is built from the current source (packs at 0x10240000 and 0x104C0000) and ran on a Pico Plus 2 W. `images/feather/combined.uf2` is still the earlier layout, which the current `tools/pack_install.py` refuses, saying why: for a Feather, make the image with `python tools/psram_build.py --board feather --compiler PureMetalForge.exe --out DIR` and give `DIR/combined.uf2` to `--image`.
+**Read first (2026-10-22).** `images/picoplus2/combined.uf2` and `images/feather/combined.uf2` are built from the current source (packs at 0x10240000 and 0x104C0000, the store of saved changes in the top 1 MB of the flash) and ran on a Pico Plus 2 W and a Feather RP2350 HSTX.
 
 The Pimoroni Pico Plus 2 W and the Adafruit Feather RP2350 HSTX run V6 with 248 KB of memory. Their images are `images/picoplus2/combined.uf2` and `images/feather/combined.uf2`.
 
@@ -357,7 +357,7 @@ python tools/board_session.py --hub-port 9 --script docs/psram/proof.txt --out t
 
 `docs/psram/proof.txt` checks `mem = 1036`, runs `ps`, `df /dev/rk0`, mounts RK1, types and compiles a C program and runs it, times `od /rkunix` twice and takes the statistics block. `docs/psram/swap.txt` keeps twelve 30 KB processes alive at once. The transcripts of both boards are beside them.
 
-**V6 notes for these boards.** `stty -lcase` first if you type C: in upper-case mode `\n` in a string arrives as `N`. `#` and `@` are V6's erase and kill characters. Everything written is lost at power-off unless it is saved: firmware built from the source of 2026-10-22 on - `images/picoplus2/combined.uf2` has it - saves both packs' changes into the flash by itself, or at once with `sync`, then Ctrl-] and `w` (section 12, Saving). `images/feather/combined.uf2` is older and has no save.
+**V6 notes for these boards.** `stty -lcase` first if you type C: in upper-case mode `\n` in a string arrives as `N`. `#` and `@` are V6's erase and kill characters. Everything written is lost at power-off unless it is saved: firmware built from the source of 2026-10-22 on - `images/picoplus2/combined.uf2` and `images/feather/combined.uf2` have it - saves both packs' changes into the flash by itself, or at once with `sync`, then Ctrl-] and `w` (section 12, Saving).
 
 ## 11. Flash and build from the PureMetal Forge IDE
 
