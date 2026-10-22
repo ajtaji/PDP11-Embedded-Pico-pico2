@@ -190,10 +190,14 @@ CompilerEndIf
 #INT_DL11_TX = 2            ; ... and transmitter (both BR4)
 #INT_RK      = 4            ; the RK11 disk controller, BR5 (rk11.pico2)
 #INT_KW      = 8            ; the KW11-L line clock, BR6 (kw11.pico2)
+#INT_RP      = 16           ; the RP11 disk controller, BR5 (rp11.pico2)
 #VEC_RK      = $90          ; 000220 RK11
 #VEC_KW      = $40          ; 000100 KW11-L
+#VEC_RP      = $AC          ; 000254 RP11
 #RK_BASE     = $FF00        ; 177400-177416, the RK11's eight registers
 #KW_CSR      = $FF66        ; 177546, the KW11-L's one register
+#RP_BASE     = $FDC8        ; 176710-176736, the RP11's registers (rp11.pico2) ...
+#RP_LAST     = $FDDE        ; ... the last; they answer only with an RP pack in the flash
 #MSER_ADDR   = $FFE4        ; 177744 memory system error   (the KDJ11-B's cache registers:
 #CCR_ADDR    = $FFE6        ; 177746 cache control          no cache is modelled, see
 #HMR_ADDR    = $FFEA        ; 177752 hit/miss               THE CACHE REGISTERS below)
@@ -329,7 +333,8 @@ Global Dl11RxDue.i         ; InstrCount at which the receiver may take its next 
 Global Dl11RxReads.i       ; characters the program has read from RBUF (the stats block)
 Global Dl11TxRdy.i, Dl11TxIe.i, Dl11TxChar.i, Dl11TxDue.i
 Global SwitchReg.i, DisplayReg.i
-Global IntReq.i             ; interrupts asked for: #INT_DL11_RX | #INT_DL11_TX | #INT_RK | #INT_KW
+Global IntReq.i             ; interrupts asked for: #INT_DL11_RX | #INT_DL11_TX | #INT_RK | #INT_KW | #INT_RP
+Global RpPresent.i, RpBusy.i, RpIoPosted.i   ; the RP11 (rp11.pico2): an RP pack, a transfer, its request out
 Global CacheCcr.i           ; the cache control register's bits, kept (THE CACHE REGISTERS)
 Global DevActive.i          ; the disk or the clock needs a look every window (DevPoll, rk11/kw11)
 Global DevFast.i            ; the disk does: windows of #DEV_WINDOW, not #DEV_WINDOW_CLOCK
@@ -427,7 +432,7 @@ ProcedureRAM.i IntLevel()
   If IntReq & #INT_KW
     ProcedureReturn $C0
   EndIf
-  If IntReq & #INT_RK
+  If IntReq & (#INT_RK | #INT_RP)
     ProcedureReturn $A0
   EndIf
   ProcedureReturn $80
@@ -1005,6 +1010,8 @@ ProcedureRAM.i IoRead(a.i)                  ; a is even and past the end of RAM
     ProcedureReturn SwitchReg
   ElseIf (a & $FFF0) = #RK_BASE          ; the RK11 (rk11.pico2)
     ProcedureReturn RkRead(a)
+  ElseIf a >= #RP_BASE And a <= #RP_LAST And RpPresent   ; the RP11 (rp11.pico2)
+    ProcedureReturn RpRead(a)
   ElseIf a = #CCR_ADDR                   ; THE CACHE REGISTERS
     ProcedureReturn CacheCcr
   ElseIf a = #MSER_ADDR Or a = #HMR_ADDR
@@ -1064,6 +1071,8 @@ ProcedureRAM IoWrite(a.i, v.i)              ; a is even and past the end of RAM
     DisplayReg = v & $FFFF
   ElseIf (a & $FFF0) = #RK_BASE          ; the RK11 (rk11.pico2)
     RkWrite(a, v & $FFFF)
+  ElseIf a >= #RP_BASE And a <= #RP_LAST And RpPresent   ; the RP11 (rp11.pico2)
+    RpWrite(a, v & $FFFF)
   ElseIf a = #CCR_ADDR                   ; THE CACHE REGISTERS
     CacheCcr = v & $3FFF
   ElseIf a = #MSER_ADDR Or a = #HMR_ADDR
@@ -1159,7 +1168,7 @@ ProcedureRAM WriteByte(a.i, v.i)
   If (a & $FFFE) = #MSER_ADDR Or (a & $FFFE) = #HMR_ADDR
     ProcedureReturn
   EndIf
-  If (a & $FFF0) = #RK_BASE Or (a & $FFFE) = #KW_CSR   ; a byte of a full-word device register
+  If (a & $FFF0) = #RK_BASE Or (a & $FFFE) = #KW_CSR Or (a >= #RP_BASE And a <= #RP_LAST + 1 And RpPresent)   ; a byte of a full-word device register
     DevWriteByte(a, v & $FF)
     ProcedureReturn
   EndIf
@@ -2001,6 +2010,10 @@ ProcedureRAM DevService()
         RkIntTaken()
         TakeTrap(#VEC_RK)
         TakeStackTrap()
+      ElseIf IntReq & #INT_RP
+        IntReq = IntReq & ~#INT_RP
+        TakeTrap(#VEC_RP)
+        TakeStackTrap()
       ElseIf IntReq & #INT_DL11_RX
         IntReq = IntReq & ~#INT_DL11_RX
         TakeTrap(#VEC_DL11_RX)
@@ -2083,6 +2096,7 @@ ProcedureRAM DevReset()
   Dl11TxIe = 0
   IntReq = 0
   RkInit()
+  RpReset()
   KwInit()
   MmuReset()
 EndProcedure

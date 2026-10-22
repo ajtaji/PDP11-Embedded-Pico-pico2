@@ -57,6 +57,7 @@ XIncludeFile "instructions.pico2"
 XIncludeFile "disk.pico2"
 XIncludeFile "kw11.pico2"
 XIncludeFile "rk11.pico2"
+XIncludeFile "rp11.pico2"
 
 #CLOCK_KHZ = 150000
 #ROUND = 2000

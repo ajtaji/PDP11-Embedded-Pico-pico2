@@ -166,7 +166,7 @@ Global RkIoN.i, RkIoMa.i                  ; core 0: words a posted WRITE moves (
 ; 1 done, -1 refused, 0 not yet (posted now, or still out).
 ProcedureRAM.i RkIo(what.i)
   If RkIoPosted = 0
-    If DkReqSeq <> DkDoneSeq             ; an abandoned request (a RESET) is still out
+    If DkReqSeq <> DkDoneSeq Or RpIoPosted   ; an abandoned request (a RESET) is still out, or the RP11's
       ProcedureReturn 0
     EndIf
     DkReqOp = what
@@ -416,7 +416,7 @@ ProcedureRAM.i RkSector()
   ma = RkXMa
   If RkXFunc = 1                         ; WRITE: memory into the buffer, zeros after
     If RkIoPosted = 0
-      If DkReqSeq <> DkDoneSeq           ; DkBuf is still core 1's (an abandoned request)
+      If DkReqSeq <> DkDoneSeq Or RpIoPosted   ; DkBuf is still core 1's (an abandoned request), or the RP11's
         ProcedureReturn 0
       EndIf
       For i = 0 To n - 1
@@ -661,8 +661,8 @@ EndProcedure
 ; DevActive says whether the run loop must look at the devices every
 ; window: only while the clock may interrupt or the disk is busy.
 ProcedureRAM DevUpdate()
-  DevActive = KwIe | RkBusy | RkSeekMask | RkSeekDone
-  DevFast = RkBusy | RkSeekMask | RkSeekDone
+  DevActive = KwIe | RkBusy | RkSeekMask | RkSeekDone | RpBusy
+  DevFast = RkBusy | RkSeekMask | RkSeekDone | RpBusy
 EndProcedure
 
 ; Called by DevService at the end of a window while DevActive is set.
@@ -681,8 +681,11 @@ ProcedureRAM DevPoll()
   If RkBusy | RkSeekMask | RkSeekDone
     RkPoll()
   EndIf
-  DevActive = KwIe | RkBusy | RkSeekMask | RkSeekDone   ; DevUpdate, inline: once a window
-  DevFast = RkBusy | RkSeekMask | RkSeekDone
+  If RpBusy
+    RpPoll()
+  EndIf
+  DevActive = KwIe | RkBusy | RkSeekMask | RkSeekDone | RpBusy   ; DevUpdate, inline: once a window
+  DevFast = RkBusy | RkSeekMask | RkSeekDone | RpBusy
   CompilerIf #DESK_PROBE = 1
     If Micros() - t > DevPollMax
       DevPollMax = Micros() - t
@@ -696,6 +699,11 @@ ProcedureRAM DevWriteByte(a.i, v.i)
   Define w.i
   If (a & $FFFE) = #KW_CSR
     w = KwRead()
+  ElseIf (a & $FF00) = (#RP_BASE & $FF00)
+    w = RpRead(a & $FFFE)
+    If (a & $FFFE) = #RP_BASE + 4
+      w = w & ~1                         ; GO reads 0 and is not written back
+    EndIf
   Else
     w = RkRead(a & $FFFE)
     If ((a >> 1) & 7) = 2
@@ -709,6 +717,8 @@ ProcedureRAM DevWriteByte(a.i, v.i)
   EndIf
   If (a & $FFFE) = #KW_CSR
     KwWrite(w)
+  ElseIf (a & $FF00) = (#RP_BASE & $FF00)
+    RpWrite(a & $FFFE, w)
   Else
     RkWrite(a & $FFFE, w)
   EndIf

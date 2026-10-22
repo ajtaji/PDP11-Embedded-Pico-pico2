@@ -11,7 +11,7 @@ USE
                        [--swap auto|LO,N|none] [--boot-block FILE|@/PATH]
                        [--autoboot KERNEL[,SWITCHES]] [--autoboot-psram KERNEL]
                        [--autoboot-then C:TEXT] [--autoboot-mem KB]
-                       [--psram-patch FILE,SYMBOL,VALUE] [--drive1 IMAGE]
+                       [--psram-patch FILE,SYMBOL,VALUE] [--drive1 IMAGE | --rp IMAGE[,FIRST]]
                        [--firmware FW.bin [--desk OUT.bin] [--combined OUT.uf2]
                                           [--firmware-uf2 OUT.uf2]]
         a UF2 that the board's BOOTSEL drive writes to the disk region of
@@ -103,6 +103,13 @@ THE PSRAM BUILD (--chip feather or picoplus2; pico2/psram_pdp11.pico2)
     too, and the firmware changes nothing unless it finds it.
     --drive1 IMAGE packs a second RK05 image for RK1 (dense, whole; at most
     4000 blocks, its place in the PSRAM).
+    --rp IMAGE[,FIRST] packs a file system for the RP11's RP03 (pico2/
+    rp11.pico2) in RK1's place instead: IMAGE's blocks are the drive's
+    blocks FIRST on (default 7000, cylinder 35: V7's /dev/rp3). Stored
+    mapped - a u16 map per block, then only the blocks that are not all
+    zeros - and refused if the flash could not give every one of its blocks
+    a slot: a slot is never given back, so a file system that, written all
+    over, needs more slots than the flash has would one day fail its save.
     --autoboot-psram KERNEL names the kernel the auto-boot types when the
     PSRAM is working (header +128): a kernel that needs the PSRAM's memory,
     such as the 22-bit /rk70unix. The fallback types --autoboot's.
@@ -335,6 +342,52 @@ def build(img, chip, layout, nblocks, name):
         len(used), cap - len(used), (cap - len(used)) * 512)
 
 
+RP_OV_MAP = 0xC000          # pico2/rp11.pico2 #RP_OV_MAP: the overlay's map holds this many bytes
+RP_BLOCKS = 406 * 20 * 10   # an RP03
+
+
+def rp_pack(a, parts):
+    """The RP11's pack (pico2/rp11.pico2, THE PACK IN FLASH) into parts at REGION1."""
+    path, _, first = a.rp.partition(",")
+    first = int(first or "7000", 0)
+    img = open(path, "rb").read()
+    if len(img) % 512:
+        img += bytes(512 - len(img) % 512)
+    n = len(img) // 512
+    if n < 1 or n * 2 > RP_OV_MAP:
+        fail("--rp: %d blocks; the firmware's overlay map holds %d (pico2/rp11.pico2, #RP_OV_MAP)." % (n, RP_OV_MAP // 2))
+    if first < 0 or first + n > RP_BLOCKS:
+        fail("--rp: blocks %d-%d are not all on an RP03 (0-%d)." % (first, first + n - 1, RP_BLOCKS - 1))
+    if max(off + len(d) for off, d in parts.items()) > REGION1:
+        fail("RK0 runs into RK1's region at 0x%08X." % (XIP + REGION1))
+    msec = (n * 2 + SECTOR - 1) // SECTOR
+    fmap = bytearray(msec * SECTOR)
+    data = bytearray()
+    slots = 0
+    for b in range(n):
+        blk = img[b * 512:(b + 1) * 512]
+        if blk.count(0) == 512:
+            continue
+        slots += 1
+        struct.pack_into("<H", fmap, b * 2, slots)
+        data += blk
+    if len(data) % SECTOR:
+        data += bytes(SECTOR - len(data) % SECTOR)
+    room = (FLASH[a.chip] - REGION1 - SECTOR - len(fmap)) // 512
+    if n > room:
+        fail("--rp: %d blocks, and RK1's place in the %s's flash has slots for %d: a block gets a slot when it is "
+             "first written and keeps it, so every block must be able to have one. Make the file system %d blocks "
+             "or fewer." % (n, a.chip, room, room))
+    head = bytearray(SECTOR)
+    head[0:8] = b"PDP11RP1"
+    struct.pack_into("<IIII", head, 8, 1, n, first, msec)
+    name = os.path.basename(path).encode("ascii", "replace")[:15]
+    head[32:32 + len(name)] = name
+    parts[REGION1] = bytes(head) + bytes(fmap) + bytes(data)
+    print("rk_image: RP03 <- %s, blocks %d-%d, %d of them stored (mapped), %d slots free after them, at 0x%08X"
+          % (path, first, first + n - 1, slots, room - slots, XIP + REGION1))
+
+
 def uf2(parts, chip):
     pages = {}
     for off, data in parts.items():
@@ -357,6 +410,7 @@ def main():
     ap.add_argument("--chip", choices=["pico", "pico2", "feather", "picoplus2"])
     ap.add_argument("--psram-patch")
     ap.add_argument("--drive1")
+    ap.add_argument("--rp")
     ap.add_argument("--layout", choices=["auto", "dense", "mapped"], default="auto")
     ap.add_argument("--blocks", type=int)
     ap.add_argument("--name")
@@ -435,9 +489,11 @@ def main():
         AUTOBOOT_MEM = a.autoboot_mem
         print("rk_image: auto-boot gives the machine %d KB" % a.autoboot_mem)
     global PSPATCH, AUTOBOOT_PSRAM
-    if a.psram_patch or a.drive1 or a.autoboot_psram:
+    if a.psram_patch or a.drive1 or a.autoboot_psram or a.rp:
         if a.chip not in PSRAM_CHIPS:
-            fail("--psram-patch, --drive1 and --autoboot-psram are for --chip feather or picoplus2 (the PSRAM builds).")
+            fail("--psram-patch, --drive1, --rp and --autoboot-psram are for --chip feather or picoplus2 (the PSRAM builds).")
+    if a.drive1 and a.rp:
+        fail("--drive1 and --rp both go in RK1's place in the flash: one or the other.")
     if a.autoboot_psram:
         k = a.autoboot_psram
         if not a.autoboot or len(k) > 15 or not k.isascii() or not k.isprintable() or not k:
@@ -480,6 +536,8 @@ def main():
         SWAP, AUTOBOOT, PSPATCH, AUTOBOOT_PSRAM, AUTOBOOT_MEM, AUTOBOOT_THEN = keep
         parts[REGION1 + SECTOR] = img1
         print("rk_image: RK1 <- %s, dense, %d blocks, at 0x%08X" % (a.drive1, n1, XIP + REGION1))
+    if a.rp:
+        rp_pack(a, parts)
     if a.chip == "pico":
         print("rk_image: the Pico W image uses the flash where the radio's firmware would go; a Pico W running "
               "it cannot use its radio (2 MB of flash: the pack covers 0x10100000-0x10138FFF and cannot avoid it).")

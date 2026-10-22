@@ -69,7 +69,8 @@ sys.path.insert(0, HERE)
 import v7tape  # noqa: E402
 
 BLOCKS, FS_BLOCKS, INODES = 4872, 4000, 512
-KERNEL_OBJECTS = ["/sys/conf/l.o", "/sys/conf/mch.o", "/sys/conf/c.o", "/sys/sys/LIB1", "/sys/dev/LIB2"]
+KERNEL_OBJECTS = ["/sys/conf/l.o", "/sys/conf/mch.o", "/sys/conf/c.o", "/sys/dev/rp.o", "/sys/sys/LIB1",
+                  "/sys/dev/LIB2"]      # rp.o: board-built (MEDIA_V7), ahead of LIB2 so LIB2's is never loaded
 DEVICES = [("rk0", "b", 0, 0), ("rk1", "b", 0, 1), ("rrk0", "c", 9, 0), ("rrk1", "c", 9, 1), ("swap", "b", 0, 0)]
 RC_MOUNT = "/etc/mount /dev/rp3 /usr"
 # --usr: what of the /usr dump goes on RK1 - what fits RK1's place on the PSRAM boards,
@@ -79,6 +80,31 @@ RC_MOUNT = "/etc/mount /dev/rp3 /usr"
 # /dict (715), /games (532).
 USR_SET = ["/lib", "/man", "/include", "/mdec", "/spool", "/pub", "/tmp", "/dmr"]
 USR_BLOCKS, USR_INODES = 4000, 600
+# --usr-rp: the WHOLE /usr dump (sources, documents, dictionary, games: 15,218 blocks of data) on the RP03's
+# partition 3, /dev/rp3, mounted on /usr by the distribution's own /etc/rc line. rp.c gives rp3 74,000 blocks
+# from cylinder 35; the file system is made smaller than the partition, 22,800 blocks, so that every block of
+# it can have a slot in the flash: a slot, once a block has one, is never given back (pico2/rp11.pico2, THE
+# PACK IN FLASH), and RK1's place in the Pico Plus 2's 16 MB holds 22,936. rk_image.py --rp refuses a file
+# system with more blocks than that. 2026-10-22.
+RP_USR_BLOCKS, RP_USR_INODES = 22800, 2400
+RP_DEVICES = [("rp3", "b", 1, 3), ("rrp3", "c", 11, 3)]      # the distribution's /dev/makefile, rp03
+# media/unix/v7/: built ON A BOARD by V7 itself (build-on-board.txt there): the kernel's configuration (c.o,
+# l.o from mkconf: rk, rp, ht), the RP03 driver asking for the Unibus map on raw transfers (rp.o) and date
+# (00-69 is 2000-2069). Each is checked against SHA256SUMS.
+MEDIA_V7 = os.path.join(HERE, "..", "media", "unix", "v7")
+
+
+def media_v7(name):
+    import hashlib
+    p = os.path.join(MEDIA_V7, name)
+    sums = {}
+    for line in open(os.path.join(MEDIA_V7, "SHA256SUMS")):
+        h, f = line.split()
+        sums[f.lstrip("*")] = h
+    data = open(p, "rb").read()
+    if hashlib.sha256(data).hexdigest() != sums.get(name):
+        fail("media/unix/v7/%s does not match its SHA256SUMS line" % name)
+    return data
 
 
 def fail(msg):
@@ -98,7 +124,11 @@ def main():
     ap.add_argument("--tape", default=TAPE)
     ap.add_argument("--add", action="append", default=[], metavar="LOCALDIR:/PATH")
     ap.add_argument("--usr", metavar="IMAGE", help="also write RK1: a /usr file system (USR_SET), mounted by /etc/rc")
+    ap.add_argument("--usr-rp", metavar="IMAGE", help="also write the RP03's /usr: the WHOLE /usr dump for /dev/rp3, "
+                    "mounted by /etc/rc (rk_image.py --rp)")
     a = ap.parse_args()
+    if a.usr and a.usr_rp:
+        fail("--usr (RK1) and --usr-rp (the RP03) both mount on /usr: give one")
     out = os.path.abspath(a.o)
     v7fs, v7ld = os.path.join(HERE, "v7fs.py"), os.path.join(HERE, "v7ld.py")
     with tempfile.TemporaryDirectory() as tmp:
@@ -116,7 +146,11 @@ def main():
         objs = []
         for p in KERNEL_OBJECTS:
             objs.append(os.path.join(tmp, p.split("/")[-1]))
-            open(objs[-1], "wb").write(usr[where[p]]["data"])
+            if p in ("/sys/conf/l.o", "/sys/conf/c.o", "/sys/dev/rp.o"):   # board-built (MEDIA_V7)
+                data = media_v7(p.split("/")[-1])
+            else:
+                data = usr[where[p]]["data"]
+            open(objs[-1], "wb").write(data)
         kern = os.path.join(tmp, "rkunix")
         run(v7ld, "-i", "-o", kern, *objs)
         k = bytearray(open(kern, "rb").read())
@@ -145,12 +179,18 @@ def main():
         run(v7fs, "put", out, kern, "/rkunix", "--mode", "0644", "-o", out)
         if "unix" not in run(v7fs, "ls", out, "/").split():  # ps reads its names from /unix: the kernel that runs
             run(v7fs, "ln", out, "/rkunix", "/unix", "-o", out)
-        for name, kind, major, minor in DEVICES:
+        for name, kind, major, minor in DEVICES + RP_DEVICES:
             run(v7fs, "mknod", out, "/dev/" + name, kind, major, minor, "--mode", "0640", "-o", out)
+        # date: the board-built one (media/unix/v7): a two-digit year under 70 is 20yy
+        dp = os.path.join(tmp, "date")
+        open(dp, "wb").write(media_v7("date"))
+        run(v7fs, "put", out, dp, "/bin/date", "--mode", "0775", "-o", out)
         rc = run(v7fs, "cat", out, "/etc/rc")
         if RC_MOUNT not in rc.splitlines():
             fail("/etc/rc has no '%s' line" % RC_MOUNT)
-        if a.usr:                                # multi-user mounts RK1's /usr over the root's
+        if a.usr_rp:                             # the distribution's own line: /usr on the RP03's rp3
+            pass
+        elif a.usr:                              # multi-user mounts RK1's /usr over the root's
             rc = "\n".join("/etc/mount /dev/rk1 /usr" if line == RC_MOUNT else line for line in rc.split("\n"))
         else:
             rc = "\n".join(": " + RC_MOUNT + " (no RP disk here; /usr/include is in the root file system)"
@@ -167,14 +207,16 @@ def main():
         open(os.path.join(tmp, "passwd"), "w", newline="\n").write("\n".join(pw))
         run(v7fs, "put", out, os.path.join(tmp, "passwd"), "/etc/passwd", "-o", out)
         # df with no argument reports the disks compiled into it, /dev/rp0 and /dev/rp3 (the RP
-        # pack V7 was set up for): name the two RK05 drives instead, the same lengths, so plain
-        # df answers here (2026-10-22)
+        # pack V7 was set up for): the root is rk0 here, and /usr is rp3 (--usr-rp, as compiled in)
+        # or rk1 (--usr); the same lengths, so plain df answers (2026-10-22)
         dfp = os.path.join(tmp, "df")
         run(v7fs, "get", out, "/bin/df", dfp)
         dfb = open(dfp, "rb").read()
         if dfb.count(b"/dev/rp0\0") != 1 or dfb.count(b"/dev/rp3\0") != 1:
             fail("/bin/df: its two disk names (/dev/rp0, /dev/rp3) are not there once each")
-        dfb = dfb.replace(b"/dev/rp0\0", b"/dev/rk0\0").replace(b"/dev/rp3\0", b"/dev/rk1\0")
+        dfb = dfb.replace(b"/dev/rp0\0", b"/dev/rk0\0")
+        if not a.usr_rp:
+            dfb = dfb.replace(b"/dev/rp3\0", b"/dev/rk1\0")
         open(dfp, "wb").write(dfb)
         run(v7fs, "put", out, dfp, "/bin/df", "--mode", "0775", "-o", out)
         boot = os.path.join(tmp, "boot")
@@ -213,6 +255,14 @@ def main():
             for spec in a.add:
                 if spec.rpartition(":")[2].startswith("/usr/"):
                     print("v7_pack: note: %s is on RK0's /usr, which RK1 covers once mounted (multi-user)" % spec)
+        # 5b. the RP03's rp3: the whole /usr dump
+        if a.usr_rp:
+            rp_out = os.path.abspath(a.usr_rp)
+            run(os.path.join(HERE, "v7tape.py"), "restore", tape, 6, "-o", rp_out, "--blocks", RP_USR_BLOCKS,
+                "--inodes", RP_USR_INODES, "--name", "usr")
+            print(run(v7fs, "check", rp_out).strip().splitlines()[-1])
+            print("v7_pack: %s - the RP03's rp3, the whole /usr (%d blocks); multi-user mounts it on /usr, "
+                  "single-user: /etc/mount /dev/rp3 /usr" % (a.usr_rp, RP_USR_BLOCKS))
     print("v7_pack: %s - %d blocks; RK0 for MEM 1024, BOOT RK0, boot at the @, rk(0,0)rkunix at the :" % (a.o, BLOCKS))
 
 

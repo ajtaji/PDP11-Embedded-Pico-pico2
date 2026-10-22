@@ -357,7 +357,7 @@ python tools/board_session.py --hub-port 9 --script docs/psram/proof.txt --out t
 
 `docs/psram/proof.txt` checks `mem = 1036`, runs `ps`, `df /dev/rk0`, mounts RK1, types and compiles a C program and runs it, times `od /rkunix` twice and takes the statistics block. `docs/psram/swap.txt` keeps twelve 30 KB processes alive at once. The transcripts of both boards are beside them.
 
-**V6 notes for these boards.** `stty -lcase` first if you type C: in upper-case mode `\n` in a string arrives as `N`. `#` and `@` are V6's erase and kill characters. Everything written is lost at power-off.
+**V6 notes for these boards.** `stty -lcase` first if you type C: in upper-case mode `\n` in a string arrives as `N`. `#` and `@` are V6's erase and kill characters. Everything written is lost at power-off unless it is saved: firmware built from the source of 2026-10-22 on saves both packs' changes into the flash with `sync`, then Ctrl-] and `w` (section 12, Saving). `images/picoplus2/combined.uf2` is older and has no save.
 
 ## 11. Flash and build from the PureMetal Forge IDE
 
@@ -393,66 +393,93 @@ Checked 2026-10-20 with the release compiler of 2026-10-19, on a Pico 2 W and a 
 
 ## 12. Seventh Edition (V7) on the Pico Plus 2 W
 
-V7 runs on the PSRAM boards, where it gets a megabyte, with the J-11's
-floating point unit (FPJ11, `pico2/fp11.pico2`), which V7's C compiler needs.
+V7 runs on the PSRAM boards, where it gets 2 MB, with the J-11's floating
+point unit (FPJ11, `pico2/fp11.pico2`), which V7's C compiler needs.
 
 **Flash the ready image.** `images/picoplus2-v7/combined.uf2`: hold BOOT,
 plug the board in, copy the file to the drive (section 10 has the way with no
-button). It is the PSRAM firmware with two packs: RK0, V7's root file system
-and kernel; RK1, a `/usr` (the libraries and nroff's macros, the manual, the
-headers).
+button). It is the PSRAM firmware with V7's two disks: RK0, the root file
+system and kernel; and an RP03 on an RP11 controller holding the whole `/usr`
+of the distribution - sources, documents, the dictionary, games - on
+`/dev/rp3`, where V7 shipped it.
 
 **It boots by itself.** Open the board's serial port; after the banner:
 
 ```
 auto-boot: RK0, switches 000000, then "boot" at the @ prompt, then "rk(0,0)rkunix" at the : prompt. Press Esc within 2 s for the diagnostic console.
-memory 1024 KB, as the pack asks
+memory 2040 KB, as the pack asks
 booting RK0, switches 000000
 @boot
 Boot
 : rk(0,0)rkunix
-mem = 973120
+mem = 2012672
 #
 ```
 
-The pack asks for 1 MB (V7 counts memory in a signed number of 64-byte
-clicks, so 2 MB or more reads as negative); the firmware types `boot` at the
+The pack asks for 2040 KB (V7 counts memory in a signed number of 64-byte
+clicks, so 2048 KB would read as negative); the firmware types `boot` at the
 boot block's `@` and the kernel's name at `/boot`'s `:`. `#` is the
 single-user shell, root, in lower case. To boot by hand instead, press Esc,
-then `MEM 1024`, `BOOT RK0`, type `boot` at the `@` and `rk(0,0)rkunix` at
-the `:`.
+then `MEM 2040`, `BOOT RK0`, type `boot` at the `@` and `rk(0,0)rkunix` at
+the `:`. The banner's `RP03 drive 0 on the RP11` part says the RP disk was
+found.
 
-**Single-user.** `/usr` is the root pack's own (`/usr/include`); mount RK1
-with `/etc/mount /dev/rk1 /usr`. `df` with no argument looks for the RP
-disks V7 was configured for: type `df /dev/rk0 /dev/rk1`. DEL interrupts a
-program.
+**Single-user.** Mount `/usr` with `/etc/mount /dev/rp3 /usr`. `df` lists
+both disks. DEL interrupts a program.
 
-**Multi-user.** Ctrl-D at the single-user `#`: `/etc/rc` mounts RK1 on
-`/usr` and prints `login:`. Log in as `root` (no password).
+**Multi-user.** Ctrl-D at the single-user `#`: `/etc/rc` mounts `/dev/rp3`
+on `/usr` and prints `login:`. Log in as `root` (no password). `/etc/rc`
+empties `/tmp` and `/usr/tmp` at each multi-user start, as V7 always did.
 
-**Set the date** with `date yymmddhhmm`, a year from 70 to 99 (V7 counts
-from 1970 and was written in its century).
+**Set the date** with `date yymmddhhmm`: a year from 70 to 99 is 19yy, from
+00 to 69 is 20yy (`/bin/date` was rebuilt on the board for that; V7's
+library prints years past 1999 correctly).
+
+**Saving.** Everything Unix writes goes to the PSRAM copies of the disks
+and is lost at power-off unless it is saved. To save: type `sync`, then
+Ctrl-] and `w`. The PDP-11 waits while the changes are written into the
+disks' places in the flash, and the console says what was written:
+
+```
+# sync
+[saving the packs' changes to flash: 8 changed 4 KB sectors and 763 RP blocks; the PDP-11 waits until it is done]
+[packs saved to flash: 8 sectors written, 0 already the same, in 6355 ms; ... RP: 18 blocks rewritten in place, 745 new, 2 map sectors written]
+```
+
+The next power-up starts from what was saved. Nothing is written to the
+flash at any other time but one: the RP disk's unsaved writes are held in
+3,888 PSRAM slots (about 1.9 MB), and when they are full the firmware saves
+them by itself and the write goes on (the console says `saved to flash by
+themselves`; the RK0 pack still waits for your Ctrl-] w). Ctrl-] then `s`
+shows how many slots are in use. A flash sector takes about 100,000 erases.
 
 **What works** (each tried on the board): the shell and the root's
 commands, `cc` with floating point (constants, `double`, `-lm`), `awk`,
-`dc`, `adb`, `ps`, `who`, `man` and `nroff` through RK1's manual and macros.
-Everything written is lost at power-off, as on the other boards.
+`dc`, `adb`, `ps`, `who`, `man` and `nroff`, raw I/O on `/dev/rrp3`,
+`icheck` and `dcheck` of `/dev/rp3`.
 
 **Build it yourself** (from the V7 tape in `media/unix/`; `tools/v7_pack.py`
 in [TOOLS.md](TOOLS.md) says what it does and why it patches `/boot` and
-the kernel):
+the kernel; `media/unix/v7/build-on-board.txt` has the four files V7 built
+for it on a board: the kernel's configuration with the RP03, the RP03
+driver asking for the Unibus map on raw transfers, and `date`):
 
 ```
 python tools/psram_build.py --board picoplus2 --compiler PureMetalForge.exe --out build_picoplus2
-python tools/v7_pack.py -o v7root.rk --usr v7usr.rk
-python tools/rk_image.py pack v7root.rk --chip picoplus2 --blocks 4872 --swap 4000,872 --name v7root --autoboot boot,0 --autoboot-then "::rk(0,0)rkunix" --autoboot-mem 1024 --drive1 v7usr.rk --firmware build_picoplus2/diag.bin --combined v7-combined.uf2 -o v7root.uf2
+python tools/v7_pack.py -o v7root.rk --usr-rp v7usr-rp.img
+python tools/rk_image.py pack v7root.rk --chip picoplus2 --blocks 4872 --swap 4000,872 --name v7root --autoboot boot,0 --autoboot-then "::rk(0,0)rkunix" --autoboot-mem 2040 --rp v7usr-rp.img --firmware build_picoplus2/diag.bin --combined v7-combined.uf2 -o v7root.uf2
 ```
 
-`--add DIR:/path` copies a directory of your files onto the root pack (a
-directory under `/usr` there is covered by RK1 once it is mounted). Send
+`--rp` stores the RP file system mapped (only the blocks that hold
+something) where RK1 would go; it is 22,800 blocks, so that every block of it
+can always have a place in the flash. `v7_pack.py --usr v7usr.rk` with
+`--drive1 v7usr.rk` instead gives the older layout, a 4,000-block `/usr` on
+RK1. `--add DIR:/path` copies a directory of your files onto the root pack (a
+directory under `/usr` there is covered by `/usr` once it is mounted). Send
 `v7-combined.uf2` to the board's boot drive, or with no button as in section
 10 (`pack_install.py --image v7-combined.uf2`, then the firmware with
-`psram_build.py`). A firmware upload alone keeps the packs.
+`psram_build.py`). A firmware upload alone keeps the disks, and what was saved
+on them.
 
 **A floating point benchmark.** E. J. Olson's `givens` from the pichart
 suite ([givens-pdp.tar](https://fractal.math.unr.edu/~ejolson/pi/pichart/givens-pdp.tar))

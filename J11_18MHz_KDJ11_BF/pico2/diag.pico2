@@ -92,6 +92,7 @@ XIncludeFile "RP2350/Lib/flashid.pico2"   ; Ctrl-] w on the PSRAM boards writes 
 XIncludeFile "RP2350/Lib/flash.pico2"     ; (psram_pdp11.pico2); an include cannot sit under #PSRAM, which the
                                          ; Pico Plus 2 W's #PM_GPIO_COUNT branch decides
 XIncludeFile "psram_pdp11.pico2"
+XIncludeFile "rp11.pico2"
 XIncludeFile "tape_image.pico2"
 XIncludeFile "tapeload.pico2"
 
@@ -699,6 +700,14 @@ Procedure StatsBlock()
       StatLine("        flash: ") : Num(PsSaveTotal) : Say(" sectors written by Ctrl-] w since power-up, ")
       Num(PsDirtyCount()) : Say(" changed sectors not saved yet; the packs were copied from it at start-up in ")
       Num(PsramCopyUs / 1000) : Say(" ms")
+      If RpPresent
+        StatLine("        RP11: ") : Num(RpReads) : Say(" blocks read, ") : Num(RpWrites) : Say(" written; ")
+        Num(RpOvUsed) : Say(" of ") : Num(#RP_OV_SLOTS) : Say(" PSRAM slots hold blocks not saved yet; ")
+        Num(RpSlots) : Say(" of ") : Num(RpRoom) : Say(" flash slots used; ") : Num(RpAutoSaves) : Say(" saves by themselves (slots full)")
+        If RpOvFull
+          Say("; ") : Num(RpOvFull) : Say(" writes REFUSED, the PSRAM slots full: Ctrl-] w")
+        EndIf
+      EndIf
     EndIf
   CompilerEndIf
   CompilerIf #DISK_BACKEND = 2
@@ -1278,7 +1287,11 @@ Procedure InByte(c.i)
         If PsramOk = 0
           Say("[nothing to save: the packs are not in the PSRAM, and every write lives in RAM]") : Eol()
         ElseIf PsSaveReq = 0
-          Say("[saving the packs' changes to flash: ") : Num(PsDirtyCount()) : Say(" changed 4 KB sectors; the PDP-11 waits until it is done]") : Eol()
+          Say("[saving the packs' changes to flash: ") : Num(PsDirtyCount()) : Say(" changed 4 KB sectors")
+          If RpPresent
+            Say(" and ") : Num(RpOvUsed) : Say(" RP blocks")
+          EndIf
+          Say("; the PDP-11 waits until it is done]") : Eol()
           SmpBarrier()
           PsSaveReq = 1
         EndIf
@@ -1596,7 +1609,12 @@ EndProcedure
 
 ; What a save did, said by core 1 when core 0 has finished.
 Procedure PsSaveReport()
-  Say("[packs saved to flash: ") : Num(PsSaveWrote) : Say(" sectors written, ") : Num(PsSaveSame) : Say(" already the same")
+  Say("[packs saved to flash")
+  If RpAutoSave
+    Say(" by themselves, the RP03's ") : Num(#RP_OV_SLOTS) : Say(" PSRAM slots being full (the RK packs wait for Ctrl-] w)")
+    RpAutoSave = 0
+  EndIf
+  Say(": ") : Num(PsSaveWrote) : Say(" sectors written, ") : Num(PsSaveSame) : Say(" already the same")
   If PsSaveFail
     Say(", ") : Num(PsSaveFail) : Say(" FAILED (")
     If PsSaveWhy = 1
@@ -1611,6 +1629,13 @@ Procedure PsSaveReport()
   Say(", in ") : Num(PsSaveUs / 1000) : Say(" ms; ") : Num(PsSaveTotal) : Say(" sector writes since power-up")
   If PsUnsaved
     Say(". ") : Num(PsUnsaved) : Say(" block writes went past what the flash holds for that pack and stay in the PSRAM only")
+  EndIf
+  If RpPresent
+    Say(". RP: ") : Num(RpSaveOld) : Say(" blocks rewritten in place, ") : Num(RpSaveNew) : Say(" new, ")
+    Num(RpSaveMap) : Say(" map sectors written")
+    If RpSaveFail
+      Say(", ") : Num(RpSaveFail) : Say(" FAILED - what was not saved stays in the PSRAM")
+    EndIf
   EndIf
   Say("]") : Eol()
 EndProcedure

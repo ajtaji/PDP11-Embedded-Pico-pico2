@@ -279,9 +279,22 @@ Builds a bootable V7 RK05 pack from `media/unix/v7.tap.gz` with the tools
 below, for the PSRAM boards (V7 needs more memory than the others have):
 
 ```
-python tools/v7_pack.py -o v7root.rk [--usr v7usr.rk] [--add LOCALDIR:/path ...]
-python tools/rk_image.py pack v7root.rk --chip picoplus2 --blocks 4872 --swap 4000,872 --name v7root --autoboot boot,0 --autoboot-then "::rk(0,0)rkunix" --autoboot-mem 1024 --drive1 v7usr.rk -o v7root.uf2
+python tools/v7_pack.py -o v7root.rk [--usr v7usr.rk | --usr-rp v7usr-rp.img] [--add LOCALDIR:/path ...]
+python tools/rk_image.py pack v7root.rk --chip picoplus2 --blocks 4872 --swap 4000,872 --name v7root --autoboot boot,0 --autoboot-then "::rk(0,0)rkunix" --autoboot-mem 2040 --rp v7usr-rp.img -o v7root.uf2
 ```
+
+`--usr-rp IMAGE` (the ready image's layout, HOWTO section 12) writes the
+whole `/usr` dump as a 22,800-block file system for the RP03's `/dev/rp3`,
+keeps `/etc/rc`'s own `mount /dev/rp3 /usr`, and makes `/dev/rp3` and
+`/dev/rrp3`; `rk_image.py --rp IMAGE[,FIRST]` packs it, mapped, where RK1
+would go (blocks FIRST on, default 7000: cylinder 35, where rp.c puts rp3).
+The kernel is then linked from the four objects V7 built on a board
+(`media/unix/v7/`, checked against `SHA256SUMS`; `build-on-board.txt` has the
+sessions): `c.o` and `l.o`, mkconf's configuration with rk, rp and ht; and
+`rp.o`, V7's RP03 driver with the two lines rk.c has, `if(bp->b_flags&B_PHYS)
+mapalloc(bp);` - written for 18-bit machines, it never asked for the 11/70's
+Unibus map, and a raw transfer wrote over another process's memory. `--usr`
+(RK1, 4,000 blocks) is the older layout; the two are one or the other.
 
 It restores the root dump (tape file 5) into a 4000-block file system,
 adds `/usr/include` from the /usr dump (file 6), links `rkunix` from the

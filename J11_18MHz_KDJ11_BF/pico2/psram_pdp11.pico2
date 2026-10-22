@@ -348,6 +348,9 @@ Procedure PsramLoad()
       PsClearUs = Micros() - i
       MemTop = #PS_MEM_TOP
       MemLim = #UB_IOPAGE
+      If PsDrives = 1
+        RpInit()                         ; an RP pack in RK1's place (rp11.pico2)
+      EndIf
       PsSaveSetup()                      ; what Ctrl-] w may save (SAVING THE PACKS' CHANGES)                ; 22-bit mapping is off at power-up (cpu.pico2, MmuRecompute)
     Else
       PsramOk = 0
@@ -434,6 +437,9 @@ Procedure PsramBanner()
       Say("; RK1 NOT copied: its pack has ") : Num(PsRk1TooBig) : Say(" blocks and its place in the PSRAM holds ")
       Num(#PS_RK1_BLOCKS) : Say(" - RK1 is absent")
     EndIf
+    If RpPresent
+      RpBanner()                         ; rp11.pico2
+    EndIf
     If PeekL($10000000 + #DISK_REGION + 96) = 1
       Say("; the PSRAM copy's kernel patch applied (block ") : Num(PeekL($10000000 + #DISK_REGION + 100))
       Say(" +") : Num(PeekL($10000000 + #DISK_REGION + 104)) : Say(")")
@@ -512,6 +518,7 @@ Global PsPatchAt.i = -1, PsPatchOld.i        ; RK0's PSRAM-only patch: its byte 
 Global PsUnsaved.i                           ; writes to blocks the flash has no room for
 Global C1ParkReq.i, C1Parked.i               ; core 0 asks core 1 to park (Core1Park in diag.pico2)
 Global PsSaveReq.i, PsSaveDone.i             ; core 1 asks (Ctrl-] w); core 0 says it has finished
+Global RpAutoSave.i                          ; 1: the RP11's full overlay asked for this save (rp11.pico2)
 Global PsSaveWrote.i, PsSaveSame.i, PsSaveFail.i, PsSaveUs.i, PsSaveWhy.i, PsSaveErr.i
 Global PsSaveTotal.i                         ; sectors written to flash since power-up
 
@@ -575,7 +582,7 @@ EndProcedure
 
 ; One sector: 0 the flash already holds it, 1 written and read back right, -1 failed.
 Procedure.i PsSaveSector(region.i, psbase.i, idx.i, isrk0.i)
-  Define buf.i, src.i, off.i, i.i, same.i, ok.i
+  Define buf.i, src.i, i.i
   buf = @DkSwapRam(0)
   src = #PS_WIN + psbase + idx * 4096
   For i = 0 To 1023
@@ -584,7 +591,14 @@ Procedure.i PsSaveSector(region.i, psbase.i, idx.i, isrk0.i)
   If isrk0 And PsPatchAt >= idx * 4096 And PsPatchAt < idx * 4096 + 4096
     PokeU(buf + PsPatchAt - idx * 4096, PsPatchOld)
   EndIf
-  off = region + 4096 + idx * 4096
+  ProcedureReturn PsWriteSector(region + 4096 + idx * 4096, buf)
+EndProcedure
+
+; The 4 KB at buf into the flash sector at off (also the RP11's save,
+; rp11.pico2): 0 the flash already holds it, 1 written and read back
+; right, -1 failed (PsSaveWhy, PsSaveErr say why).
+Procedure.i PsWriteSector(off.i, buf.i)
+  Define i.i, same.i, ok.i
   same = 1
   For i = 0 To 1023
     If PeekL($10000000 + off + i * 4) <> PeekL(buf + i * 4)
@@ -626,6 +640,9 @@ Procedure PsSave()
   PsSaveWrote = 0 : PsSaveSame = 0 : PsSaveFail = 0 : PsSaveWhy = 0 : PsSaveErr = 0
   t0 = Micros()
   For i = 0 To #PS_SECTORS - 1
+    If RpAutoSave                        ; the RP's overlay filled (rp11.pico2): only it, the RK packs
+      Break                              ; wait for a Ctrl-] w after a sync
+    EndIf
     If PsDirty0(i)
       r = PsSaveSector(#DISK_REGION, #PS_RK0, i, 1)
       If r >= 0
@@ -653,6 +670,7 @@ Procedure PsSave()
       EndIf
     EndIf
   Next
+  RpSave()                               ; the RP11's overlay (rp11.pico2)
   PsSaveUs = Micros() - t0
 EndProcedure
 
@@ -661,6 +679,9 @@ Procedure.i PsDiskRead(d.i, blk.i)
   Define a.i
   Define i.i
   Define w.i
+  If d = 8                               ; the RP11's pack (rp11.pico2)
+    ProcedureReturn RpStoreRead(blk)
+  EndIf
   If ((PsDrives >> d) & 1) = 0 Or blk < 0 Or blk >= #RK_BLOCKS Or (d = 1 And blk >= #PS_RK1_BLOCKS)
     DkWhy = 1
     ProcedureReturn -1
@@ -681,6 +702,9 @@ EndProcedure
 Procedure.i PsDiskWrite(d.i, blk.i)
   Define a.i
   Define i.i
+  If d = 8
+    ProcedureReturn RpStoreWrite(blk)
+  EndIf
   If ((PsDrives >> d) & 1) = 0 Or blk < 0 Or blk >= #RK_BLOCKS Or (d = 1 And blk >= #PS_RK1_BLOCKS)
     DkWhy = 1
     ProcedureReturn -1

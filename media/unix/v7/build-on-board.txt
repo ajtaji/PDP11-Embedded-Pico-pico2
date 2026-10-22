@@ -1,0 +1,66 @@
+# media/unix/v7/: four files built ON A BOARD by V7 itself, from the distribution's own sources (2026-10-22),
+# read back over the console with `od` and rebuilt by tools/od2bin.py; checked against V7's `sum` and kept with
+# SHA256SUMS. tools/v7_pack.py uses them:
+#   c.o, l.o - mkconf's configuration for rk, rp (the RP03, /usr on rp3 as V7 shipped it) and ht, root and swap
+#              on rk0 as before; the kernel is linked from these with the tape's mch.o, LIB1 and LIB2.
+#   date     - /usr/src/cmd/date.c with one line changed: a two-digit year under 70 means 20yy.
+#   rp.o     - /usr/sys/dev/rp.c with the two lines rk.c has at the top of its strategy routine,
+#              if(bp->b_flags&B_PHYS) mapalloc(bp); - V7's RP03 driver was written for 18-bit machines and
+#              never asks for the 11/70's Unibus map, so a raw transfer (dd of /dev/rrp3, say) went through
+#              whatever the map last held and wrote over another process's memory. Linked ahead of LIB2,
+#              whose own rp.o is then never loaded. Built in the second session, at the end of this file.
+# Board: a Pico Plus 2 W, V7 at 2 MB, RK1 a pack of /sys /lib /include and date.c. Sums printed by V7's sum:
+#   c.o 22936 4    l.o 64567 2    date 29656 17    rp.o 14380 5
+# The session (tools/board_session.py script):
+!wait 1
+!timeout 300
+cd /usr/sys/conf
+!line cat >pmconf
+!line rk
+!line rp
+!line root rk 0
+!line swap rk 0
+!line swplo 4000
+!line nswap 872
+!line ht
+!eof
+!wait 1
+mkconf < pmconf
+cc -c c.c
+as -o l.o l.s
+ls -l c.o l.o
+sum c.o
+sum l.o
+od c.o
+od l.o
+cd /tmp
+cp /usr/src/cmd/date.c date.c
+!line ed date.c
+!line /year += 1900;/s//if (year < 70) year += 100; year += 1900;/p
+!line w
+!line q
+!wait 2
+grep -n "year +=" date.c
+cc -O -o date date.c
+ls -l date
+sum date
+od date
+# The second session (the board running V7 with the RP03's /usr; root single-user):
+!wait 1
+!timeout 300
+/etc/mount /dev/rp3 /usr
+cd /usr/sys/dev
+cp rp.c rpm.c
+!line ed rpm.c
+!line /unit = minor(bp->b_dev);/i
+!line 	if(bp->b_flags&B_PHYS)
+!line 		mapalloc(bp);
+!line .
+!line w
+!line q
+!wait 2
+grep -n mapalloc rpm.c
+cc -c -O rpm.c
+ls -l rpm.o
+sum rpm.o
+od rpm.o

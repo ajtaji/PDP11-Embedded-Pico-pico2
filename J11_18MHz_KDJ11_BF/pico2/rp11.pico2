@@ -1,0 +1,563 @@
+; ======================================================================
+;  rp11.pico2 - the RP11-C disk controller with one RP03 drive, at 176710-
+;  176736, vector 254, BR5 (2026-10-22). For V7's /usr on /dev/rp3, where
+;  the distribution has it, on the boards with PSRAM (the Pico Plus 2 W):
+;  the pack lives in the flash where RK1's would, and what Unix writes is
+;  held in RK1's part of the PSRAM until Ctrl-] w saves it.
+;
+;  Include after rk11.pico2 and psram_pdp11.pico2. RpPresent, RpBusy and
+;  RpIoPosted are declared in cpu.pico2, which reads them first. Without
+;  an RP pack in the flash (RpPresent = 0) the registers do not answer:
+;  the bus times out there, as on a machine with no RP11.
+;
+;  WHY AN RP03. V7's whole /usr is 15,218 blocks; /usr/src/cmd alone is
+;  5,890, more than an RK05 holds, and a mount is a whole file system. V7
+;  shipped with /usr on the RP03's partition 3 (/etc/rc: /etc/mount
+;  /dev/rp3 /usr), and its kernel here is linked from a configuration
+;  built on the board (media/unix/v7: mkconf with rk, rp and ht), so V7's
+;  own driver, /usr/sys/dev/rp.c, is the program this is written for.
+;
+;  THE CONTROLLER, as rp.c drives it. Only what rp.c reads is modelled; the
+;  registers it never touches (176726-176736) read 0 and ignore writes.
+;    176710 RPDS  drive status: $0080 (ready) for drive 0, 0 for any other.
+;                 Never seeking (SUSU, 02000, clear), never unsafe.
+;    176712 RPER  $0080 nonexistent drive, $0040 a block past the pack or
+;                 one the storage refused (the overlay full: see WRITES).
+;    176714 RPCS  0 GO, 3-1 function, 5-4 bus address 17-16, 6 IE, 7 READY
+;                 (read only), 10-8 drive, 14 hard error and 15 error (read
+;                 only, from RPER).
+;    176716 RPWC  two's complement of the words to move; counts up.
+;    176720 RPBA  bus address 15-0.
+;    176722 RPCA  cylinder, 0-405.
+;    176724 RPDA  12-8 track (0-19), 3-0 sector (0-9).
+;  Functions: 0 reset, 1 write, 2 read, 3 write check, 4 seek, 5 write
+;  without seek, 6 home seek, 7 read without seek. Seeks finish at once.
+;  A transfer moves a sector a look, spaced as the RK11's (rk11.pico2,
+;  #RK_SECTOR_US and #RK_SECTOR_INSTRUCTIONS), through the same storage
+;  channel to core 1 and the same Unibus DMA (RkMemRead, RkMemWrite). The
+;  two controllers take turns with the channel: neither posts while the
+;  other's request is out (RkIoPosted, RpIoPosted), so DkBuf is never
+;  filled under the other's answer. Block = (cylinder * 20 + track) * 10 +
+;  sector; the pack holds the blocks from its header's first block (rp3:
+;  cylinder 35, block 7000), and reads zeros outside them.
+;
+;  THE PACK IN FLASH (tools/rk_image.py --rp), at #FL_RK1:
+;    +0     "PDP11RP1", then u32s: version 1, blocks, first block, map
+;           sectors; a name (16 bytes) at +32
+;    +4 KB  the map: a u16 per block, 0 = never written (reads as zeros),
+;           n = data slot n - 1
+;    then   the data: 512-byte slots, from the 4 KB after the map
+;  How many slots are in use is worked out from the map at start-up, not
+;  kept in the header: a save writes the data first and the map after, so
+;  the map is what is true if a save is cut short.
+;
+;  WRITES go to the overlay at #PS_RK1 in the PSRAM (RK1 is absent when an
+;  RP pack is in its place): a u16 per block (overlay slot + 1), a u16 per
+;  overlay slot (its block), then #RP_OV_SLOTS 512-byte slots. Ctrl-] w
+;  (PsSave -> RpSave) saves them and empties the overlay. When they are
+;  all used, the write of a new block asks for that save itself and waits
+;  for it (core 1 answers "not yet", DkServe asks again after it): Unix
+;  sees a slow write, never an error. Only if a save cannot empty the
+;  overlay (the flash refusing) is a write refused: a drive error, and
+;  Unix's "err on dev" message.
+;
+;  THE FLASH NEVER FILLS: a block gets a slot the first time it is saved
+;  and keeps it, and rk_image.py --rp refuses a file system with more
+;  blocks than RK1's place has slots (22,936 in the Pico Plus 2's 16 MB),
+;  so every block can always have one.
+; ======================================================================
+
+#RP_CYLS   = 406
+#RP_TRACKS = 20
+#RP_SECT   = 10
+#RPCS_GO   = $0001
+#RPCS_IE   = $0040
+#RPCS_RDY  = $0080
+#RPCS_RW   = $077E                ; function, MEX, IE, drive
+#RPER_NXB  = $0040
+#RPER_NXD  = $0080
+#RP_OV_MAP   = $C000              ; overlay: the block map's bytes (up to 24,576 blocks) ...
+#RP_OV_LIST  = $2000              ; ... the slots' blocks (up to 4,096) ...
+#RP_OV_SLOTS = 3888               ; ... and the slots: to the end of the chip ($1F4000 - $E000) / 512
+
+Global RpBlocks.i, RpFirst.i, RpMapSectors.i, RpData.i, RpSlots.i, RpRoom.i
+Global RpCs.i, RpEr.i, RpWc.i, RpBa.i, RpCa.i, RpDa.i
+Global RpDue.i, RpXFunc.i, RpXBlock.i, RpXLeft.i, RpXMa.i, RpXStop.i, RpIoN.i
+Global RpLastUs.i, RpLastAt.i
+Global RpReads.i, RpWrites.i, RpOvUsed.i, RpOvFull.i, RpOvStuck.i
+Global RpAutoSaves.i                     ; saves a full overlay asked for since power-up (RpAutoSave: psram_pdp11.pico2)
+Global RpSaveNew.i, RpSaveOld.i, RpSaveMap.i, RpSaveFail.i   ; the last save
+
+; ---- the registers ------------------------------------------------------
+Procedure.i RpCsRead()
+  If RpEr
+    ProcedureReturn RpCs | $C000
+  EndIf
+  ProcedureReturn RpCs
+EndProcedure
+
+Procedure RpAsk()
+  If RpCs & #RPCS_IE
+    IntReq = IntReq | #INT_RP
+    IntCheck()
+  EndIf
+EndProcedure
+
+Procedure RpDone()
+  RpCs = RpCs | #RPCS_RDY
+  RpBusy = 0
+  RpAsk()
+  DevUpdate()
+EndProcedure
+
+Procedure RpReset()                      ; the bus INIT (DevReset), and function 0
+  RpCs = #RPCS_RDY
+  RpEr = 0
+  RpWc = 0
+  RpBa = 0
+  RpCa = 0
+  RpDa = 0
+  RpBusy = 0
+  RpIoPosted = 0                         ; a request still out is waited out (RpSector)
+  IntReq = IntReq & ~#INT_RP
+  DevUpdate()
+EndProcedure
+
+Procedure RpGo()
+  Define f.i
+  f = (RpCs >> 1) & 7
+  RpCs = RpCs & ~#RPCS_RDY
+  RpEr = 0
+  IntReq = IntReq & ~#INT_RP
+  If f = 0
+    RpReset()
+    ProcedureReturn
+  EndIf
+  If ((RpCs >> 8) & 7) <> 0
+    RpEr = #RPER_NXD
+    RpDone()
+    ProcedureReturn
+  EndIf
+  If f = 4 Or f = 6                      ; seek, home seek: there at once
+    If f = 6
+      RpCa = 0
+    EndIf
+    RpDone()
+    ProcedureReturn
+  EndIf
+  If RpCa >= #RP_CYLS Or ((RpDa >> 8) & $1F) >= #RP_TRACKS Or (RpDa & $F) >= #RP_SECT
+    RpEr = #RPER_NXB
+    RpDone()
+    ProcedureReturn
+  EndIf
+  RpXFunc = f
+  RpXBlock = (RpCa * #RP_TRACKS + ((RpDa >> 8) & $1F)) * #RP_SECT + (RpDa & $F)
+  RpXLeft = (65536 - RpWc) & $FFFF
+  If RpXLeft = 0
+    RpXLeft = 65536
+  EndIf
+  RpXMa = ((RpCs & $30) << 12) | RpBa
+  RpXStop = 0
+  RpBusy = 1
+  RpDue = CpuNow() + #RK_XFER_INSTRUCTIONS
+  CpuEventIn(#RK_XFER_INSTRUCTIONS)
+  DevUpdate()
+EndProcedure
+
+; ---- the transfer -------------------------------------------------------
+; One sector: 1 done, 0 the channel is busy or core 1 has not answered.
+Procedure.i RpSector()
+  Define n.i, i.i, w.i, r.i, ma.i
+  n = RpXLeft
+  If n > 256
+    n = 256
+  EndIf
+  ma = RpXMa
+  If RpIoPosted = 0
+    If DkReqSeq <> DkDoneSeq Or RkIoPosted   ; the channel is still out, or the RK11's answer is not collected
+      ProcedureReturn 0
+    EndIf
+    DkReqOp = 2
+    If RpXFunc = 1 Or RpXFunc = 5        ; WRITE: memory into the buffer, zeros after
+      For i = 0 To n - 1
+        w = RkMemRead(ma)
+        If w < 0
+          n = i
+          RpEr = RpEr | #RPER_NXB
+          RpXStop = 1
+          Break
+        EndIf
+        DkBuf(i) = w
+        ma = (ma + 2) & $3FFFF
+      Next
+      If n = 0
+        ProcedureReturn 1
+      EndIf
+      For i = n To 255
+        DkBuf(i) = 0
+      Next
+      DkReqOp = 1
+    EndIf
+    RpIoN = n
+    DkReqDrive = 8
+    DkReqBlock = RpXBlock - RpFirst
+    SmpBarrier()                         ; the request, then its number
+    DkReqSeq = DkReqSeq + 1
+    RpIoPosted = 1
+    ProcedureReturn 0
+  EndIf
+  If DkDoneSeq <> DkReqSeq
+    ProcedureReturn 0
+  EndIf
+  SmpBarrier()                           ; the number, then DkBuf and the result
+  RpIoPosted = 0
+  r = DkDoneResult
+  n = RpIoN
+  If r < 0
+    RpEr = RpEr | #RPER_NXB
+    RpXStop = 1
+    ProcedureReturn 1
+  EndIf
+  If RpXFunc = 2 Or RpXFunc = 7          ; READ: into memory
+    For i = 0 To n - 1
+      If RkMemWrite(ma, DkBuf(i)) = 0
+        n = i
+        RpEr = RpEr | #RPER_NXB
+        RpXStop = 1
+        Break
+      EndIf
+      ma = (ma + 2) & $3FFFF
+    Next
+    RpReads = RpReads + 1
+  ElseIf RpXFunc = 3                     ; WRITE CHECK
+    For i = 0 To n - 1
+      If RkMemRead(ma) <> DkBuf(i)
+        RpEr = RpEr | #RPER_NXB
+        RpXStop = 1
+      EndIf
+      ma = (ma + 2) & $3FFFF
+    Next
+  Else
+    ma = (RpXMa + n * 2) & $3FFFF
+    RpWrites = RpWrites + 1
+  EndIf
+  RpXMa = ma
+  RpXLeft = RpXLeft - n
+  RpXBlock = RpXBlock + 1
+  ProcedureReturn 1
+EndProcedure
+
+; Registers after the transfer: RPWC the words not moved, RPBA and MEX the
+; next bus address, RPCA and RPDA the next sector.
+Procedure RpFinish()
+  RpWc = (65536 - RpXLeft) & $FFFF
+  RpBa = RpXMa & $FFFE
+  RpCs = (RpCs & ~$30) | ((RpXMa >> 12) & $30)
+  RpCa = RpXBlock / (#RP_TRACKS * #RP_SECT)
+  RpDa = (((RpXBlock / #RP_SECT) % #RP_TRACKS) << 8) | (RpXBlock % #RP_SECT)
+  RpDone()
+EndProcedure
+
+; The run loop's look (DevPoll), while busy.
+Procedure RpPoll()
+  If Waiting = 0 And CpuNow() - RpDue < 0
+    ProcedureReturn
+  EndIf
+  If Micros() - RpLastUs < #RK_SECTOR_US
+    ProcedureReturn
+  EndIf
+  If Waiting = 0 And CpuNow() - RpLastAt < #RK_SECTOR_INSTRUCTIONS
+    ProcedureReturn
+  EndIf
+  If RpXLeft > 0 And RpXStop = 0
+    If RpXBlock >= #RP_CYLS * #RP_TRACKS * #RP_SECT
+      RpEr = RpEr | #RPER_NXB
+      RpXStop = 1
+    ElseIf RpSector() = 0
+      ProcedureReturn
+    EndIf
+  EndIf
+  RpLastUs = Micros()
+  RpLastAt = CpuNow()
+  If RpXLeft <= 0 Or RpXStop
+    RpFinish()
+  EndIf
+EndProcedure
+
+Procedure.i RpRead(a.i)
+  Select (a >> 1) & 15
+    Case 4                               ; 176710 RPDS
+      If (RpCs & $0700) = 0
+        ProcedureReturn $0080
+      EndIf
+    Case 5
+      ProcedureReturn RpEr
+    Case 6
+      ProcedureReturn RpCsRead()
+    Case 7
+      ProcedureReturn RpWc
+    Case 8
+      ProcedureReturn RpBa
+    Case 9
+      ProcedureReturn RpCa
+    Case 10
+      ProcedureReturn RpDa
+  EndSelect
+  ProcedureReturn 0
+EndProcedure
+
+Procedure RpWrite(a.i, v.i)
+  Define r.i, oldie.i
+  r = (a >> 1) & 15
+  If r = 6                               ; RPCS
+    If RpBusy                            ; only IE while a transfer runs
+      RpCs = (RpCs & ~#RPCS_IE) | (v & #RPCS_IE)
+    Else
+      oldie = RpCs & #RPCS_IE
+      RpCs = (RpCs & ~#RPCS_RW) | (v & #RPCS_RW)
+      If (v & #RPCS_IE) <> 0 And oldie = 0 And (v & #RPCS_GO) = 0
+        RpAsk()                          ; IE set while ready, no GO
+      EndIf
+    EndIf
+    If (v & #RPCS_IE) = 0
+      IntReq = IntReq & ~#INT_RP
+    EndIf
+    If (v & #RPCS_GO) <> 0 And RpBusy = 0
+      RpGo()
+    EndIf
+  ElseIf RpBusy = 0
+    If r = 7
+      RpWc = v
+    ElseIf r = 8
+      RpBa = v & $FFFE
+    ElseIf r = 9
+      RpCa = v & $3FF
+    ElseIf r = 10
+      RpDa = v & $1F0F
+    EndIf
+  EndIf
+EndProcedure
+
+CompilerIf #PSRAM = 1
+; ---- the pack, at start-up (PsramLoad, when RK1 is absent) ---------------
+Procedure RpInit()
+  Define i.i, m.i
+  RpPresent = 0
+  If PeekL($10000000 + #FL_RK1) <> $31504450 Or PeekL($10000000 + #FL_RK1 + 4) <> $31505231
+    ProcedureReturn                      ; not "PDP11RP1"
+  EndIf
+  If PeekL($10000000 + #FL_RK1 + 8) <> 1
+    ProcedureReturn
+  EndIf
+  RpBlocks = PeekL($10000000 + #FL_RK1 + 12)
+  RpFirst = PeekL($10000000 + #FL_RK1 + 16)
+  RpMapSectors = PeekL($10000000 + #FL_RK1 + 20)
+  If RpBlocks < 1 Or RpBlocks * 2 > #RP_OV_MAP Or RpMapSectors * 2048 < RpBlocks
+    ProcedureReturn
+  EndIf
+  RpData = #FL_RK1 + 4096 + RpMapSectors * 4096
+  RpRoom = (#FLASH_CHIP - RpData) / 512
+  RpSlots = 0                            ; the slots in use: up to the highest the map names
+  For i = 0 To RpBlocks - 1
+    m = PeekU($10000000 + #FL_RK1 + 4096 + i * 2)
+    If m > RpSlots
+      RpSlots = m
+    EndIf
+    PokeU(#PS_WIN + #PS_RK1 + i * 2, 0)  ; the overlay starts empty
+  Next
+  If RpSlots > RpRoom
+    ProcedureReturn
+  EndIf
+  RpOvUsed = 0
+  RpPresent = 1
+  RpReset()
+EndProcedure
+
+Procedure RpBanner()                     ; PsramBanner's words on it
+  Say("; RP03 drive 0 on the RP11: blocks ") : Num(RpFirst) : Say("-") : Num(RpFirst + RpBlocks - 1)
+  Say(" (") : Num(RpSlots) : Say(" stored in flash), its writes held in PSRAM (room for ") : Num(#RP_OV_SLOTS)
+  Say(" blocks) until Ctrl-] w")
+EndProcedure
+
+; ---- the storage, on core 1 (PsDiskRead / PsDiskWrite, drive 8) ----------
+; b counts from the pack's first block.
+Procedure.i RpStoreRead(b.i)
+  Define i.i, w.i, s.i, a.i
+  s = 0
+  If b >= 0 And b < RpBlocks
+    s = PeekU(#PS_WIN + #PS_RK1 + b * 2)
+    If s
+      a = #PS_WIN + #PS_RK1 + #RP_OV_MAP + #RP_OV_LIST + (s - 1) * 512
+    Else
+      s = PeekU($10000000 + #FL_RK1 + 4096 + b * 2)
+      a = $10000000 + RpData + (s - 1) * 512
+    EndIf
+  EndIf
+  If s = 0
+    For i = 0 To 255
+      DkBuf(i) = 0
+    Next
+    ProcedureReturn 1
+  EndIf
+  For i = 0 To 127
+    w = PeekL(a + i * 4)
+    DkBuf(i * 2) = w & $FFFF
+    DkBuf(i * 2 + 1) = (w >> 16) & $FFFF
+  Next
+  ProcedureReturn 1
+EndProcedure
+
+Procedure.i RpStoreWrite(b.i)
+  Define i.i, s.i, a.i
+  If b < 0 Or b >= RpBlocks
+    ProcedureReturn -1
+  EndIf
+  s = PeekU(#PS_WIN + #PS_RK1 + b * 2)
+  If s = 0
+    If RpOvUsed >= #RP_OV_SLOTS
+      If RpOvStuck                       ; a save could not empty it (the flash refused): an error now
+        RpOvFull = RpOvFull + 1
+        ProcedureReturn -1
+      EndIf
+      If PsSaveReq = 0                   ; full: a save, as Ctrl-] w would ask (core 0 runs it between slices)
+        RpAutoSave = 1
+        RpAutoSaves = RpAutoSaves + 1
+        SmpBarrier()
+        PsSaveReq = 1
+      EndIf
+      ProcedureReturn 0                  ; not yet: DkServe asks again on its next pass, after the save
+    EndIf
+    RpOvUsed = RpOvUsed + 1
+    s = RpOvUsed
+    PokeU(#PS_WIN + #PS_RK1 + #RP_OV_MAP + (s - 1) * 2, b)
+    PokeU(#PS_WIN + #PS_RK1 + b * 2, s)
+  EndIf
+  a = #PS_WIN + #PS_RK1 + #RP_OV_MAP + #RP_OV_LIST + (s - 1) * 512
+  For i = 0 To 127
+    PokeL(a + i * 4, DkBuf(i * 2) | (DkBuf(i * 2 + 1) << 16))
+  Next
+  ProcedureReturn 1
+EndProcedure
+
+; ---- Ctrl-] w: the overlay into the flash (PsSave, core 0, PDP-11 paused) -
+;  Each overlay block goes into its own slot if the map gives it one, else
+;  into a new slot after the last. The work lists live in the swap RAM
+;  disk's SRAM (idle when the PSRAM is in use), after the 4 KB staging
+;  buffer: from byte 4096 a u16 per overlay slot (its destination slot, 0
+;  = no room), from 12288 a byte per data sector (1 = rewrite), from 28672
+;  a byte per map sector.
+Procedure RpSave()
+  Define buf.i, dst.i, dsec.i, msec.i, i.i, j.i, k.i, b.i, m.i, s.i, n.i, r.i, t0.i, ndsec.i
+  RpSaveNew = 0 : RpSaveOld = 0 : RpSaveMap = 0 : RpSaveFail = 0
+  If RpPresent = 0 Or RpOvUsed = 0
+    ProcedureReturn
+  EndIf
+  t0 = Micros()
+  While DkReqSeq <> DkDoneSeq And Micros() - t0 < 200000   ; a request still out finishes first
+  Wend
+  buf = @DkSwapRam(0)
+  dst = buf + 4096
+  dsec = buf + 12288
+  msec = buf + 28672
+  ndsec = (RpRoom + 7) / 8
+  If ndsec > 16384
+    ndsec = 16384
+  EndIf
+  For i = 0 To ndsec - 1
+    PokeA(dsec + i, 0)
+  Next
+  For i = 0 To RpMapSectors - 1
+    PokeA(msec + i, 0)
+  Next
+  n = RpSlots
+  For i = 0 To RpOvUsed - 1              ; where each goes
+    b = PeekU(#PS_WIN + #PS_RK1 + #RP_OV_MAP + i * 2)
+    m = PeekU($10000000 + #FL_RK1 + 4096 + b * 2)
+    If m = 0
+      If n >= RpRoom
+        RpSaveFail = RpSaveFail + 1      ; the flash is full: this one stays in the overlay
+        PokeU(dst + i * 2, 0)
+        Continue
+      EndIf
+      n = n + 1
+      m = n
+      PokeA(msec + (b * 2) / 4096, 1)
+      RpSaveNew = RpSaveNew + 1
+    Else
+      RpSaveOld = RpSaveOld + 1
+    EndIf
+    PokeU(dst + i * 2, m)
+    PokeA(dsec + (m - 1) / 8, 1)
+  Next
+  For k = 0 To ndsec - 1                 ; the data sectors, each with every overlay slot that lands in it
+    If PeekA(dsec + k)
+      For j = 0 To 1023
+        If k * 8 + j / 128 < RpSlots
+          PokeL(buf + j * 4, PeekL($10000000 + RpData + k * 4096 + j * 4))
+        Else
+          PokeL(buf + j * 4, 0)          ; past the old end: nothing there yet
+        EndIf
+      Next
+      For i = 0 To RpOvUsed - 1
+        m = PeekU(dst + i * 2)
+        If m
+          If (m - 1) / 8 = k
+            s = #PS_WIN + #PS_RK1 + #RP_OV_MAP + #RP_OV_LIST + i * 512
+            For j = 0 To 127
+              PokeL(buf + ((m - 1) & 7) * 512 + j * 4, PeekL(s + j * 4))
+            Next
+          EndIf
+        EndIf
+      Next
+      r = PsWriteSector(RpData + k * 4096, buf)
+      If r < 0
+        RpSaveFail = RpSaveFail + 1
+        ProcedureReturn                  ; the map is not touched: the flash still reads as before
+      EndIf
+    EndIf
+  Next
+  For k = 0 To RpMapSectors - 1          ; then the map, so a save cut short leaves the old map
+    If PeekA(msec + k)
+      For j = 0 To 1023
+        PokeL(buf + j * 4, PeekL($10000000 + #FL_RK1 + 4096 + k * 4096 + j * 4))
+      Next
+      For i = 0 To RpOvUsed - 1
+        b = PeekU(#PS_WIN + #PS_RK1 + #RP_OV_MAP + i * 2)
+        m = PeekU(dst + i * 2)
+        If m
+          If (b * 2) / 4096 = k
+            PokeU(buf + ((b * 2) & 4095), m)
+          EndIf
+        EndIf
+      Next
+      r = PsWriteSector(#FL_RK1 + 4096 + k * 4096, buf)
+      If r < 0
+        RpSaveFail = RpSaveFail + 1
+        ProcedureReturn
+      EndIf
+      RpSaveMap = RpSaveMap + 1
+    EndIf
+  Next
+  RpSlots = n
+  j = 0                                  ; the overlay keeps only what could not be saved
+  For i = 0 To RpOvUsed - 1
+    b = PeekU(#PS_WIN + #PS_RK1 + #RP_OV_MAP + i * 2)
+    If PeekU(dst + i * 2)
+      PokeU(#PS_WIN + #PS_RK1 + b * 2, 0)
+    Else
+      If j <> i
+        s = #PS_WIN + #PS_RK1 + #RP_OV_MAP + #RP_OV_LIST
+        For k = 0 To 127
+          PokeL(s + j * 512 + k * 4, PeekL(s + i * 512 + k * 4))
+        Next
+        PokeU(#PS_WIN + #PS_RK1 + #RP_OV_MAP + j * 2, b)
+      EndIf
+      j = j + 1
+      PokeU(#PS_WIN + #PS_RK1 + b * 2, j)
+    EndIf
+  Next
+  SmpBarrier()                           ; the overlay's map, then its count (core 1's RpStoreWrite reads it)
+  RpOvUsed = j
+  RpOvStuck = Bool(j >= #RP_OV_SLOTS)
+EndProcedure
+CompilerEndIf
