@@ -166,6 +166,17 @@ def main():
         pw[0] = ":".join(f)
         open(os.path.join(tmp, "passwd"), "w", newline="\n").write("\n".join(pw))
         run(v7fs, "put", out, os.path.join(tmp, "passwd"), "/etc/passwd", "-o", out)
+        # df with no argument reports the disks compiled into it, /dev/rp0 and /dev/rp3 (the RP
+        # pack V7 was set up for): name the two RK05 drives instead, the same lengths, so plain
+        # df answers here (2026-10-22)
+        dfp = os.path.join(tmp, "df")
+        run(v7fs, "get", out, "/bin/df", dfp)
+        dfb = open(dfp, "rb").read()
+        if dfb.count(b"/dev/rp0\0") != 1 or dfb.count(b"/dev/rp3\0") != 1:
+            fail("/bin/df: its two disk names (/dev/rp0, /dev/rp3) are not there once each")
+        dfb = dfb.replace(b"/dev/rp0\0", b"/dev/rk0\0").replace(b"/dev/rp3\0", b"/dev/rk1\0")
+        open(dfp, "wb").write(dfb)
+        run(v7fs, "put", out, dfp, "/bin/df", "--mode", "0775", "-o", out)
         boot = os.path.join(tmp, "boot")
         run(v7fs, "get", out, "/boot", boot)
         b = bytearray(open(boot, "rb").read())

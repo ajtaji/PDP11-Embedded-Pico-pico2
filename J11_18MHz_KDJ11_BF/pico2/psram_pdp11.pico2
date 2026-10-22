@@ -20,7 +20,7 @@
 ;  WHAT IT GIVES THE PDP-11 (when PsramOk = 1)
 ;    * both RK05 packs in PSRAM, copied from the flash at start-up, and
 ;      writable: every write stays in PSRAM and is lost at power-off, as
-;      with the RAM overlay - the flash is never written;
+;      with the RAM overlay - the flash is written only by Ctrl-] w (SAVING THE PACKS' CHANGES);
 ;    * the whole swap area of the pack (V6: 872 blocks);
 ;    * physical memory up to 3812 KB (00000000-16707777): 000000-157777
 ;      stays in SRAM, the rest is PSRAM, reached through the memory
@@ -347,7 +347,8 @@ Procedure PsramLoad()
       PsClearMemory()                    ; the extra memory starts clear
       PsClearUs = Micros() - i
       MemTop = #PS_MEM_TOP
-      MemLim = #UB_IOPAGE                ; 22-bit mapping is off at power-up (cpu.pico2, MmuRecompute)
+      MemLim = #UB_IOPAGE
+      PsSaveSetup()                      ; what Ctrl-] w may save (SAVING THE PACKS' CHANGES)                ; 22-bit mapping is off at power-up (cpu.pico2, MmuRecompute)
     Else
       PsramOk = 0
       PsDrives = 0
@@ -428,7 +429,7 @@ Procedure PsramBanner()
       Say(" (whole, 4872 blocks) and RK1 (") : Num(PsRk1Blocks) : Say(" blocks stored, ") : Num(#PS_RK1_BLOCKS)
       Say(" exist: blocks ") : Num(#PS_RK1_BLOCKS) : Say("-4871 of RK1 answer with a drive error)")
     EndIf
-    Say(" writable in PSRAM, never written to flash")
+    Say(" writable in PSRAM, written to flash only by Ctrl-] w")
     If PsRk1TooBig
       Say("; RK1 NOT copied: its pack has ") : Num(PsRk1TooBig) : Say(" blocks and its place in the PSRAM holds ")
       Num(#PS_RK1_BLOCKS) : Say(" - RK1 is absent")
@@ -474,6 +475,188 @@ Procedure PsramBanner()
 EndProcedure
 
 ; ---- the disk, when PsramOk (disk.pico2 calls these) -----------------------
+; ======================================================================
+;  SAVING THE PACKS' CHANGES TO FLASH - Ctrl-] then w (2026-10-22)
+; ======================================================================
+;  Everything Unix writes goes to the packs' PSRAM copies and is gone at
+;  power-off. Ctrl-] w writes the changed part back into the packs' own
+;  places in the flash, so the next power-up copies it in with the rest.
+;  Nothing is written at any other time: a flash sector takes about 100,000
+;  erases, and V7's update daemon syncs every 30 s.
+;
+;  WHAT IS SAVED. Each block write marks its 4 KB flash sector (a dense
+;  pack: block n is at the region + 4096 + n * 512, so sector n / 8). On the
+;  command each marked sector is compared with the flash and written only
+;  if it differs: erase, program from SRAM, read back and compared. Never
+;  saved: the header sector; RK0's swap area (the header's +64, +68 -
+;  swap is scratch); blocks past what the region stores (they live only in
+;  the PSRAM: counted and said); and the PSRAM-only kernel patch (PsPatch),
+;  whose old word is put back in the copy that is written, so the flash
+;  stays the pack the fallback can boot.
+;
+;  HOW, with two cores. Core 0 runs the PDP-11 and does the save between
+;  its slices, so the PDP-11 is paused while it lasts. The flash library
+;  (RP2350/Lib/flash.pico2) needs the other core off the flash and the
+;  PSRAM: for each sector core 1 is parked in SRAM code with its
+;  interrupts off (Core1Park, diag.pico2), the sector is erased and
+;  programmed, and core 1 is let go for a few milliseconds - USB and the
+;  watchdog stay served - before the next. The staging buffer is the
+;  fallback's swap RAM disk (DkSwapRam), which is idle when the PSRAM is in
+;  use: no new SRAM.
+#PS_SECTORS = (#RK_BLOCKS + 7) / 8
+Global Dim PsDirty0.a(#PS_SECTORS + 1)       ; RK0: 1 = the PSRAM sector changed since the last save
+Global Dim PsDirty1.a(#PS_SECTORS + 1)       ; RK1
+Global PsStored0.i, PsStored1.i              ; blocks each region stores in the flash
+Global PsSwapLo.i, PsSwapEnd.i               ; RK0's swap area, never saved
+Global PsPatchAt.i = -1, PsPatchOld.i        ; RK0's PSRAM-only patch: its byte offset and the flash word
+Global PsUnsaved.i                           ; writes to blocks the flash has no room for
+Global C1ParkReq.i, C1Parked.i               ; core 0 asks core 1 to park (Core1Park in diag.pico2)
+Global PsSaveReq.i, PsSaveDone.i             ; core 1 asks (Ctrl-] w); core 0 says it has finished
+Global PsSaveWrote.i, PsSaveSame.i, PsSaveFail.i, PsSaveUs.i, PsSaveWhy.i, PsSaveErr.i
+Global PsSaveTotal.i                         ; sectors written to flash since power-up
+
+Procedure PsSaveSetup()
+  PsStored0 = PsPackBlocks(#DISK_REGION)
+  PsStored1 = PsRk1Blocks
+  PsSwapLo = PeekL($10000000 + #DISK_REGION + 64)
+  PsSwapEnd = PsSwapLo + PeekL($10000000 + #DISK_REGION + 68)
+  If PeekL($10000000 + #DISK_REGION + 96) = 1
+    PsPatchAt = PeekL($10000000 + #DISK_REGION + 100) * 512 + PeekL($10000000 + #DISK_REGION + 104)
+    PsPatchOld = PeekL($10000000 + #DISK_REGION + 108) & $FFFF
+  EndIf
+EndProcedure
+
+; A block write's mark (PsDiskWrite).
+Macro PsMarkDirty(mD, mBlk)
+  If mD = 0
+    If mBlk < PsSwapLo Or mBlk >= PsSwapEnd
+      If mBlk < PsStored0
+        PsDirty0(mBlk >> 3) = 1
+      Else
+        PsUnsaved = PsUnsaved + 1
+      EndIf
+    EndIf
+  ElseIf mBlk < PsStored1
+    PsDirty1(mBlk >> 3) = 1
+  Else
+    PsUnsaved = PsUnsaved + 1
+  EndIf
+EndMacro
+
+Procedure.i PsDirtyCount()
+  Define i.i, n.i
+  For i = 0 To #PS_SECTORS - 1
+    n = n + PsDirty0(i) + PsDirty1(i)
+  Next
+  ProcedureReturn n
+EndProcedure
+
+; Core 1 into Core1Park, and back out. 1 = it is parked (it answers within a
+; pass of its loop: a fraction of a millisecond).
+Procedure.i PsPark()
+  Define t0.i
+  C1ParkReq = 1
+  t0 = Micros()
+  While C1Parked = 0 And (Micros() - t0) < 200000
+  Wend
+  ProcedureReturn C1Parked
+EndProcedure
+
+Procedure PsUnpark()
+  Define t0.i
+  C1ParkReq = 0
+  t0 = Micros()
+  While C1Parked <> 0 And (Micros() - t0) < 200000
+  Wend
+  t0 = Micros()
+  While (Micros() - t0) < 3000           ; let core 1 serve USB before the next sector
+  Wend
+EndProcedure
+
+; One sector: 0 the flash already holds it, 1 written and read back right, -1 failed.
+Procedure.i PsSaveSector(region.i, psbase.i, idx.i, isrk0.i)
+  Define buf.i, src.i, off.i, i.i, same.i, ok.i
+  buf = @DkSwapRam(0)
+  src = #PS_WIN + psbase + idx * 4096
+  For i = 0 To 1023
+    PokeL(buf + i * 4, PeekL(src + i * 4))
+  Next
+  If isrk0 And PsPatchAt >= idx * 4096 And PsPatchAt < idx * 4096 + 4096
+    PokeU(buf + PsPatchAt - idx * 4096, PsPatchOld)
+  EndIf
+  off = region + 4096 + idx * 4096
+  same = 1
+  For i = 0 To 1023
+    If PeekL($10000000 + off + i * 4) <> PeekL(buf + i * 4)
+      same = 0
+      Break
+    EndIf
+  Next
+  If same
+    ProcedureReturn 0
+  EndIf
+  If PsPark() = 0
+    PsUnpark()
+    PsSaveWhy = 1                        ; core 1 did not park
+    ProcedureReturn -1
+  EndIf
+  ok = FlashRangeErase(off, 4096)
+  If ok
+    ok = FlashRangeProgram(off, buf, 4096)
+  EndIf
+  PsSaveErr = flash_error
+  PsUnpark()
+  If ok = 0
+    PsSaveWhy = 2                        ; the flash library refused: flash_error says why
+    ProcedureReturn -1
+  EndIf
+  For i = 0 To 1023
+    If PeekL($10000000 + off + i * 4) <> PeekL(buf + i * 4)
+      PsSaveWhy = 3                      ; it does not read back as written
+      ProcedureReturn -1
+    EndIf
+  Next
+  PsSaveTotal = PsSaveTotal + 1
+  ProcedureReturn 1
+EndProcedure
+
+; Core 0, between slices: every marked sector of both packs.
+Procedure PsSave()
+  Define i.i, r.i, t0.i
+  PsSaveWrote = 0 : PsSaveSame = 0 : PsSaveFail = 0 : PsSaveWhy = 0 : PsSaveErr = 0
+  t0 = Micros()
+  For i = 0 To #PS_SECTORS - 1
+    If PsDirty0(i)
+      r = PsSaveSector(#DISK_REGION, #PS_RK0, i, 1)
+      If r >= 0
+        PsDirty0(i) = 0
+      EndIf
+      If r = 1
+        PsSaveWrote = PsSaveWrote + 1
+      ElseIf r = 0
+        PsSaveSame = PsSaveSame + 1
+      Else
+        PsSaveFail = PsSaveFail + 1
+      EndIf
+    EndIf
+    If PsDirty1(i)
+      r = PsSaveSector(#DISK_REGION1, #PS_RK1, i, 0)
+      If r >= 0
+        PsDirty1(i) = 0
+      EndIf
+      If r = 1
+        PsSaveWrote = PsSaveWrote + 1
+      ElseIf r = 0
+        PsSaveSame = PsSaveSame + 1
+      Else
+        PsSaveFail = PsSaveFail + 1
+      EndIf
+    EndIf
+  Next
+  PsSaveUs = Micros() - t0
+EndProcedure
+
+
 Procedure.i PsDiskRead(d.i, blk.i)
   Define a.i
   Define i.i
@@ -510,6 +693,7 @@ Procedure.i PsDiskWrite(d.i, blk.i)
     PokeL(a + i * 4, DkBuf(i * 2) | (DkBuf(i * 2 + 1) << 16))
   Next
   PsWrites = PsWrites + 1
+  PsMarkDirty(d, blk)
   ProcedureReturn 1
 EndProcedure
 CompilerEndIf                        ; #PSRAM = 1

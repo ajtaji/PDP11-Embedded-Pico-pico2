@@ -662,6 +662,7 @@ EndProcedure
 ; window: only while the clock may interrupt or the disk is busy.
 ProcedureRAM DevUpdate()
   DevActive = KwIe | RkBusy | RkSeekMask | RkSeekDone
+  DevFast = RkBusy | RkSeekMask | RkSeekDone
 EndProcedure
 
 ; Called by DevService at the end of a window while DevActive is set.
@@ -681,6 +682,7 @@ ProcedureRAM DevPoll()
     RkPoll()
   EndIf
   DevActive = KwIe | RkBusy | RkSeekMask | RkSeekDone   ; DevUpdate, inline: once a window
+  DevFast = RkBusy | RkSeekMask | RkSeekDone
   CompilerIf #DESK_PROBE = 1
     If Micros() - t > DevPollMax
       DevPollMax = Micros() - t

@@ -24,7 +24,7 @@
 ;  road as the console - the tick sets a bit in IntReq and DevService
 ;  takes the trap between windows (cpu.pico2). While the interrupt is
 ;  enabled DevActive is set, so the run loop's windows are at most
-;  #DEV_WINDOW instructions long and the clock is looked at every window;
+;  #DEV_WINDOW_CLOCK instructions long (#DEV_WINDOW while the disk is busy) and the clock is looked at every window;
 ;  with it off nothing is looked at unless the program reads the register,
 ;  and then the tick is worked out there. Nothing is added to the path an
 ;  instruction takes.

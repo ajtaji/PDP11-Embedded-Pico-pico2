@@ -88,6 +88,9 @@ XIncludeFile "disk.pico2"
 XIncludeFile "kw11.pico2"
 XIncludeFile "rk11.pico2"
 XIncludeFile "RP2350/Lib/psram.pico2"
+XIncludeFile "RP2350/Lib/flashid.pico2"   ; Ctrl-] w on the PSRAM boards writes the packs' changes to flash
+XIncludeFile "RP2350/Lib/flash.pico2"     ; (psram_pdp11.pico2); an include cannot sit under #PSRAM, which the
+                                         ; Pico Plus 2 W's #PM_GPIO_COUNT branch decides
 XIncludeFile "psram_pdp11.pico2"
 XIncludeFile "tape_image.pico2"
 XIncludeFile "tapeload.pico2"
@@ -135,7 +138,8 @@ Global C1Where.i, GapWhere.i               ; what core 1 was doing, and what it 
 #C0_RESET = 3
 #C0_REPORT = 4
 #C0_SYNC = 5
-#CORE0_SLICE = 1000                        ; instructions per CpuRun on core 0 (the window cap still applies)
+#CORE0_SLICE = 10000                       ; instructions per CpuRun on core 0 (the window caps still apply): about 1 ms,
+                                           ; how long a core 1 request (C0Op, Ctrl-] w) can wait; 1000 cost 1.5% of V7's time
 #C1_PASS_US = 500                          ; core 1's loop: one pass per 500 us unless there is work (less churn in the shared XIP cache)
 Global ClkKhz.i                            ; clk_sys, measured once at start-up (the 1 ms count would be a USB gap)
 Global Column.i
@@ -692,8 +696,8 @@ Procedure StatsBlock()
     If PsramOk                           ; the packs are in the PSRAM: no cache, no RAM disk, no overlay in use
       StatLine("        PSRAM: ") : Num(PsReads) : Say(" blocks read, ") : Num(PsWrites)
       Say(" written; both packs writable there, swap blocks ") : Num(DkSwapLo) : Say("-") : Num(#RK_BLOCKS - 1)
-      StatLine("        flash: ") : Num(DkErases) : Say(" erases, ") : Num(DkPages)
-      Say(" pages programmed - never written; the packs were copied from it at start-up in ")
+      StatLine("        flash: ") : Num(PsSaveTotal) : Say(" sectors written by Ctrl-] w since power-up, ")
+      Num(PsDirtyCount()) : Say(" changed sectors not saved yet; the packs were copied from it at start-up in ")
       Num(PsramCopyUs / 1000) : Say(" ms")
     EndIf
   CompilerEndIf
@@ -990,8 +994,8 @@ Procedure DiskBanner()
     EndIf
     CompilerIf #PSRAM = 1
       If PsramOk                         ; the pack runs from its PSRAM copy (psram.pico2)
-        Say(", running from its PSRAM copy: writable, every write lost at power-off, the whole swap area")
-        Say(" (") : Num(DkSwapLo) : Say("-") : Num(#RK_BLOCKS - 1) : Say("); the flash is never written") : Eol()
+        Say(", running from its PSRAM copy: writable, the whole swap area")
+        Say(" (") : Num(DkSwapLo) : Say("-") : Num(#RK_BLOCKS - 1) : Say("); the flash is written only by Ctrl-] w") : Eol()
         ProcedureReturn
       EndIf
     CompilerEndIf
@@ -1269,6 +1273,18 @@ Procedure InByte(c.i)
       StatsBlock()
       ProcedureReturn
     EndIf
+    CompilerIf #PSRAM = 1
+      If c = 119 Or c = 87               ; w: the packs' changes to flash (psram_pdp11.pico2)
+        If PsramOk = 0
+          Say("[nothing to save: the packs are not in the PSRAM, and every write lives in RAM]") : Eol()
+        ElseIf PsSaveReq = 0
+          Say("[saving the packs' changes to flash: ") : Num(PsDirtyCount()) : Say(" changed 4 KB sectors; the PDP-11 waits until it is done]") : Eol()
+          SmpBarrier()
+          PsSaveReq = 1
+        EndIf
+        ProcedureReturn
+      EndIf
+    CompilerEndIf
     If c <> #ESC_KEY                     ; anything else: nothing (Ctrl-] Ctrl-] sends one)
       ProcedureReturn
     EndIf
@@ -1513,6 +1529,15 @@ Procedure Core0Loop()
     Define t0.i
   CompilerEndIf
   Repeat
+    CompilerIf #PSRAM = 1
+      If PsSaveReq                       ; Ctrl-] w: between slices, the PDP-11 waiting (psram_pdp11.pico2)
+        SmpBarrier()
+        PsSave()
+        SmpBarrier()
+        PsSaveReq = 0
+        PsSaveDone = 1
+      EndIf
+    CompilerEndIf
     If C0CmdSeq <> C0DoneSeq
       SmpBarrier()                       ; the command's number, then its words
       C0Do(C0Op, C0A1, C0A2)
@@ -1547,6 +1572,50 @@ Procedure Core0Loop()
 EndProcedure
 
 ; ---- core 1: everything else -------------------------------------------------
+CompilerIf #PSRAM = 1
+; Core 1 parked while core 0 writes a flash sector (psram_pdp11.pico2,
+; PsSave): SRAM code, interrupts off, touching only SRAM, until let go. The
+; flash library needs the other core off the flash and the PSRAM; a handler
+; in flash taken while the flash is out of XIP would be the crash.
+ProcedureRAM Core1Park()
+  ASM
+    cpsid i
+    dmb
+  EndASM
+  C1Parked = 1
+  While C1ParkReq
+  Wend
+  ASM
+    dmb
+  EndASM
+  C1Parked = 0
+  ASM
+    cpsie i
+  EndASM
+EndProcedure
+
+; What a save did, said by core 1 when core 0 has finished.
+Procedure PsSaveReport()
+  Say("[packs saved to flash: ") : Num(PsSaveWrote) : Say(" sectors written, ") : Num(PsSaveSame) : Say(" already the same")
+  If PsSaveFail
+    Say(", ") : Num(PsSaveFail) : Say(" FAILED (")
+    If PsSaveWhy = 1
+      Say("core 1 did not park, so nothing was written to them")
+    ElseIf PsSaveWhy = 2
+      Say("the flash library refused, flash_error ") : Num(PsSaveErr)
+    Else
+      Say("a sector did not read back as written")
+    EndIf
+    Say("; they stay marked: Ctrl-] w tries them again)")
+  EndIf
+  Say(", in ") : Num(PsSaveUs / 1000) : Say(" ms; ") : Num(PsSaveTotal) : Say(" sector writes since power-up")
+  If PsUnsaved
+    Say(". ") : Num(PsUnsaved) : Say(" block writes went past what the flash holds for that pack and stay in the PSRAM only")
+  EndIf
+  Say("]") : Eol()
+EndProcedure
+CompilerEndIf
+
 Procedure Core1Main()
   Define t0.i
   Define tlast.i
@@ -1578,6 +1647,9 @@ Procedure Core1Main()
     EndIf
     CompilerIf #PSRAM = 1
       PsramBanner()
+      If PsramOk
+        Say("every write goes to the PSRAM copies and is lost at power-off unless saved: type sync, then Ctrl-] and w") : Eol()
+      EndIf
     CompilerEndIf
     DiskBanner()
     AutoBootWait()
@@ -1587,6 +1659,15 @@ Procedure Core1Main()
   tlast = Micros()
   Repeat
     tpass = Micros()
+    CompilerIf #PSRAM = 1
+      If C1ParkReq                       ; core 0 is about to write a flash sector
+        Core1Park()
+      EndIf
+      If PsSaveDone
+        PsSaveDone = 0
+        PsSaveReport()
+      EndIf
+    CompilerEndIf
     C1Where = 3
     If Mode = #MODE_RUN
       State = 1 + 2 * Waiting            ; 1 running, 3 in a WAIT

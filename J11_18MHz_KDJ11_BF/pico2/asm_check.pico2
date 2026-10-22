@@ -21,6 +21,7 @@
 ;
 ;  It also holds JSR, RTS and DIV (tools/mmu_gen.py, pico2_ops: __pushm and
 ;  __popm, SDIV) to their plain handlers the same way (ASMCHECK ops).
+;  __eab, the byte form, is held to EaByteM the same way (ASMCHECK eab).
 ;  It also holds __eaw, the handlers' operand address (tools/mmu_gen.py,
 ;  ASM_EAW), to EaWord's own body (EaWordMRef below) on random specs and
 ;  registers. Every round prints
@@ -424,6 +425,22 @@ Procedure EaAsm()
   EndASM
 EndProcedure
 
+; __eab, the byte form, the same way (EaByteMode = 1): its reference is EaByteM itself.
+Procedure EabAsm()
+  ASM
+    push {r5}
+    mov r5, lr
+    ldr r0, =global_espec
+    ldr r0, [r0]
+    bl __eab
+    ldr r1, =global_er
+    str r0, [r1]
+    mov lr, r5
+    pop {r5}
+  EndASM
+EndProcedure
+Global EaByteMode.i, EbI.i
+
 #EA_NONE = $77AA55                      ; EaSpec before a run: still there = __eaw never went on to EaWordM
 Global EaChecks.i, EaFast.i, EaSlow.i, EaFailures.i, EaFirst.i, EaFirstSpec.i, EaFirstField.i
 Global ESpec.i, ER.i, Ei.i, EField.i
@@ -447,6 +464,7 @@ Procedure EaSnap(*s.i)
   PokeL(GS + 76, StackYellow)
   PokeL(GS + 80, AbortPsw)
   PokeL(GS + 84, Bool(EaSpec = #EA_NONE))
+  PokeL(GS + 88, EaStep)
 EndProcedure
 
 Procedure.i PickMode()
@@ -500,13 +518,21 @@ Procedure EaOne()
   LoadState()
   ER = 0
   EaSpec = #EA_NONE
-  EaAsm()
+  If EaByteMode
+    EabAsm()
+  Else
+    EaAsm()
+  EndIf
   EaSnap(@EaA(0))
   Ei = Fw(3)
   LoadState()
   Fw(3) = Ei
   EaSpec = #EA_NONE
-  ER = EaWordMRef(ESpec)
+  If EaByteMode
+    ER = EaByteM(ESpec)
+  Else
+    ER = EaWordMRef(ESpec)
+  EndIf
   EaSnap(@EaB(0))
   EaChecks = EaChecks + 1
   If EaA(21) = 1
@@ -515,8 +541,8 @@ Procedure EaOne()
     EaSlow = EaSlow + 1
   EndIf
   EField = -1
-  For Ei = 0 To 20
-    If EaA(Ei) <> EaB(Ei) And EField < 0
+  For Ei = 0 To 22
+    If Ei <> 21 And EaA(Ei) <> EaB(Ei) And EField < 0
       EField = Ei
     EndIf
   Next
@@ -626,7 +652,7 @@ EndProcedure
 ; the dividend and divisor often at the edges (0, -1, 077777, 100000, a quotient
 ; just out of range). The same fields and the same memory as the MOV check.
 Global OpChecks.i, OpFailures.i, OpFirst.i, OpKind.i, OpR.i
-Global Dim OpCount.i(3)
+Global Dim OpCount.i(8)
 Global Dim EdgeW.i(8)
 
 Procedure.i RndEdge()
@@ -644,7 +670,7 @@ Procedure OpsOne()
   If TPc < 0
     ProcedureReturn
   EndIf
-  OpKind = RndN(3)
+  OpKind = RndN(8)
   OpR = RndN(8)
   If OpKind = 0                         ; JSR R, dd
     TOp = $0800 | (OpR << 6) | RndN(64)
@@ -653,6 +679,16 @@ Procedure OpsOne()
     EndIf
   ElseIf OpKind = 1                     ; RTS R
     TOp = $0080 | OpR
+  ElseIf OpKind = 3                     ; CMP ss, dd
+    TOp = $2000 | (RndN(64) << 6) | RndN(64)
+  ElseIf OpKind = 4                     ; TST dd
+    TOp = $0BC0 | RndN(64)
+  ElseIf OpKind = 5                     ; INC dd
+    TOp = $0A80 | RndN(64)
+  ElseIf OpKind = 6                     ; DEC dd
+    TOp = $0AC0 | RndN(64)
+  ElseIf OpKind = 7                     ; SXT dd
+    TOp = $0DC0 | RndN(64)
   Else                                  ; DIV R, ss
     TOp = $7200 | (OpR << 6) | RndN(64)
     If RndN(3) = 0
@@ -665,16 +701,35 @@ Procedure OpsOne()
       EndIf
     EndIf
   EndIf
+  If OpKind >= 3 And RndN(3) = 0
+    Reg(TOp & 7) = RndEdge()
+  EndIf
+  If OpKind >= 4 And (TOp & $38) = 0 And RndN(2) = 0   ; a register operand right at an edge (INC 077777, DEC 100000)
+    Reg(TOp & 7) = EdgeW(RndN(8))
+  EndIf
+  If OpKind >= 4 And (TOp & $38) = $08 And (TOp & 7) < 7 And RndN(2) = 0   ; (R): the word it names, at an edge
+    Oi = RndMapped()
+    Reg(TOp & 7) = Oi
+    PokeU(MapHost(CurD + (Oi >> 13)) + Oi, EdgeW(RndN(8)))
+  EndIf
   Ow = TPc + MapHost(CurI + (TPc >> 13))
   PokeU(Ow, TOp)
   PokeU(Ow + 2, RndN($10000))
   If RndN(4) <> 0
     PokeU(Ow + 2, (RndMapped() - Reg(RndN(7))) & $FFFF)
   EndIf
+  PokeU(Ow + 4, (RndMapped() - Reg(RndN(7))) & $FFFF)   ; a second index word (CMP X(R),Y(R))
+  If OpKind >= 3 And RndN(3) = 0                          ; a memory operand at an edge
+    Oi = RndMapped()
+    PokeU(MapHost(CurD + (Oi >> 13)) + Oi, RndEdge())
+  EndIf
   For Oi = 0 To #RAM_WORDS - 1
     Shadow(Oi) = Mem(Oi)
   Next
   NzWrite(Rnd()) : FlagV = Rnd() : FlagC = Rnd()
+  If RndN(2)
+    NzWrite(RndN(2) * $8000)          ; N set or clear plainly (SXT)
+  EndIf
   Mmr0 = 1 | (RndN(8) << 1)
   If RndN(8) = 0
     Mmr0 = Mmr0 | ((RndN(7) + 1) << 13)
@@ -712,6 +767,15 @@ Procedure OpsOne()
   EndIf
   If Ofield >= 0
     OpFailures = OpFailures + 1
+    If OpFailures <= 12
+      Say("OPS FAIL op=") : Oct(TOp) : Say(" field=") : Num(Ofield) : Say(" nA=") : Num(NDiffA) : Say(" nB=") : Num(NDiffB)
+      For Oi = 0 To 2
+        If Oi < NDiffA : Say(" A@") : Oct(DiffA(Oi * 2) * 2) : Say("=") : Oct(DiffA(Oi * 2 + 1)) : EndIf
+        If Oi < NDiffB : Say(" B@") : Oct(DiffB(Oi * 2) * 2) : Say("=") : Oct(DiffB(Oi * 2 + 1)) : EndIf
+      Next
+      Say(" sp=") : Oct(SReg(6)) : Say(" r=") : Oct(SReg(TOp & 7)) : Say(" pc=") : Oct(TPc) : Say(" nz=") : Num(SNZ)
+      Say(" ea=") : Oct(Ea) : Eol()
+    EndIf
     If OpFirst < 0
       OpFirst = OpChecks
       Say("OPS FIRST FAIL op=") : Oct(TOp) : Say(" pc=") : Oct(TPc) : Say(" sp=") : Oct(SReg(6)) : Say(" field=") : Num(Ofield)
@@ -785,6 +849,22 @@ Procedure Main()
     EndIf
     Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
     Mt0 = Micros()
+    Mr = EaFailures
+    EaByteMode = 1
+    For EbI = 1 To #ROUND * 5
+      EaOne()
+      UsbSerialTask()
+      SafetyPet()
+    Next
+    EaByteMode = 0
+    Say("ASMCHECK eab checks=") : Num(#ROUND * 5) : Say(" failures=") : Num(EaFailures - Mr)
+    If EaFailures = Mr
+      Say(" PASS")
+    Else
+      Say(" FAIL")
+    EndIf
+    Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
+    Mt0 = Micros()
     FpEdges()
     For Mr = 1 To #ROUND * 5
       FpOne()
@@ -805,7 +885,8 @@ Procedure Main()
       SafetyPet()
     Next
     Say("ASMCHECK ops checks=") : Num(OpChecks) : Say(" jsr=") : Num(OpCount(0)) : Say(" rts=") : Num(OpCount(1))
-    Say(" div=") : Num(OpCount(2)) : Say(" failures=") : Num(OpFailures)
+    Say(" div=") : Num(OpCount(2)) : Say(" cmp=") : Num(OpCount(3)) : Say(" tst=") : Num(OpCount(4))
+    Say(" inc=") : Num(OpCount(5)) : Say(" dec=") : Num(OpCount(6)) : Say(" sxt=") : Num(OpCount(7)) : Say(" failures=") : Num(OpFailures)
     If OpFailures = 0
       Say(" PASS")
     Else

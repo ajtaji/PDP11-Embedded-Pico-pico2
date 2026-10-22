@@ -197,7 +197,10 @@ CompilerEndIf
 #MSER_ADDR   = $FFE4        ; 177744 memory system error   (the KDJ11-B's cache registers:
 #CCR_ADDR    = $FFE6        ; 177746 cache control          no cache is modelled, see
 #HMR_ADDR    = $FFEA        ; 177752 hit/miss               THE CACHE REGISTERS below)
-#DEV_WINDOW  = 200          ; the longest window while a device needs polling (DevActive)
+#DEV_WINDOW  = 200          ; the longest window while the disk is busy (DevFast)
+#DEV_WINDOW_CLOCK = 2000    ; ... while only the line clock needs a look (DevActive, not DevFast): a tick due
+                            ; every 16.7 ms is taken within 2,000 instructions (about 0.2 ms) - at 200 the run
+                            ; loop's end-of-window work was 3% of V7's time (2026-10-22)
 
 ; ---- timing placeholders (see CLOCK above) ---------------------------
 #J11_T_DOUBLE = 1
@@ -329,6 +332,7 @@ Global SwitchReg.i, DisplayReg.i
 Global IntReq.i             ; interrupts asked for: #INT_DL11_RX | #INT_DL11_TX | #INT_RK | #INT_KW
 Global CacheCcr.i           ; the cache control register's bits, kept (THE CACHE REGISTERS)
 Global DevActive.i          ; the disk or the clock needs a look every window (DevPoll, rk11/kw11)
+Global DevFast.i            ; the disk does: windows of #DEV_WINDOW, not #DEV_WINDOW_CLOCK
 ; The console's two byte queues - the ONLY things the firmware around the
 ; emulator touches. The emulator writes ConOut at its Head and reads ConIn
 ; at its Tail; the firmware does the opposite. Neither side calls the
@@ -1869,7 +1873,16 @@ Macro MMSrcByte()
   If (Op & $0E00) = 0
     Src = Reg((Op >> 6) & 7) & $FF
   Else
+CompilerIf #ASM_EA = 1
+  ASM Uses Op
+    ubfx r0, r8, #6, #6
+    bl __eab
+    ldr r1, =global_ea
+    str r0, [r1]
+  EndASM
+CompilerElse
     Ea = EaByteM((Op >> 6) & $3F)
+CompilerEndIf
     MMReadByteE(Src, Ea, EaBase)
   EndIf
 EndMacro
@@ -2021,8 +2034,12 @@ ProcedureRAM StartWindow()
     EndIf
   EndIf
   If DevActive                           ; the disk or the clock: look again soon
-    If RunLeft > #DEV_WINDOW
-      RunLeft = #DEV_WINDOW
+    If DevFast
+      If RunLeft > #DEV_WINDOW
+        RunLeft = #DEV_WINDOW
+      EndIf
+    ElseIf RunLeft > #DEV_WINDOW_CLOCK
+      RunLeft = #DEV_WINDOW_CLOCK
     EndIf
   EndIf
   ; THE T BIT. An instruction that BEGINS with the T bit set is followed by

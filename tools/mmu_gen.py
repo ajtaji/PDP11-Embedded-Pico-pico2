@@ -958,6 +958,105 @@ __popm_slow:
     b popm
 """
 
+# __eab: EaByteM's assembly, reached like __eaw (r0 = the spec, r0 back = the
+# address; lr kept). Only (R)+ and -(R) differ from a word operand - they step
+# by 1 except on SP and PC - so every other mode goes straight on to __eaw,
+# which is exactly what EaByteM does with EaWordM. EaStep, EaReg, EaBase, Tmp,
+# the register and MMR1 are left as EaByteM leaves them; -(PC) and -(SP) below
+# 000400 go on to EaByteM itself with the spec rebuilt. asm_check.pico2 holds
+# it to EaByteM (ASMCHECK eab).
+ASM_EAB = """__eab:
+    mov r12, r0
+    and.w r1, r0, #7
+    movs r3, #1
+    cmp r1, #6
+    blt __eab_s1
+    movs r3, #2
+__eab_s1:
+    ldr r2, =global_eastep
+    str r3, [r2]
+    ubfx r0, r0, #3, #3
+    cmp r0, #2
+    beq __eab_m2
+    cmp r0, #4
+    beq __eab_m4
+    mov r0, r12
+    b __eaw
+__eab_m2:
+    ldr r2, =global_eareg
+    str r1, [r2]
+    ldr r2, =global_curd
+    ldr r2, [r2]
+    ldr r0, =global_eabase
+    str r2, [r0]
+    lsls r0, r3, #3
+    orr.w r12, r1, r0
+    ldr r2, =global_reg
+    lsls r0, r1, #2
+    adds r2, r2, r0
+    ldr r0, [r2]
+    adds r3, r0, r3
+    uxth r3, r3
+    str r3, [r2]
+    ldr r2, =global_tmp
+    str r0, [r2]
+    cmp r1, #7
+    bne __eab_m2r
+    ldr r2, =global_curi
+    ldr r2, [r2]
+    ldr r3, =global_eabase
+    str r2, [r3]
+    bx lr
+__eab_m2r:
+    mov r1, r12
+    b __eaw_rec
+__eab_m4:
+    cmp r1, #7
+    beq __eab_slow4
+    movs r0, #32
+    subs r0, r0, r3
+    lsls r0, r0, #3
+    orr.w r12, r1, r0
+    ldr r2, =global_reg
+    lsls r0, r1, #2
+    adds r2, r2, r0
+    ldr r0, [r2]
+    subs r0, r0, r3
+    uxth r0, r0
+    cmp r1, #6
+    bne __eab_m4a
+    cmp.w r0, #0x100
+    blt __eab_slow4
+__eab_m4a:
+    str r0, [r2]
+    ldr r2, =global_eareg
+    str r1, [r2]
+    ldr r2, =global_curd
+    ldr r2, [r2]
+    ldr r3, =global_eabase
+    str r2, [r3]
+    ldr r2, =global_tmp
+    movs r3, #4
+    str r3, [r2]
+    mov r1, r12
+    b __eaw_rec
+__eab_slow4:
+    movs r0, r1
+    adds r0, #32
+    b eabytem
+"""
+EAB_CALL = """CompilerIf #ASM_EA = 1
+  ASM Uses Op
+    and.w r0, r8, #0x3f
+    bl __eab
+    ldr r1, =global_ea
+    str r0, [r1]
+  EndASM
+CompilerElse
+  Ea = EaByteM(Op & $3F)
+CompilerEndIf
+"""
+
 JSR_ASM = """  PcOutM()
   If (Op & $38) = 0
     TrapVector = #VEC_BUS                ; JSR to a register is illegal
@@ -1067,7 +1166,216 @@ JMP_ASM = """CompilerIf #ASM_EA = 1
     EndASM
 CompilerElse
 """
-OPS = ["JSR_004", "RTS_00020", "DIV_071"]
+# __rdw / __wrw: a word operand read or written through its fast window, in the
+# space EaBase names (as MMReadWord / MMWriteWord). In: r0 = the address (and
+# r1 = the word, for __wrw). Out: r0 = the word read. Outside the window or odd:
+# on to MmuReadWord(va, entry) / MmuWriteWord(va, entry, word), which do the
+# rest (the I/O page, an abort, the first write to a page), lr still the
+# handler's. They clobber r0-r3 and r12 only.
+ASM_RW = """__rdw:
+    ldr r2, =global_eabase
+    ldr r2, [r2]
+    add.w r2, r2, r0, lsr #13
+    lsls r2, r2, #2
+    lsls r3, r0, #31
+    bne __rdw_slow
+    ldr r3, =global_maprlo
+    ldr r3, [r3, r2]
+    cmp r0, r3
+    blt __rdw_slow
+    ldr r3, =global_maprhi
+    ldr r3, [r3, r2]
+    cmp r0, r3
+    bge __rdw_slow
+    ldr r3, =global_maphost
+    ldr r3, [r3, r2]
+    ldrh r0, [r3, r0]
+    bx lr
+__rdw_slow:
+    lsrs r1, r2, #2
+    b mmureadword
+__wrw:
+    ldr r2, =global_eabase
+    ldr r2, [r2]
+    add.w r2, r2, r0, lsr #13
+    lsls r2, r2, #2
+    lsls r3, r0, #31
+    bne __wrw_slow
+    ldr r3, =global_mapwlo
+    ldr r3, [r3, r2]
+    cmp r0, r3
+    blt __wrw_slow
+    ldr r3, =global_mapwhi
+    ldr r3, [r3, r2]
+    cmp r0, r3
+    bge __wrw_slow
+    ldr r3, =global_maphost
+    ldr r3, [r3, r2]
+    strh r1, [r3, r0]
+    bx lr
+__wrw_slow:
+    mov r12, r1
+    lsrs r1, r2, #2
+    mov r2, r12
+    b mmuwriteword
+"""
+
+# CMP after MMSrcWord(): Dst from a register or through __eaw and __rdw;
+# Res = Src - Dst, C = Res, V = (Src ^ Dst) & (Src ^ Res), NZ = Res & $FFFF
+CMP_ASM = """  PcOutM()
+  MMSrcWord()
+  ASM Uses Op, Res, FlagNZ
+    and.w r0, r8, #0x38
+    cmp r0, #0
+    bne __cmpm_mem
+    and.w r0, r8, #7
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+    b __cmpm_have
+__cmpm_mem:
+    and.w r0, r8, #0x3f
+    bl __eaw
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __rdw
+__cmpm_have:
+    ldr r2, =global_dst
+    str r0, [r2]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    subs r2, r1, r0
+    mov r10, r2
+    ldr r3, =global_flagc
+    str r2, [r3]
+    eors r0, r1
+    eors r1, r2
+    ands r0, r1
+    ldr r3, =global_flagv
+    str r0, [r3]
+    uxth r4, r2
+  EndASM
+  NextSyncedM()
+"""
+
+TST_ASM = """  PcOutM()
+  ASM Uses Op, FlagNZ
+    and.w r0, r8, #0x38
+    cmp r0, #0
+    bne __tstm_mem
+    and.w r0, r8, #7
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r4, [r1, r0]
+    b __tstm_flags
+__tstm_mem:
+    and.w r0, r8, #0x3f
+    bl __eaw
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __rdw
+    movs r4, r0
+__tstm_flags:
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+    ldr r1, =global_flagc
+    str r0, [r1]
+  EndASM
+  NextSyncedM()
+"""
+
+# INC and DEC: Dst +/- 1 to the register or back through __wrw; V when Dst was
+# $7FFF (INC) or $8000 (DEC); NZ = Res; C untouched
+INCDEC_ASM = """  PcOutM()
+  ASM Uses Op, Res, FlagNZ
+    and.w r0, r8, #0x38
+    cmp r0, #0
+    bne __%(l)sm_mem
+    and.w r0, r8, #7
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    adds r1, r1, r0
+    ldr r0, [r1]
+    %(op)s r2, r0, #1
+    uxth r2, r2
+    str r2, [r1]
+    b __%(l)sm_flags
+__%(l)sm_mem:
+    and.w r0, r8, #0x3f
+    bl __eaw
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __rdw
+    %(op)s r2, r0, #1
+    uxth r2, r2
+    ldr r1, =global_dst
+    str r0, [r1]
+    mov r10, r2
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    movs r1, r2
+    bl __wrw
+    ldr r0, =global_dst
+    ldr r0, [r0]
+    mov r2, r10
+__%(l)sm_flags:
+    ldr r1, =global_dst
+    str r0, [r1]
+    mov r10, r2
+    movs r4, r2
+    movs r1, #0
+    ldr r3, =%(v)s
+    cmp r0, r3
+    bne __%(l)sm_nov
+    mov.w r1, #0x8000
+__%(l)sm_nov:
+    ldr r3, =global_flagv
+    str r1, [r3]
+  EndASM
+  NextSyncedM()
+"""
+
+# SXT: Res = $FFFF when N, else 0, to the register or through __wrw; then
+# SetNZ(N, 1 - N): N leaves $8000, not N leaves 0; V = 0; C untouched
+SXT_ASM = """  PcOutM()
+  ASM Uses Op, Res, FlagNZ
+    movs r2, #0
+    ldr r0, =0x18000
+    tst r4, r0
+    beq __sxtm_res
+    ldr r2, =0xffff
+__sxtm_res:
+    mov r10, r2
+    and.w r0, r8, #0x38
+    cmp r0, #0
+    bne __sxtm_mem
+    and.w r0, r8, #7
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    str r2, [r1, r0]
+    b __sxtm_done
+__sxtm_mem:
+    and.w r0, r8, #0x3f
+    bl __eaw
+    ldr r1, =global_ea
+    str r0, [r1]
+    mov r1, r10
+    bl __wrw
+__sxtm_done:
+    movs r4, #0
+    mov r2, r10
+    cmp r2, #0
+    beq __sxtm_nz
+    mov.w r4, #0x8000
+__sxtm_nz:
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+  EndASM
+  NextSyncedM()
+"""
+OPS = ["JSR_004", "RTS_00020", "DIV_071", "CMP_02", "TST_0057", "INC_0052", "DEC_0053", "SXT_0067"]
 
 
 def handler(text, name):
@@ -1085,8 +1393,22 @@ def pico2_ops(text):
     at = "__eaw_slow:\n    mov r0, r12\n    ldr r1, =global_easpec\n    str r0, [r1]\n    b eawordm\n  EndASM\nCompilerEndIf\n"
     if text.count(at) != 1:
         fail("pico2_ops: __eaw's end moved; teach tools/mmu_gen.py.")
-    no_scaled_index(ASM_STACK + JSR_ASM + RTS_ASM + DIV_ASM, "ASM_STACK")
-    text = text.replace(at, at + "CompilerIf #ASM_OPS = 1\n  ASM\n" + ASM_STACK + "  EndASM\nCompilerEndIf\n")
+    no_scaled_index(ASM_STACK + JSR_ASM + RTS_ASM + DIV_ASM + ASM_RW + CMP_ASM + TST_ASM + INCDEC_ASM + SXT_ASM, "ASM_STACK")
+    no_scaled_index(ASM_EAB, "__eab")
+    text = text.replace(at, at + "CompilerIf #ASM_OPS = 1\n  ASM\n" + ASM_STACK + ASM_RW + "  EndASM\nCompilerEndIf\n"
+                        + "CompilerIf #ASM_EA = 1\n  ASM\n" + ASM_EAB + "  EndASM\nCompilerEndIf\n")
+    out, n = [], 0
+    for line in text.split("\n"):
+        if line.strip() == "Ea = EaByteM(Op & $3F)":
+            ind = line[:len(line) - len(line.lstrip())]
+            out.append("\n".join(l if l.startswith("Compiler") else ind + l
+                                 for l in EAB_CALL.rstrip("\n").split("\n")))
+            n += 1
+        else:
+            out.append(line)
+    if n < 20:
+        fail("pico2_ops: only " + str(n) + " EaByteM call sites found; teach tools/mmu_gen.py.")
+    text = "\n".join(out)
     for name in OPS:
         i, j = handler(text, name)
         plain = text[i:j]
@@ -1094,8 +1416,20 @@ def pico2_ops(text):
             a = plain.index("  Src = Src - ((Src & $8000) << 1)\n")
             b = plain.index("  ; ClockCycles")
             fast = plain[:a] + DIV_ASM + plain[b:]
+        elif name.startswith("JSR"):
+            fast = JSR_ASM
+        elif name.startswith("RTS"):
+            fast = RTS_ASM
+        elif name.startswith("CMP"):
+            fast = CMP_ASM
+        elif name.startswith("TST"):
+            fast = TST_ASM
+        elif name.startswith("INC"):
+            fast = INCDEC_ASM % {"l": "inc", "op": "adds", "v": "0x7fff"}
+        elif name.startswith("DEC"):
+            fast = INCDEC_ASM % {"l": "dec", "op": "subs", "v": "0x8000"}
         else:
-            fast = JSR_ASM if name.startswith("JSR") else RTS_ASM
+            fast = SXT_ASM
         text = (text[:i] + "CompilerIf #ASM_OPS = 1\n" + fast + "CompilerEndIf\n"
                 + "Instruction%sRefM:         ; the plain version: the reference (asm_check.pico2)\n" % name
                 + plain + text[j:])
