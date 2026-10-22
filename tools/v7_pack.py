@@ -82,11 +82,12 @@ USR_SET = ["/lib", "/man", "/include", "/mdec", "/spool", "/pub", "/tmp", "/dmr"
 USR_BLOCKS, USR_INODES = 4000, 600
 # --usr-rp: the WHOLE /usr dump (sources, documents, dictionary, games: 15,218 blocks of data) on the RP03's
 # partition 3, /dev/rp3, mounted on /usr by the distribution's own /etc/rc line. rp.c gives rp3 74,000 blocks
-# from cylinder 35; the file system is made smaller than the partition, 22,800 blocks, so that every block of
+# from cylinder 35; the file system is made smaller than the partition, 20,800 blocks, so that every block of
 # it can have a slot in the flash: a slot, once a block has one, is never given back (pico2/rp11.pico2, THE
-# PACK IN FLASH), and RK1's place in the Pico Plus 2's 16 MB holds 22,936. rk_image.py --rp refuses a file
-# system with more blocks than that. 2026-10-22.
-RP_USR_BLOCKS, RP_USR_INODES = 22800, 2400
+# PACK IN FLASH), and RK1's place in the Pico Plus 2's 16 MB, up to the store of saved changes in its top
+# 1 MB (pico2/store.pico2), holds 20,896. rk_image.py --rp refuses a file system with more blocks than
+# that. 2026-10-22.
+RP_USR_BLOCKS, RP_USR_INODES = 20800, 2400
 RP_DEVICES = [("rp3", "b", 1, 3), ("rrp3", "c", 11, 3)]      # the distribution's /dev/makefile, rp03
 # media/unix/v7/: built ON A BOARD by V7 itself (build-on-board.txt there): the kernel's configuration (c.o,
 # l.o from mkconf: rk, rp, ht), the RP03 driver asking for the Unibus map on raw transfers (rp.o) and date

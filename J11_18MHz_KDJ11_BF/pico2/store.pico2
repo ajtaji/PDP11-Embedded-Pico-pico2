@@ -1,0 +1,696 @@
+; ======================================================================
+;  store.pico2 - the packs' changes kept in the flash, wear-levelled and
+;  safe against a power cut (2026-10-22). The PSRAM boards only.
+;
+;  Include after psram_pdp11.pico2 and rp11.pico2. StPresent, StDirty,
+;  StLastWrite, StAuto, StFolded and the #SW_ work areas in the swap RAM
+;  disk's SRAM are declared in psram_pdp11.pico2, which reads them first.
+;
+;  WHAT IT IS FOR. Saving a pack in place (PsSaveSector) erases the 4 KB
+;  sector that holds a block and writes it again: the superblock's sector
+;  takes an erase at every save, and a power cut between the erase and the
+;  write loses eight blocks. That is fine for a save typed now and then;
+;  it is not for saves that happen by themselves. The store is a log of
+;  changed blocks in the top #FL_STORE_SIZE of the flash (1 MB: 256
+;  sectors), in front of the packs, which stay as they were flashed:
+;  every save writes the blocks that changed into sectors of the store,
+;  a sector is never written twice between erases, and the sector a block
+;  was in before is erased only later, when its space is wanted back. At
+;  power-up the packs are copied into the PSRAM as before, then the newest
+;  copy of each block in the store is copied over them.
+;
+;  THE DESIGN is SPIFFS's (Peter Andersson's flash file system, which
+;  Serialcomms' Raspberry_Pico_SIMH uses for its disk packs), cut down to
+;  what a disk needs: no files, no names, only blocks. Kept from it:
+;  writes go to free space and never over live data; what a written page
+;  holds is said in its block's header, written after its data, so a page
+;  without a header is not there; garbage collection picks the block with
+;  the least live data and moves that data before it erases; and the
+;  erase age, so data that never changes is moved now and then and its
+;  sectors take their share of the erases.
+;
+;  A SECTOR (4 KB, one erase unit):
+;    +0     the header, written LAST, in one 256-byte page:
+;           +0 "PMS1"  +4 the packs' id  +8 generation  +12 write sequence
+;           +16 erase sequence  +20 slots used (0-7)
+;           +24 seven u32 tags: drive << 24 | block (drive 0, 1: RK0, RK1;
+;               8: the RP03; blocks counted as the controller counts them,
+;               the RP's from its pack's first block)
+;           +52 seven u32 sums, one per slot  +80 the header's own sum
+;    +512   seven 512-byte slots, written first
+;  A sector whose header is not whole and right is free: erased before
+;  use unless it reads blank. The newest copy of a block is the one in the
+;  sector with the highest write sequence (and the later slot in it).
+;
+;  THE PACKS' ID is the nonce tools/rk_image.py writes at +192 of RK0's
+;  header and RK1's or the RP's: flash new packs and the store's old
+;  sectors are not theirs, and are erased as space is wanted.
+;
+;  THE GENERATION goes up when everything is folded into the packs
+;  (PsFold, when the store is full or the RP's overlay is): a sector of an
+;  older generation is empty. A header with no slots is written at once
+;  so the new generation is in the flash, and the sector with the highest
+;  write sequence is never erased, so one always is.
+;
+;  WRITING (StSave, core 0, the PDP-11 paused, core 1 parked during each
+;  flash operation as for every save): the changed blocks are listed -
+;  RK blocks of the sectors marked changed that differ from their last
+;  saved copy (the store's, else the pack's), the RP's overlay slots marked
+;  changed. While there are two or more free sectors, seven at a time go
+;  into the free sector erased longest ago. When one is left, it is kept
+;  for collecting: the written sector with the fewest live slots (the
+;  oldest erase among equals) has its live slots copied into it together
+;  with as many listed blocks as fit, then it is erased, and is the free
+;  one. When no written sector has a slot to give, the store is full and
+;  the save is a fold. A save that would leave more than #ST_FULL live
+;  slots is a fold too: collecting a nearly full store moves more than it
+;  frees. At most one sector a save is moved for its age (#ST_AGE).
+;
+;  SAVES BY THEMSELVES (diag.pico2, core 1): when a block has been written
+;  since the last save, the disks have been quiet for #ST_QUIET_US and the
+;  last save was #ST_GAP_US ago. V7's update daemon syncs every 30 s, so a
+;  save comes a few seconds after a sync, when the disks hold what Unix
+;  meant them to. Silent unless it fails or folds.
+; ======================================================================
+CompilerIf #PSRAM = 1
+
+#ST_SECTORS  = #FL_STORE_SIZE / 4096
+#ST_SLOTS    = #ST_SECTORS * 7
+#ST_FULL     = #ST_SLOTS * 85 / 100
+#ST_AGE      = #ST_SECTORS * 16    ; a sector not erased in this many erases is moved
+#ST_QUIET_US = 5000000
+#ST_GAP_US   = 20000000
+#ST_DEAD     = -1                   ; a slot with nothing live (as PeekL reads $FFFFFFFF)
+
+Global StBase.i, StGen.i, StSeqMax.i, StEraMax.i, StTopSec.i
+Global StLive.i, StFree.i, StNList.i
+Global StSaves.i, StAutoSaves.i, StFolds.i, StErases.i, StWrites.i, StBlocks.i, StMoved.i
+Global StLastSave.i, StWhy.i, StErr.i, StFoundSlots.i, StBadSlots.i
+Global StLastBlocks.i, StLastSectors.i
+
+Macro StTag(mS, mK)
+  PeekL(@DkSwapRam(0) + #SW_TAG + ((mS) * 7 + (mK)) * 4)
+EndMacro
+Macro StSetTag(mS, mK, mV)
+  PokeL(@DkSwapRam(0) + #SW_TAG + ((mS) * 7 + (mK)) * 4, mV)
+EndMacro
+Macro StSeq(mS)
+  PeekL(@DkSwapRam(0) + #SW_SEQ + (mS) * 4)
+EndMacro
+Macro StEra(mS)
+  PeekL(@DkSwapRam(0) + #SW_ERA + (mS) * 4)
+EndMacro
+Macro StState(mS)
+  PeekA(@DkSwapRam(0) + #SW_STATE + (mS))
+EndMacro
+
+Procedure.i StSum(a.i, n.i)              ; n bytes at a, a multiple of 4
+  Define i.i, x.i, y.i
+  For i = 0 To n / 4 - 1
+    x = (x + PeekL(a + i * 4)) & $FFFFFFFF
+    y = (y + x) & $FFFFFFFF
+  Next
+  ProcedureReturn (x ! ((y << 7) | ((y >> 25) & $7F))) & $FFFFFFFF
+EndProcedure
+
+; The slot holding tag t now, -1 none. Sector xs is skipped (-1: none).
+Procedure.i StFind(t.i, xs.i)
+  Define i.i, a.i
+  a = @DkSwapRam(0) + #SW_TAG
+  For i = 0 To #ST_SLOTS - 1
+    If PeekL(a + i * 4) = t
+      If i / 7 <> xs
+        ProcedureReturn i
+      EndIf
+    EndIf
+  Next
+  ProcedureReturn -1
+EndProcedure
+
+Procedure.i StLiveIn(s.i)
+  Define k.i, n.i
+  For k = 0 To 6
+    If StTag(s, k) <> #ST_DEAD
+      n = n + 1
+    EndIf
+  Next
+  ProcedureReturn n
+EndProcedure
+
+; The PSRAM copy of a tagged block, 0 if there is none.
+Procedure.i StPsAddr(t.i)
+  Define d.i, b.i
+  d = (t >> 24) & $FF
+  b = t & $FFFFFF
+  If d = 0
+    If b < #RK_BLOCKS
+      ProcedureReturn #PS_WIN + #PS_RK0 + b * 512
+    EndIf
+  ElseIf d = 1
+    If b < #PS_RK1_BLOCKS
+      ProcedureReturn #PS_WIN + #PS_RK1 + b * 512
+    EndIf
+  ElseIf d = 8
+    ProcedureReturn RpOvAddr(b)
+  EndIf
+  ProcedureReturn 0
+EndProcedure
+
+; ---- start-up (PsramLoad, after the packs are in the PSRAM) ---------------
+Procedure StInit()
+  Define s.i, k.i, h.i, t.i, j.i, ok.i, a.i, g.i, e.i, i.i
+  StPresent = 0
+  StBase = PeekL($10000000 + #DISK_REGION + 192)   ; rk_image.py writes one nonce into every header of a run: RK0's names them all
+  StGen = 0 : StSeqMax = 0 : StEraMax = 0 : StLive = 0 : StFree = 0 : StTopSec = -1
+  StFoundSlots = 0 : StBadSlots = 0
+  For s = 0 To #ST_SECTORS - 1           ; the generation: the highest among this id's headers
+    h = $10000000 + #FL_STORE + s * 4096
+    If PeekL(h) = $31534D50 And PeekL(h + 4) = StBase And (PeekL(h + 80) & $FFFFFFFF) = StSum(h, 80)
+      If PeekL(h + 8) > StGen
+        StGen = PeekL(h + 8)
+      EndIf
+    EndIf
+  Next
+  For s = 0 To #ST_SECTORS - 1
+    h = $10000000 + #FL_STORE + s * 4096
+    For k = 0 To 6
+      StSetTag(s, k, #ST_DEAD)
+    Next
+    PokeL(@DkSwapRam(0) + #SW_SEQ + s * 4, 0)
+    ok = Bool(PeekL(h) = $31534D50 And (PeekL(h + 80) & $FFFFFFFF) = StSum(h, 80))
+    e = 0
+    If ok
+      e = PeekL(h + 16)
+      If e > StEraMax
+        StEraMax = e
+      EndIf
+    EndIf
+    PokeL(@DkSwapRam(0) + #SW_ERA + s * 4, e)
+    If ok And PeekL(h + 4) = StBase And PeekL(h + 8) = StGen
+      PokeA(@DkSwapRam(0) + #SW_STATE + s, 1)
+      PokeL(@DkSwapRam(0) + #SW_SEQ + s * 4, PeekL(h + 12))
+      If PeekL(h + 12) > StSeqMax
+        StSeqMax = PeekL(h + 12)
+        StTopSec = s
+      EndIf
+    ElseIf ok                            ; another id or an older generation: empty, erase before use
+      PokeA(@DkSwapRam(0) + #SW_STATE + s, 2)
+      StFree = StFree + 1
+    Else
+      j = 0                              ; no header: blank, or a write cut short
+      For i = 0 To 1023
+        If PeekL(h + i * 4) <> -1
+          j = 1
+          Break
+        EndIf
+      Next
+      PokeA(@DkSwapRam(0) + #SW_STATE + s, 1 + j)
+      If j = 0
+        PokeA(@DkSwapRam(0) + #SW_STATE + s, 0)
+      EndIf
+      StFree = StFree + 1
+    EndIf
+  Next
+  For s = 0 To #ST_SECTORS - 1           ; blank sectors and unknown ones: erased as late as any
+    If StState(s) <> 1 And StEra(s) = 0
+      PokeL(@DkSwapRam(0) + #SW_ERA + s * 4, StEraMax)
+    EndIf
+  Next
+  For s = 0 To #ST_SECTORS - 1           ; every slot: the newest copy of each block stays
+    If StState(s) = 1
+      h = $10000000 + #FL_STORE + s * 4096
+      For k = 0 To PeekL(h + 20) - 1
+        If k > 6
+          Break
+        EndIf
+        t = PeekL(h + 24 + k * 4)
+        If (PeekL(h + 52 + k * 4) & $FFFFFFFF) <> StSum(h + 512 + k * 512, 512)
+          StBadSlots = StBadSlots + 1    ; said in the banner; the older copy stands
+          Continue
+        EndIf
+        StFoundSlots = StFoundSlots + 1
+        j = StFind(t, -1)
+        If j >= 0
+          If StSeq(j / 7) > StSeq(s) Or (j / 7 = s)
+            Continue                     ; the one found is newer (or later in this sector)
+          EndIf
+          StSetTag(j / 7, j % 7, #ST_DEAD)
+          StLive = StLive - 1
+        EndIf
+        StSetTag(s, k, t)
+        StLive = StLive + 1
+      Next
+    EndIf
+  Next
+  For s = 0 To #ST_SECTORS - 1           ; over the packs' copies in the PSRAM
+    If StState(s) = 1
+      h = $10000000 + #FL_STORE + s * 4096
+      For k = 0 To 6
+        t = StTag(s, k)
+        If t <> #ST_DEAD
+          If (t >> 24) = 8
+            If RpPresent
+              RpOvPut(t & $FFFFFF, h + 512 + k * 512)
+            EndIf
+          Else
+            a = StPsAddr(t)
+            If a And ((PsDrives >> ((t >> 24) & 7)) & 1)
+              For i = 0 To 127
+                PokeL(a + i * 4, PeekL(h + 512 + k * 512 + i * 4))
+              Next
+            EndIf
+          EndIf
+        EndIf
+      Next
+    EndIf
+  Next
+  StLastSave = Micros()
+  StPresent = 1
+EndProcedure
+
+; ---- the flash operations, core 1 parked ----------------------------------
+Procedure.i StErase(s.i)
+  Define ok.i
+  If PsPark() = 0
+    PsUnpark()
+    StWhy = 1
+    ProcedureReturn 0
+  EndIf
+  ok = FlashRangeErase(#FL_STORE + s * 4096, 4096)
+  StErr = flash_error
+  PsUnpark()
+  If ok = 0
+    StWhy = 2
+    ProcedureReturn 0
+  EndIf
+  StEraMax = StEraMax + 1
+  PokeL(@DkSwapRam(0) + #SW_ERA + s * 4, StEraMax)
+  PokeA(@DkSwapRam(0) + #SW_STATE + s, 0)
+  StErases = StErases + 1
+  ProcedureReturn 1
+EndProcedure
+
+; The stage (#SW_STAGE, header filled but its era) into sector s: erased
+; first unless blank, data pages, then the header, read back. 1 or 0.
+Procedure.i StProgram(s.i)
+  Define buf.i, off.i, i.i, ok.i
+  buf = @DkSwapRam(0) + #SW_STAGE
+  If StState(s) <> 0
+    If StErase(s) = 0
+      ProcedureReturn 0
+    EndIf
+  EndIf
+  PokeL(buf + 16, StEra(s))
+  PokeL(buf + 80, StSum(buf, 80))
+  off = #FL_STORE + s * 4096
+  If PsPark() = 0
+    PsUnpark()
+    StWhy = 1
+    ProcedureReturn 0
+  EndIf
+  ok = FlashRangeProgram(off + 512, buf + 512, 3584)
+  If ok
+    ok = FlashRangeProgram(off, buf, 256)
+  EndIf
+  StErr = flash_error
+  PsUnpark()
+  If ok = 0
+    StWhy = 2
+    ProcedureReturn 0
+  EndIf
+  For i = 0 To 1023
+    If PeekL($10000000 + off + i * 4) <> PeekL(buf + i * 4)
+      StWhy = 3
+      PokeA(@DkSwapRam(0) + #SW_STATE + s, 2)
+      ProcedureReturn 0
+    EndIf
+  Next
+  StWrites = StWrites + 1
+  PsSaveTotal = PsSaveTotal + 1
+  ProcedureReturn 1
+EndProcedure
+
+; A fresh stage: header FF but its fixed words, slots FF.
+Procedure StStageNew()
+  Define buf.i, i.i
+  buf = @DkSwapRam(0) + #SW_STAGE
+  For i = 0 To 1023
+    PokeL(buf + i * 4, $FFFFFFFF)
+  Next
+  StSeqMax = StSeqMax + 1
+  PokeL(buf, $31534D50)
+  PokeL(buf + 4, StBase)
+  PokeL(buf + 8, StGen)
+  PokeL(buf + 12, StSeqMax)
+  PokeL(buf + 20, 0)
+EndProcedure
+
+; Slot n of the stage <- 512 bytes at src, tagged t.
+Procedure StStagePut(t.i, src.i)
+  Define buf.i, n.i, i.i
+  buf = @DkSwapRam(0) + #SW_STAGE
+  n = PeekL(buf + 20)
+  For i = 0 To 127
+    PokeL(buf + 512 + n * 512 + i * 4, PeekL(src + i * 4))
+  Next
+  PokeL(buf + 24 + n * 4, t)
+  PokeL(buf + 52 + n * 4, StSum(buf + 512 + n * 512, 512))
+  PokeL(buf + 20, n + 1)
+EndProcedure
+
+; After the stage went into sector s: its slots are the live copies.
+Procedure StCommit(s.i)
+  Define buf.i, k.i, t.i, j.i
+  buf = @DkSwapRam(0) + #SW_STAGE
+  PokeA(@DkSwapRam(0) + #SW_STATE + s, 1)
+  PokeL(@DkSwapRam(0) + #SW_SEQ + s * 4, PeekL(buf + 12))
+  StTopSec = s
+  StFree = StFree - 1
+  For k = 0 To 6
+    StSetTag(s, k, #ST_DEAD)
+  Next
+  For k = 0 To PeekL(buf + 20) - 1
+    t = PeekL(buf + 24 + k * 4)
+    j = StFind(t, -1)                    ; the copy it replaces (or an earlier slot of this stage)
+    If j >= 0
+      StSetTag(j / 7, j % 7, #ST_DEAD)
+      StLive = StLive - 1
+    EndIf
+    StSetTag(s, k, t)
+    StLive = StLive + 1
+  Next
+EndProcedure
+
+Procedure.i StPickFree()                 ; the free sector erased longest ago, -1 none
+  Define s.i, b.i
+  b = -1
+  For s = 0 To #ST_SECTORS - 1
+    If StState(s) <> 1
+      If b < 0 Or StEra(s) < StEra(b) Or (StEra(s) = StEra(b) And StState(s) = 0 And StState(b) <> 0)
+        b = s
+      EndIf
+    EndIf
+  Next
+  ProcedureReturn b
+EndProcedure
+
+; The written sector to collect: fewest live slots, then oldest erase.
+; Never the newest sector (it carries the generation). -1: none gives room.
+Procedure.i StPickVictim()
+  Define s.i, b.i, l.i, bl.i
+  b = -1
+  bl = 7
+  For s = 0 To #ST_SECTORS - 1
+    If StState(s) = 1 And s <> StTopSec
+      l = StLiveIn(s)
+      If l < bl Or (l = bl And b >= 0 And StEra(s) < StEra(b))
+        If l < 7
+          b = s
+          bl = l
+        EndIf
+      EndIf
+    EndIf
+  Next
+  ProcedureReturn b
+EndProcedure
+
+; Sector v's live slots into the stage (it is collected into the free one).
+Procedure StStageCarry(v.i)
+  Define k.i, t.i
+  For k = 0 To 6
+    t = StTag(v, k)
+    If t <> #ST_DEAD
+      StStagePut(t, $10000000 + #FL_STORE + v * 4096 + 512 + k * 512)
+    EndIf
+  Next
+EndProcedure
+
+; ---- the list of changed blocks ------------------------------------------
+Procedure.i StListAdd(t.i)
+  If StNList >= #SW_LIST_N
+    ProcedureReturn 0
+  EndIf
+  PokeL(@DkSwapRam(0) + #SW_LIST + StNList * 4, t)
+  StNList = StNList + 1
+  ProcedureReturn 1
+EndProcedure
+
+; 1 the PSRAM block differs from its last saved copy.
+Procedure.i StChanged(d.i, b.i, ps.i)
+  Define j.i, src.i, i.i, region.i, stored.i
+  j = StFind((d << 24) | b, -1)
+  If j >= 0
+    src = $10000000 + #FL_STORE + (j / 7) * 4096 + 512 + (j % 7) * 512
+  Else
+    region = #DISK_REGION
+    stored = PsStored0
+    If d = 1
+      region = #DISK_REGION1
+      stored = PsStored1
+    EndIf
+    If PeekL($10000000 + region + 12) <> 0  ; a mapped pack: not compared
+      ProcedureReturn 1
+    EndIf
+    If b >= stored
+      For i = 0 To 127
+        If PeekL(ps + i * 4)
+          ProcedureReturn 1
+        EndIf
+      Next
+      ProcedureReturn 0
+    EndIf
+    src = $10000000 + region + 4096 + b * 512
+  EndIf
+  For i = 0 To 127
+    If PeekL(ps + i * 4) <> PeekL(src + i * 4)
+      ProcedureReturn 1
+    EndIf
+  Next
+  ProcedureReturn 0
+EndProcedure
+
+; 1 listed (StNList), 0 too many to list.
+Procedure.i StBuildList()
+  Define d.i, i.i, b.i, ps.i
+  StNList = 0
+  For d = 0 To 1
+    If (PsDrives >> d) & 1
+      For i = 0 To #PS_SECTORS - 1
+        If (d = 0 And PsDirty0(i)) Or (d = 1 And PsDirty1(i))
+          For b = i * 8 To i * 8 + 7
+            If d = 0 And b >= PsSwapLo And b < PsSwapEnd
+              Continue
+            EndIf
+            If d = 0 And b >= #RK_BLOCKS
+              Break
+            EndIf
+            If d = 1 And b >= #PS_RK1_BLOCKS
+              Break
+            EndIf
+            ps = StPsAddr((d << 24) | b)
+            If StChanged(d, b, ps)
+              If StListAdd((d << 24) | b) = 0
+                ProcedureReturn 0
+              EndIf
+            EndIf
+          Next
+        EndIf
+      Next
+    EndIf
+  Next
+  If RpPresent
+    For i = 0 To RpOvUsed - 1
+      If PeekA(@DkSwapRam(0) + #SW_RPDIRTY + i)
+        b = PeekU(#PS_WIN + #PS_RK1 + #RP_OV_MAP + i * 2)
+        If StListAdd($08000000 | b) = 0
+          ProcedureReturn 0
+        EndIf
+      EndIf
+    Next
+  EndIf
+  ProcedureReturn 1
+EndProcedure
+
+; ---- a save (PsSave) ------------------------------------------------------
+; 1 done, -1 the flash refused (StWhy), -2 the store cannot take it: fold.
+Procedure.i StSave()
+  Define t0.i, p.i, f.i, v.i, n.i, i.i, t.i, ps.i, newn.i, d.i
+  t0 = Micros()
+  While DkReqSeq <> DkDoneSeq And Micros() - t0 < 200000   ; a request still out finishes first
+  Wend
+  StDirty = 0
+  StWhy = 0
+  StLastBlocks = 0
+  StLastSectors = 0
+  If StBuildList() = 0
+    ProcedureReturn -2
+  EndIf
+  newn = 0                               ; live slots afterwards: each listed block not yet in the store adds one
+  For p = 0 To StNList - 1
+    If StFind(PeekL(@DkSwapRam(0) + #SW_LIST + p * 4), -1) < 0
+      newn = newn + 1
+    EndIf
+  Next
+  If StLive + newn > #ST_FULL
+    ProcedureReturn -2
+  EndIf
+  p = 0
+  While p < StNList
+    v = -1
+    If StFree < 2                        ; a written sector with nothing live: erased, no copying
+      v = StPickVictim()
+      If v >= 0
+        If StLiveIn(v) = 0
+          If StErase(v) = 0
+            ProcedureReturn -1
+          EndIf
+          StFree = StFree + 1
+          Continue
+        EndIf
+      EndIf
+      v = -1
+    EndIf
+    If StFree >= 2
+      f = StPickFree()
+    Else
+      v = StPickVictim()
+      If v < 0
+        ProcedureReturn -2
+      EndIf
+      f = StPickFree()
+      If f < 0
+        ProcedureReturn -2
+      EndIf
+    EndIf
+    StStageNew()
+    If v >= 0
+      StStageCarry(v)
+    EndIf
+    n = PeekL(@DkSwapRam(0) + #SW_STAGE + 20)
+    While n < 7 And p < StNList
+      t = PeekL(@DkSwapRam(0) + #SW_LIST + p * 4)
+      ps = StPsAddr(t)
+      If ps
+        StStagePut(t, ps)
+        n = n + 1
+      EndIf
+      p = p + 1
+    Wend
+    If StProgram(f) = 0
+      ProcedureReturn -1
+    EndIf
+    StCommit(f)
+    StLastSectors = StLastSectors + 1
+    If v >= 0                            ; its live slots are safe in f: it is the free one now
+      If StErase(v) = 0
+        ProcedureReturn -1
+      EndIf
+      For i = 0 To 6
+        If StTag(v, i) <> #ST_DEAD
+          StSetTag(v, i, #ST_DEAD)
+          StLive = StLive - 1
+        EndIf
+      Next
+      StFree = StFree + 1
+    EndIf
+  Wend
+  ; one sector moved for its age: the oldest-erased written sector, if long untouched
+  v = -1
+  For i = 0 To #ST_SECTORS - 1
+    If StState(i) = 1 And i <> StTopSec
+      If v < 0 Or StEra(i) < StEra(v)
+        v = i
+      EndIf
+    EndIf
+  Next
+  If v >= 0 And StEraMax - StEra(v) > #ST_AGE And StFree >= 1
+    f = StPickFree()
+    StStageNew()
+    StStageCarry(v)
+    If StProgram(f)
+      StCommit(f)
+      For i = 0 To 6
+        StSetTag(v, i, #ST_DEAD)
+      Next
+      If StErase(v)
+        StFree = StFree + 1
+        StMoved = StMoved + 1
+      EndIf
+    EndIf
+  EndIf
+  For i = 0 To #PS_SECTORS - 1           ; saved: nothing is marked changed now
+    PsDirty0(i) = 0
+    PsDirty1(i) = 0
+  Next
+  For i = 0 To #RP_OV_SLOTS - 1
+    PokeA(@DkSwapRam(0) + #SW_RPDIRTY + i, 0)
+  Next
+  StLastBlocks = StNList
+  StBlocks = StBlocks + StNList
+  StSaves = StSaves + 1
+  StLastSave = Micros()
+  ProcedureReturn 1
+EndProcedure
+
+; After a fold (PsFold): the packs hold everything, the store holds
+; nothing. A new generation, put in the flash at once in a sector of its
+; own with no slots.
+Procedure StNewGen()
+  Define s.i, k.i, v.i
+  For s = 0 To #ST_SECTORS - 1
+    For k = 0 To 6
+      StSetTag(s, k, #ST_DEAD)
+    Next
+  Next
+  StLive = 0
+  StGen = StGen + 1
+  StFolds = StFolds + 1
+  If StFree < 1                          ; every sector written: one of them (all empty now) is erased
+    v = StPickVictim()
+    If v >= 0
+      If StErase(v)
+        StFree = StFree + 1
+      EndIf
+    EndIf
+  EndIf
+  s = StPickFree()
+  If s >= 0
+    StStageNew()
+    If StProgram(s)
+      StCommit(s)
+    EndIf
+  EndIf
+  While StFree < 2                       ; collecting needs a free sector to copy into: keep two
+    v = StPickVictim()                   ; (every slot is empty now, so these are only erases)
+    If v < 0
+      Break
+    EndIf
+    If StErase(v) = 0
+      Break
+    EndIf
+    StFree = StFree + 1
+  Wend
+  StLastSave = Micros()
+EndProcedure
+
+Procedure StBanner()                     ; PsramBanner's words on it
+  Say("; the store: ") : Num(StLive) : Say(" saved blocks copied over the packs (generation ") : Num(StGen)
+  Say(", ") : Num(StFree) : Say(" of ") : Num(#ST_SECTORS) : Say(" sectors free)")
+  If StBadSlots
+    Say(", ") : Num(StBadSlots) : Say(" SLOTS WITH A WRONG SUM IGNORED (their older copies stand)")
+  EndIf
+  Say("; saves go there, by themselves when the disks are quiet, or with Ctrl-] w")
+EndProcedure
+
+Procedure.i StEraSpread()                ; erases between the least and the most recently erased sector
+  Define s.i, lo.i
+  lo = StEraMax
+  For s = 0 To #ST_SECTORS - 1
+    If StEra(s) < lo
+      lo = StEra(s)
+    EndIf
+  Next
+  ProcedureReturn StEraMax - lo
+EndProcedure
+
+CompilerEndIf

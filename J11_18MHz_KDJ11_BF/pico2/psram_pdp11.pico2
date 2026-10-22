@@ -96,6 +96,7 @@ CompilerEndIf
 #PS_RK1_BLOCKS = 4000            ; RK1's size in the PSRAM
 #PS_MEM_TOP    = $3B9000         ; 3812 KB: #PS_MEM + #PS_MEM_TOP is the end of the chip
 #DISK_REGION1  = #FL_RK1          ; RK1's pack in the flash (flash_layout.pico2; rk_image.py --drive1)
+#FL_STORE      = #FLASH_CHIP - #FL_STORE_SIZE   ; the store of saved changes (store.pico2)
 ; PsramOk, PsDrives, MemTop and #PS_MEM are declared in cpu.pico2, which the others read.
 Global PsramWhy.i                ; why not: see PsramWhyText
 Global PsramFound.i              ; bytes PsramBegin() found
@@ -109,6 +110,23 @@ Global PsReads.i, PsWrites.i     ; blocks read and written in PSRAM
 Global PsSumA.i, PsSumB.i        ; the checksum being added up
 Global PsRk0A.i, PsRk0B.i, PsRk1A.i, PsRk1B.i   ; the pack regions' checksums ...
 Global PsRk0Sum.i, PsRk1Sum.i    ; ... and whether each has been added up
+; The wear-levelled store (store.pico2), read here first:
+Global StPresent.i                           ; 1: saves go to the store; 0: in place, as before it
+Global StDirty.i, StLastWrite.i              ; core 1: a block written since the last save, and when (Micros)
+Global StAuto.i                              ; 1: core 1 asked for this save by itself (quiet disks)
+Global StFolded.i                            ; 1: the last save was a fold (PsFold)
+Global RpSaveFail.i                          ; the RP's part of the last fold that failed (rp11.pico2)
+; THE SWAP RAM DISK'S SRAM WHILE THE PSRAM IS IN USE - DkSwapRam is the
+; fallback's (disk.pico2) and idle then, so the saves keep their work here.
+; Byte offsets from @DkSwapRam(0); 57,344 bytes in all.
+#SW_STAGE   = 0                  ; 4 KB: the sector being written (PsSaveSector, RpSave, StSave)
+#SW_LIST    = 4096               ; 24 KB: RpSave's work lists, or StSave's pending blocks (6,144 u32)
+#SW_LIST_N  = 6144
+#SW_TAG     = 32768              ; the store: a u32 per slot, what it holds now ($FFFFFFFF none)
+#SW_SEQ     = 39936              ; ... a u32 per sector, its write sequence
+#SW_ERA     = 40960              ; ... a u32 per sector, when it was erased (the erase sequence)
+#SW_STATE   = 41984              ; ... a byte per sector: 0 blank, 1 written, 2 to erase before use
+#SW_RPDIRTY = 42240              ; a byte per RP overlay slot: changed since the last save (to 46,128)
 
 Procedure PsramInit()
   Define i.i
@@ -351,7 +369,9 @@ Procedure PsramLoad()
       If PsDrives = 1
         RpInit()                         ; an RP pack in RK1's place (rp11.pico2)
       EndIf
-      PsSaveSetup()                      ; what Ctrl-] w may save (SAVING THE PACKS' CHANGES)                ; 22-bit mapping is off at power-up (cpu.pico2, MmuRecompute)
+      PsSaveSetup()
+      StInit()                           ; the saved changes over the packs (store.pico2)
+      ; (PsSaveSetup:) what Ctrl-] w may save (SAVING THE PACKS' CHANGES)                ; 22-bit mapping is off at power-up (cpu.pico2, MmuRecompute)
     Else
       PsramOk = 0
       PsDrives = 0
@@ -432,13 +452,16 @@ Procedure PsramBanner()
       Say(" (whole, 4872 blocks) and RK1 (") : Num(PsRk1Blocks) : Say(" blocks stored, ") : Num(#PS_RK1_BLOCKS)
       Say(" exist: blocks ") : Num(#PS_RK1_BLOCKS) : Say("-4871 of RK1 answer with a drive error)")
     EndIf
-    Say(" writable in PSRAM, written to flash only by Ctrl-] w")
+    Say(" writable in PSRAM, saved to flash (the store, below)")
     If PsRk1TooBig
       Say("; RK1 NOT copied: its pack has ") : Num(PsRk1TooBig) : Say(" blocks and its place in the PSRAM holds ")
       Num(#PS_RK1_BLOCKS) : Say(" - RK1 is absent")
     EndIf
     If RpPresent
       RpBanner()                         ; rp11.pico2
+    EndIf
+    If StPresent
+      StBanner()                         ; store.pico2
     EndIf
     If PeekL($10000000 + #DISK_REGION + 96) = 1
       Say("; the PSRAM copy's kernel patch applied (block ") : Num(PeekL($10000000 + #DISK_REGION + 100))
@@ -535,6 +558,8 @@ EndProcedure
 
 ; A block write's mark (PsDiskWrite).
 Macro PsMarkDirty(mD, mBlk)
+  StDirty = 1
+  StLastWrite = Micros()
   If mD = 0
     If mBlk < PsSwapLo Or mBlk >= PsSwapEnd
       If mBlk < PsStored0
@@ -635,43 +660,68 @@ Procedure.i PsWriteSector(off.i, buf.i)
 EndProcedure
 
 ; Core 0, between slices: every marked sector of both packs.
+; Core 0, between slices: a save. Into the store (store.pico2) when there
+; is one and it has room; otherwise, and when the RP's overlay is full,
+; FOLDED: everything that differs from the packs written into the packs'
+; own places in the flash (PsFold), and the store started afresh.
 Procedure PsSave()
-  Define i.i, r.i, t0.i
+  Define t0.i
   PsSaveWrote = 0 : PsSaveSame = 0 : PsSaveFail = 0 : PsSaveWhy = 0 : PsSaveErr = 0
+  StFolded = 0
   t0 = Micros()
-  For i = 0 To #PS_SECTORS - 1
-    If RpAutoSave                        ; the RP's overlay filled (rp11.pico2): only it, the RK packs
-      Break                              ; wait for a Ctrl-] w after a sync
+  If StPresent And RpAutoSave = 0
+    If StSave() <> -2                    ; -2: the store cannot take it
+      PsSaveUs = Micros() - t0
+      ProcedureReturn
     EndIf
-    If PsDirty0(i)
-      r = PsSaveSector(#DISK_REGION, #PS_RK0, i, 1)
-      If r >= 0
-        PsDirty0(i) = 0
+  EndIf
+  PsFold()
+  PsSaveUs = Micros() - t0
+EndProcedure
+
+; Every RK sector whose PSRAM copy differs from the flash (compared, so
+; this also catches what earlier saves put in the store), the RP's
+; overlay, then a new generation of the store, whose entries are now in
+; the packs. Sectors wholly in RK0's swap area are never written.
+Procedure PsFold()
+  Define i.i, r.i, d.i, n.i
+  StFolded = 1
+  For d = 0 To 1
+    If (PsDrives >> d) & 1
+      n = PsStored0
+      If d = 1
+        n = PsStored1
       EndIf
-      If r = 1
-        PsSaveWrote = PsSaveWrote + 1
-      ElseIf r = 0
-        PsSaveSame = PsSaveSame + 1
-      Else
-        PsSaveFail = PsSaveFail + 1
-      EndIf
-    EndIf
-    If PsDirty1(i)
-      r = PsSaveSector(#DISK_REGION1, #PS_RK1, i, 0)
-      If r >= 0
-        PsDirty1(i) = 0
-      EndIf
-      If r = 1
-        PsSaveWrote = PsSaveWrote + 1
-      ElseIf r = 0
-        PsSaveSame = PsSaveSame + 1
-      Else
-        PsSaveFail = PsSaveFail + 1
-      EndIf
+      For i = 0 To #PS_SECTORS - 1
+        If i * 8 + 8 > n
+          Break
+        EndIf
+        If d = 0 And i * 8 >= PsSwapLo And i * 8 + 8 <= PsSwapEnd
+          Continue
+        EndIf
+        If d = 0
+          r = PsSaveSector(#DISK_REGION, #PS_RK0, i, 1)
+        Else
+          r = PsSaveSector(#DISK_REGION1, #PS_RK1, i, 0)
+        EndIf
+        If r = 1
+          PsSaveWrote = PsSaveWrote + 1
+        ElseIf r < 0
+          PsSaveFail = PsSaveFail + 1
+        EndIf
+      Next
     EndIf
   Next
   RpSave()                               ; the RP11's overlay (rp11.pico2)
-  PsSaveUs = Micros() - t0
+  If PsSaveFail = 0 And RpSaveFail = 0
+    For i = 0 To #PS_SECTORS - 1
+      PsDirty0(i) = 0
+      PsDirty1(i) = 0
+    Next
+    If StPresent
+      StNewGen()                         ; store.pico2
+    EndIf
+  EndIf
 EndProcedure
 
 

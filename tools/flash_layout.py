@@ -22,7 +22,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 SOURCE = os.path.join(HERE, "..", "J11_18MHz_KDJ11_BF", "pico2", "flash_layout.pico2")
 XIP = 0x10000000
-WANTED = ("FL_RADIO_LO", "FL_RADIO_HI", "FL_PACKS", "FL_RK0", "FL_RK1")
+WANTED = ("FL_RADIO_LO", "FL_RADIO_HI", "FL_PACKS", "FL_RK0", "FL_RK1", "FL_STORE_SIZE")
 
 
 def _read():
@@ -52,6 +52,7 @@ RADIO_HI = _v["FL_RADIO_HI"]
 PACKS = _v["FL_PACKS"]
 RK0 = _v["FL_RK0"]
 RK1 = _v["FL_RK1"]
+STORE_SIZE = _v["FL_STORE_SIZE"]   # the PSRAM boards' store of saved changes, the top of the flash (pico2/store.pico2)
 if not (RADIO_LO < RADIO_HI <= PACKS <= RK0 < RK1) or any(v % 4096 for v in _v.values()):
     sys.stderr.write("flash_layout: flash_layout.pico2's values are not in order (radio region, then "
                      "the packs, RK0 before RK1) or not on 4096-byte sectors.\n")

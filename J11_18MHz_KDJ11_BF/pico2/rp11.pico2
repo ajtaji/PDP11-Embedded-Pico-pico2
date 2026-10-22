@@ -53,18 +53,25 @@
 ;
 ;  WRITES go to the overlay at #PS_RK1 in the PSRAM (RK1 is absent when an
 ;  RP pack is in its place): a u16 per block (overlay slot + 1), a u16 per
-;  overlay slot (its block), then #RP_OV_SLOTS 512-byte slots. Ctrl-] w
-;  (PsSave -> RpSave) saves them and empties the overlay. When they are
-;  all used, the write of a new block asks for that save itself and waits
-;  for it (core 1 answers "not yet", DkServe asks again after it): Unix
-;  sees a slow write, never an error. Only if a save cannot empty the
-;  overlay (the flash refusing) is a write refused: a drive error, and
-;  Unix's "err on dev" message.
+;  overlay slot (its block), then #RP_OV_SLOTS 512-byte slots. The overlay
+;  holds every block changed since the pack was flashed or last folded; a
+;  byte per slot (#SW_RPDIRTY) says it changed since the last save. Saves
+;  put those into the store (store.pico2), which copies them back into the
+;  overlay at power-up. FOLDING (PsFold -> RpSave) writes every overlay
+;  block into the pack itself - into its slot if it has one (the 4 KB
+;  sector rewritten with the neighbours that changed too), else into a new
+;  slot after the last - then the map sectors that changed, and empties the
+;  overlay. It happens when the store is full and when the overlay is: the
+;  write of a new block then asks for the save itself and waits for it
+;  (core 1 answers "not yet", DkServe asks again after it), so Unix sees a
+;  slow write, never an error. Only if a fold cannot empty the overlay (the
+;  flash refusing) is a write refused: a drive error, and Unix's "err on
+;  dev" message.
 ;
-;  THE FLASH NEVER FILLS: a block gets a slot the first time it is saved
+;  THE FLASH NEVER FILLS: a block gets a slot the first time it is folded
 ;  and keeps it, and rk_image.py --rp refuses a file system with more
-;  blocks than RK1's place has slots (22,936 in the Pico Plus 2's 16 MB),
-;  so every block can always have one.
+;  blocks than RK1's place has slots (20,896 in the Pico Plus 2's 16 MB, up
+;  to the store in its top 1 MB), so every block can always have one.
 ; ======================================================================
 
 #RP_CYLS   = 406
@@ -86,7 +93,7 @@ Global RpDue.i, RpXFunc.i, RpXBlock.i, RpXLeft.i, RpXMa.i, RpXStop.i, RpIoN.i
 Global RpLastUs.i, RpLastAt.i
 Global RpReads.i, RpWrites.i, RpOvUsed.i, RpOvFull.i, RpOvStuck.i
 Global RpAutoSaves.i                     ; saves a full overlay asked for since power-up (RpAutoSave: psram_pdp11.pico2)
-Global RpSaveNew.i, RpSaveOld.i, RpSaveMap.i, RpSaveFail.i   ; the last save
+Global RpSaveNew.i, RpSaveOld.i, RpSaveMap.i   ; the last fold (RpSaveFail: psram_pdp11.pico2)
 
 ; ---- the registers ------------------------------------------------------
 Procedure.i RpCsRead()
@@ -356,7 +363,7 @@ Procedure RpInit()
     ProcedureReturn
   EndIf
   RpData = #FL_RK1 + 4096 + RpMapSectors * 4096
-  RpRoom = (#FLASH_CHIP - RpData) / 512
+  RpRoom = (#FL_STORE - RpData) / 512   ; up to the store (store.pico2)
   RpSlots = 0                            ; the slots in use: up to the highest the map names
   For i = 0 To RpBlocks - 1
     m = PeekU($10000000 + #FL_RK1 + 4096 + i * 2)
@@ -368,6 +375,9 @@ Procedure RpInit()
   If RpSlots > RpRoom
     ProcedureReturn
   EndIf
+  For i = 0 To #RP_OV_SLOTS - 1
+    PokeA(@DkSwapRam(0) + #SW_RPDIRTY + i, 0)
+  Next
   RpOvUsed = 0
   RpPresent = 1
   RpReset()
@@ -436,7 +446,54 @@ Procedure.i RpStoreWrite(b.i)
   For i = 0 To 127
     PokeL(a + i * 4, DkBuf(i * 2) | (DkBuf(i * 2 + 1) << 16))
   Next
+  PokeA(@DkSwapRam(0) + #SW_RPDIRTY + s - 1, 1)   ; for the next save into the store (store.pico2)
+  StDirty = 1
+  StLastWrite = Micros()
   ProcedureReturn 1
+EndProcedure
+
+; Block b's 512 bytes at address src into the overlay, not marked changed:
+; the store's copy, at start-up (StInit). 0 the overlay is full.
+Procedure.i RpOvPut(b.i, src.i)
+  Define i.i, s.i, a.i
+  If b < 0 Or b >= RpBlocks
+    ProcedureReturn 0
+  EndIf
+  s = PeekU(#PS_WIN + #PS_RK1 + b * 2)
+  If s = 0
+    If RpOvUsed >= #RP_OV_SLOTS
+      ProcedureReturn 0
+    EndIf
+    RpOvUsed = RpOvUsed + 1
+    s = RpOvUsed
+    PokeU(#PS_WIN + #PS_RK1 + #RP_OV_MAP + (s - 1) * 2, b)
+    PokeU(#PS_WIN + #PS_RK1 + b * 2, s)
+  EndIf
+  a = #PS_WIN + #PS_RK1 + #RP_OV_MAP + #RP_OV_LIST + (s - 1) * 512
+  For i = 0 To 127
+    PokeL(a + i * 4, PeekL(src + i * 4))
+  Next
+  PokeA(@DkSwapRam(0) + #SW_RPDIRTY + s - 1, 0)
+  ProcedureReturn 1
+EndProcedure
+
+; Overlay blocks changed since the last save.
+Procedure.i RpDirtyCount()
+  Define i.i, n.i
+  For i = 0 To RpOvUsed - 1
+    n = n + PeekA(@DkSwapRam(0) + #SW_RPDIRTY + i)
+  Next
+  ProcedureReturn n
+EndProcedure
+
+; The PSRAM address of the overlay's copy of block b, 0 if it has none.
+Procedure.i RpOvAddr(b.i)
+  Define s.i
+  s = PeekU(#PS_WIN + #PS_RK1 + b * 2)
+  If s = 0
+    ProcedureReturn 0
+  EndIf
+  ProcedureReturn #PS_WIN + #PS_RK1 + #RP_OV_MAP + #RP_OV_LIST + (s - 1) * 512
 EndProcedure
 
 ; ---- Ctrl-] w: the overlay into the flash (PsSave, core 0, PDP-11 paused) -
@@ -552,9 +609,13 @@ Procedure RpSave()
         Next
         PokeU(#PS_WIN + #PS_RK1 + #RP_OV_MAP + j * 2, b)
       EndIf
+      PokeA(@DkSwapRam(0) + #SW_RPDIRTY + j, 1)   ; not in the packs: the next save takes it
       j = j + 1
       PokeU(#PS_WIN + #PS_RK1 + b * 2, j)
     EndIf
+  Next
+  For i = j To #RP_OV_SLOTS - 1
+    PokeA(@DkSwapRam(0) + #SW_RPDIRTY + i, 0)
   Next
   SmpBarrier()                           ; the overlay's map, then its count (core 1's RpStoreWrite reads it)
   RpOvUsed = j

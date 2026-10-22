@@ -21,6 +21,9 @@
 ;  (disk.pico2, THE FLASH PACK).
 ;      RK0  $240000   4872 blocks dense = $262000 bytes, ends $4A1FFF
 ;      RK1  $4C0000   4000 blocks dense = $1F5000 bytes, ends $6B4FFF
+;      or the RP03's pack (rp11.pico2), mapped, up to the store
+;      the store: the top #FL_STORE_SIZE (1 MB) of the flash on the PSRAM
+;           boards, where saves put the packs' changes (store.pico2)
 ;  What each board holds:
 ;      16 MB (Pimoroni Pico Plus 2 / 2 W)   RK0 and RK1
 ;       8 MB (Adafruit Feather RP2350)      RK0 and RK1
@@ -39,3 +42,4 @@
 #FL_PACKS    = $240000       ; no pack region starts below this
 #FL_RK0      = $240000       ; RK0's pack
 #FL_RK1      = $4C0000       ; RK1's pack (boards with 8 MB of flash or more)
+#FL_STORE_SIZE = $100000     ; the PSRAM boards' store of saved changes: the top 1 MB of the flash (store.pico2)

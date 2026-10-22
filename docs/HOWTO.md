@@ -357,7 +357,7 @@ python tools/board_session.py --hub-port 9 --script docs/psram/proof.txt --out t
 
 `docs/psram/proof.txt` checks `mem = 1036`, runs `ps`, `df /dev/rk0`, mounts RK1, types and compiles a C program and runs it, times `od /rkunix` twice and takes the statistics block. `docs/psram/swap.txt` keeps twelve 30 KB processes alive at once. The transcripts of both boards are beside them.
 
-**V6 notes for these boards.** `stty -lcase` first if you type C: in upper-case mode `\n` in a string arrives as `N`. `#` and `@` are V6's erase and kill characters. Everything written is lost at power-off unless it is saved: firmware built from the source of 2026-10-22 on saves both packs' changes into the flash with `sync`, then Ctrl-] and `w` (section 12, Saving). `images/picoplus2/combined.uf2` is older and has no save.
+**V6 notes for these boards.** `stty -lcase` first if you type C: in upper-case mode `\n` in a string arrives as `N`. `#` and `@` are V6's erase and kill characters. Everything written is lost at power-off unless it is saved: firmware built from the source of 2026-10-22 on saves both packs' changes into the flash by itself, or at once with `sync`, then Ctrl-] and `w` (section 12, Saving). `images/picoplus2/combined.uf2` is older and has no save.
 
 ## 11. Flash and build from the PureMetal Forge IDE
 
@@ -435,23 +435,35 @@ empties `/tmp` and `/usr/tmp` at each multi-user start, as V7 always did.
 00 to 69 is 20yy (`/bin/date` was rebuilt on the board for that; V7's
 library prints years past 1999 correctly).
 
-**Saving.** Everything Unix writes goes to the PSRAM copies of the disks
-and is lost at power-off unless it is saved. To save: type `sync`, then
-Ctrl-] and `w`. The PDP-11 waits while the changes are written into the
-disks' places in the flash, and the console says what was written:
+**Saving.** Everything Unix writes goes to the PSRAM copies of the disks,
+and is saved into the flash **by itself**: a few seconds after the disks go
+quiet (V7 syncs every 30 s), at most every 20 s, the blocks that changed are
+written to the store, the top 1 MB of the flash. The PDP-11 waits a fraction
+of a second; nothing is printed unless something goes wrong. To save at once
+- before unplugging, say - type `sync`, then Ctrl-] and `w`:
 
 ```
 # sync
-[saving the packs' changes to flash: 8 changed 4 KB sectors and 763 RP blocks; the PDP-11 waits until it is done]
-[packs saved to flash: 8 sectors written, 0 already the same, in 6355 ms; ... RP: 18 blocks rewritten in place, 745 new, 2 map sectors written]
+[saving the packs' changes to flash: 2 changed 4 KB sectors and 0 RP blocks; the PDP-11 waits until it is done]
+[saved: 5 changed blocks into the store, 1 sectors written, in 70 ms; the store holds 15 of its 1792 slots]
 ```
 
-The next power-up starts from what was saved. Nothing is written to the
-flash at any other time but one: the RP disk's unsaved writes are held in
-3,888 PSRAM slots (about 1.9 MB), and when they are full the firmware saves
-them by itself and the write goes on (the console says `saved to flash by
-themselves`; the RK0 pack still waits for your Ctrl-] w). Ctrl-] then `s`
-shows how many slots are in use. A flash sector takes about 100,000 erases.
+The next power-up copies the disks from the flash and then the newest saved
+copy of every block over them, and says how many in its banner (`the store:
+434 saved blocks copied over the packs`). The store never writes over what it
+holds: a save goes into free sectors, a sector's contents are said in its
+header, written last, and an old sector is erased only after what is still
+live in it has been copied out - so a power cut during a save loses that save,
+never one before it. The erases go round all 256 sectors, so a flash sector
+(good for about 100,000) lasts many years of saves.
+
+When the store fills (about 1,500 changed blocks, some 750 KB of different
+blocks since the disks were flashed), or the RP disk's 3,888 PSRAM slots do,
+the save is a **fold**: everything that changed is written into the disks'
+own places in the flash, the store starts again empty, and the console says
+`folded into the packs` (about 15 s for 1,500 blocks). Ctrl-] then `s` shows
+the store's state. Flashing new disk packs starts a new store; the old one's
+sectors are erased as they are wanted.
 
 **What works** (each tried on the board): the shell and the root's
 commands, `cc` with floating point (constants, `double`, `-lm`), `awk`,
@@ -471,7 +483,7 @@ python tools/rk_image.py pack v7root.rk --chip picoplus2 --blocks 4872 --swap 40
 ```
 
 `--rp` stores the RP file system mapped (only the blocks that hold
-something) where RK1 would go; it is 22,800 blocks, so that every block of it
+something) where RK1 would go; it is 20,800 blocks, so that every block of it
 can always have a place in the flash. `v7_pack.py --usr v7usr.rk` with
 `--drive1 v7usr.rk` instead gives the older layout, a 4,000-block `/usr` on
 RK1. `--add DIR:/path` copies a directory of your files onto the root pack (a

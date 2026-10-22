@@ -289,6 +289,16 @@ AUTOBOOT_MEM = 0         # KB for the machine at the auto-boot, 0 for as it is
 AUTOBOOT_THEN = b""      # the second step: prompt character, then the text
 
 
+# The packs' nonce, at +192 of every pack header this run writes: the firmware's store of saved changes
+# (pico2/store.pico2) belongs to the packs whose nonces it was saved with, so packs flashed anew start clean.
+NONCE = os.urandom(4)
+
+
+def store_start(chip):
+    """Where the PSRAM boards' store begins: packs must end below it."""
+    return FLASH[chip] - flash_layout.STORE_SIZE if chip in PSRAM_CHIPS else FLASH[chip]
+
+
 def header(layout, stored, slots, name):
     h = bytearray(SECTOR)
     struct.pack_into("<8sIIIIII", h, 0, b"PDP11RK1", 1, layout, stored, slots,
@@ -303,6 +313,7 @@ def header(layout, stored, slots, name):
         struct.pack_into("<IIIII", h, 96, 1, *PSPATCH)
     struct.pack_into("<I", h, 144, AUTOBOOT_MEM)
     h[148:148 + len(AUTOBOOT_THEN)] = AUTOBOOT_THEN
+    h[192:196] = NONCE                   # after the auto-boot text (+148, up to 41 bytes)
     return bytes(h)
 
 
@@ -373,7 +384,7 @@ def rp_pack(a, parts):
         data += blk
     if len(data) % SECTOR:
         data += bytes(SECTOR - len(data) % SECTOR)
-    room = (FLASH[a.chip] - REGION1 - SECTOR - len(fmap)) // 512
+    room = (store_start(a.chip) - REGION1 - SECTOR - len(fmap)) // 512
     if n > room:
         fail("--rp: %d blocks, and RK1's place in the %s's flash has slots for %d: a block gets a slot when it is "
              "first written and keeps it, so every block must be able to have one. Make the file system %d blocks "
@@ -383,6 +394,7 @@ def rp_pack(a, parts):
     struct.pack_into("<IIII", head, 8, 1, n, first, msec)
     name = os.path.basename(path).encode("ascii", "replace")[:15]
     head[32:32 + len(name)] = name
+    head[192:196] = NONCE
     parts[REGION1] = bytes(head) + bytes(fmap) + bytes(data)
     print("rk_image: RP03 <- %s, blocks %d-%d, %d of them stored (mapped), %d slots free after them, at 0x%08X"
           % (path, first, first + n - 1, slots, room - slots, XIP + REGION1))
@@ -526,7 +538,7 @@ def main():
         if n1 > PS_RK1_BLOCKS:
             fail("RK1's pack has %d blocks; on the PSRAM boards its place holds %d (pico2/psram_pdp11.pico2, "
                  "#PS_RK1_BLOCKS): make its file system %d blocks or fewer." % (n1, PS_RK1_BLOCKS, PS_RK1_BLOCKS))
-        if REGION1 + SECTOR + RK_BLOCKS * 512 > FLASH[a.chip]:
+        if REGION1 + SECTOR + n1 * 512 > store_start(a.chip):
             fail("RK1 does not fit the %s's flash." % a.chip)
         if max(off + len(d) for off, d in parts.items()) > REGION1:
             fail("RK0 runs into RK1's region at 0x%08X." % (XIP + REGION1))
@@ -546,6 +558,10 @@ def main():
             why = flash_layout.check_region(off, len(parts[off]), "the pack data")
             if why:
                 fail(why)
+            if off + len(parts[off]) > store_start(a.chip):
+                fail("the pack data at 0x%08X-0x%08X runs into the store of saved changes at 0x%08X "
+                     "(pico2/store.pico2, the top %d KB of the flash)." % (XIP + off, XIP + off + len(parts[off]) - 1,
+                     XIP + store_start(a.chip), flash_layout.STORE_SIZE // 1024))
     open(a.o, "wb").write(uf2(parts, a.chip))
     print("rk_image: %s -> %s for the %s at 0x%08X: %s" % (a.image, a.o, a.chip, XIP + region_of(a.chip), summary))
     if (a.desk or a.combined or a.firmware_uf2) and not a.firmware:

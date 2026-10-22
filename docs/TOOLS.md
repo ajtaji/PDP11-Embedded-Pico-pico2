@@ -284,7 +284,7 @@ python tools/rk_image.py pack v7root.rk --chip picoplus2 --blocks 4872 --swap 40
 ```
 
 `--usr-rp IMAGE` (the ready image's layout, HOWTO section 12) writes the
-whole `/usr` dump as a 22,800-block file system for the RP03's `/dev/rp3`,
+whole `/usr` dump as a 20,800-block file system for the RP03's `/dev/rp3`,
 keeps `/etc/rc`'s own `mount /dev/rp3 /usr`, and makes `/dev/rp3` and
 `/dev/rrp3`; `rk_image.py --rp IMAGE[,FIRST]` packs it, mapped, where RK1
 would go (blocks FIRST on, default 7000: cylinder 35, where rp.c puts rp3).
@@ -295,6 +295,12 @@ sessions): `c.o` and `l.o`, mkconf's configuration with rk, rp and ht; and
 mapalloc(bp);` - written for 18-bit machines, it never asked for the 11/70's
 Unibus map, and a raw transfer wrote over another process's memory. `--usr`
 (RK1, 4,000 blocks) is the older layout; the two are one or the other.
+
+`rk_image.py` writes a random nonce at +192 of every pack header it makes. The
+PSRAM firmware's store of saved changes (`pico2/store.pico2`, the top 1 MB of
+the flash, which no pack may reach into) belongs to the packs whose nonces it
+was saved with: flash new packs, even the same image again, and they start
+from the store empty.
 
 It restores the root dump (tape file 5) into a 4000-block file system,
 adds `/usr/include` from the /usr dump (file 6), links `rkunix` from the

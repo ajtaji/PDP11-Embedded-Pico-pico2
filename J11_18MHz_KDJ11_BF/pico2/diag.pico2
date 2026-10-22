@@ -93,6 +93,7 @@ XIncludeFile "RP2350/Lib/flash.pico2"     ; (psram_pdp11.pico2); an include cann
                                          ; Pico Plus 2 W's #PM_GPIO_COUNT branch decides
 XIncludeFile "psram_pdp11.pico2"
 XIncludeFile "rp11.pico2"
+XIncludeFile "store.pico2"
 XIncludeFile "tape_image.pico2"
 XIncludeFile "tapeload.pico2"
 
@@ -697,16 +698,23 @@ Procedure StatsBlock()
     If PsramOk                           ; the packs are in the PSRAM: no cache, no RAM disk, no overlay in use
       StatLine("        PSRAM: ") : Num(PsReads) : Say(" blocks read, ") : Num(PsWrites)
       Say(" written; both packs writable there, swap blocks ") : Num(DkSwapLo) : Say("-") : Num(#RK_BLOCKS - 1)
-      StatLine("        flash: ") : Num(PsSaveTotal) : Say(" sectors written by Ctrl-] w since power-up, ")
+      StatLine("        flash: ") : Num(PsSaveTotal) : Say(" sectors written by saves since power-up, ")
       Num(PsDirtyCount()) : Say(" changed sectors not saved yet; the packs were copied from it at start-up in ")
       Num(PsramCopyUs / 1000) : Say(" ms")
       If RpPresent
         StatLine("        RP11: ") : Num(RpReads) : Say(" blocks read, ") : Num(RpWrites) : Say(" written; ")
-        Num(RpOvUsed) : Say(" of ") : Num(#RP_OV_SLOTS) : Say(" PSRAM slots hold blocks not saved yet; ")
-        Num(RpSlots) : Say(" of ") : Num(RpRoom) : Say(" flash slots used; ") : Num(RpAutoSaves) : Say(" saves by themselves (slots full)")
+        Num(RpOvUsed) : Say(" of ") : Num(#RP_OV_SLOTS) : Say(" PSRAM slots hold blocks changed since the pack was flashed or folded; ")
+        Num(RpSlots) : Say(" of ") : Num(RpRoom) : Say(" flash slots used; ") : Num(RpAutoSaves) : Say(" folds asked for by a full overlay")
         If RpOvFull
           Say("; ") : Num(RpOvFull) : Say(" writes REFUSED, the PSRAM slots full: Ctrl-] w")
         EndIf
+      EndIf
+      If StPresent
+        StatLine("        store: ") : Num(StLive) : Say(" of ") : Num(#ST_SLOTS) : Say(" slots hold saved blocks, ")
+        Num(StFree) : Say(" of ") : Num(#ST_SECTORS) : Say(" sectors free, generation ") : Num(StGen) : Say("; ")
+        Num(StSaves) : Say(" saves (") : Num(StAutoSaves) : Say(" by themselves), ") : Num(StBlocks) : Say(" blocks, ")
+        Num(StWrites) : Say(" sector writes, ") : Num(StErases) : Say(" erases, ") : Num(StMoved) : Say(" moved for age, ")
+        Num(StFolds) : Say(" folds since power-up; the longest-unerased sector was last erased ") : Num(StEraSpread()) : Say(" erases ago")
       EndIf
     EndIf
   CompilerEndIf
@@ -1004,7 +1012,7 @@ Procedure DiskBanner()
     CompilerIf #PSRAM = 1
       If PsramOk                         ; the pack runs from its PSRAM copy (psram.pico2)
         Say(", running from its PSRAM copy: writable, the whole swap area")
-        Say(" (") : Num(DkSwapLo) : Say("-") : Num(#RK_BLOCKS - 1) : Say("); the flash is written only by Ctrl-] w") : Eol()
+        Say(" (") : Num(DkSwapLo) : Say("-") : Num(#RK_BLOCKS - 1) : Say("); saved to the flash by itself when the disks are quiet, or by Ctrl-] w") : Eol()
         ProcedureReturn
       EndIf
     CompilerEndIf
@@ -1289,7 +1297,7 @@ Procedure InByte(c.i)
         ElseIf PsSaveReq = 0
           Say("[saving the packs' changes to flash: ") : Num(PsDirtyCount()) : Say(" changed 4 KB sectors")
           If RpPresent
-            Say(" and ") : Num(RpOvUsed) : Say(" RP blocks")
+            Say(" and ") : Num(RpDirtyCount()) : Say(" changed RP blocks")
           EndIf
           Say("; the PDP-11 waits until it is done]") : Eol()
           SmpBarrier()
@@ -1609,12 +1617,37 @@ EndProcedure
 
 ; What a save did, said by core 1 when core 0 has finished.
 Procedure PsSaveReport()
+  If StPresent And StFolded = 0          ; a save into the store (store.pico2)
+    If StWhy
+      Say("[save FAILED: ")
+      If StWhy = 1
+        Say("core 1 did not park, so nothing was written")
+      ElseIf StWhy = 2
+        Say("the flash library refused, flash_error ") : Num(StErr)
+      Else
+        Say("a store sector did not read back as written")
+      EndIf
+      Say("; the changes stay marked: the next save tries them again]") : Eol()
+    ElseIf StAuto = 0
+      Say("[saved: ") : Num(StLastBlocks) : Say(" changed blocks into the store, ") : Num(StLastSectors)
+      Say(" sectors written, in ") : Num(PsSaveUs / 1000) : Say(" ms; the store holds ") : Num(StLive)
+      Say(" of its ") : Num(#ST_SLOTS) : Say(" slots]") : Eol()
+    EndIf
+    StAuto = 0
+    ProcedureReturn
+  EndIf
   Say("[packs saved to flash")
   If RpAutoSave
-    Say(" by themselves, the RP03's ") : Num(#RP_OV_SLOTS) : Say(" PSRAM slots being full (the RK packs wait for Ctrl-] w)")
+    Say(", the RP03's ") : Num(#RP_OV_SLOTS) : Say(" PSRAM slots being full")
     RpAutoSave = 0
+  ElseIf StPresent
+    Say(", the store being full")
   EndIf
-  Say(": ") : Num(PsSaveWrote) : Say(" sectors written, ") : Num(PsSaveSame) : Say(" already the same")
+  If StPresent
+    Say(" - folded into the packs, the store emptied")
+  EndIf
+  StAuto = 0
+  Say(": ") : Num(PsSaveWrote) : Say(" sectors written")
   If PsSaveFail
     Say(", ") : Num(PsSaveFail) : Say(" FAILED (")
     If PsSaveWhy = 1
@@ -1673,7 +1706,7 @@ Procedure Core1Main()
     CompilerIf #PSRAM = 1
       PsramBanner()
       If PsramOk
-        Say("every write goes to the PSRAM copies and is lost at power-off unless saved: type sync, then Ctrl-] and w") : Eol()
+        Say("every write goes to the PSRAM copies; they are saved to the flash a few seconds after the disks go quiet, or now with Ctrl-] and w (type sync first)") : Eol()
       EndIf
     CompilerEndIf
     DiskBanner()
@@ -1691,6 +1724,14 @@ Procedure Core1Main()
       If PsSaveDone
         PsSaveDone = 0
         PsSaveReport()
+      EndIf
+      If StPresent And PsSaveReq = 0 And StDirty   ; a save by itself: the disks quiet, the last save a while ago (store.pico2)
+        If Micros() - StLastWrite > #ST_QUIET_US And Micros() - StLastSave > #ST_GAP_US
+          StAuto = 1
+          StAutoSaves = StAutoSaves + 1
+          SmpBarrier()
+          PsSaveReq = 1
+        EndIf
       EndIf
     CompilerEndIf
     C1Where = 3
