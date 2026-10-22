@@ -73,6 +73,18 @@ KERNEL_OBJECTS = ["/sys/conf/l.o", "/sys/conf/mch.o", "/sys/conf/c.o", "/sys/dev
                   "/sys/dev/LIB2"]      # rp.o: board-built (MEDIA_V7), ahead of LIB2 so LIB2's is never loaded
 DEVICES = [("rk0", "b", 0, 0), ("rk1", "b", 0, 1), ("rrk0", "c", 9, 0), ("rrk1", "c", 9, 1), ("swap", "b", 0, 0)]
 RC_MOUNT = "/etc/mount /dev/rp3 /usr"
+# --pico2w: the Pico 2 W has no PSRAM - 152 KB of memory, the pack read-only in 1.75 MB of flash (3,584
+# blocks, stored mapped), swap on a 112-block RAM disk at 4000 (pico2/disk.pico2). The root's files are
+# 3,509 blocks; these programs, which need what the Pico 2 W has not got anyway (the manual's macros and
+# /usr for typesetting, a network for uucp and mail transfer, room for Fortran), are left out. 2026-10-22.
+PICO2W_SKIP = ["/lib/f77pass1", "/bin/f77", "/bin/learn", "/bin/uucp", "/bin/uux", "/bin/xsend", "/bin/xget",
+               "/bin/enroll", "/bin/troff", "/bin/eqn", "/bin/neqn", "/bin/tbl", "/bin/refer"]
+# The swap area: 700 blocks from 4000. V7's fork() (sys/sys1.c) fails with ENOMEM unless the swap map has
+# room for a whole MAXMEM process, ctod(64*32) = 256 blocks, though it writes nothing there - with V6's
+# 112, init could never fork a shell. Blocks 4000-4111 are the firmware's swap RAM disk; swap that really
+# goes past them is held in its 254-block write overlay, with the files written.
+PICO2W_NSWAP = 700
+PICO2W_RAMDISK = 112
 # --usr: what of the /usr dump goes on RK1 - what fits RK1's place on the PSRAM boards,
 # 4,000 blocks (pico2/psram_pdp11.pico2, #PS_RK1_BLOCKS): the libraries and nroff's
 # macros (2,230 blocks), the manual (1,424), the headers (141). Left out: /src (6,808
@@ -108,6 +120,26 @@ def media_v7(name):
     return data
 
 
+def set_data_word(k, name, old, new):
+    """Kernel k (a.out, 0411): the initialised data word of symbol name, which must read old, set to new."""
+    magic, tsize, dsize, bsize, ssize, entry, _, flag = struct.unpack_from("<8H", k, 0)
+    if magic != 0o411:
+        fail("rkunix: magic %o, not 0411" % magic)
+    syms = 16 + tsize + dsize + (0 if flag else tsize + dsize)
+    want = name.encode("ascii")[:8].ljust(8, b"\0")
+    for o in range(syms, syms + ssize, 12):
+        if k[o:o + 8] == want:
+            typ, val = struct.unpack_from("<HH", k, o + 8)
+            if typ & 0o37 != 0o3:
+                fail("rkunix: %s is not in the data segment (type %o)" % (name, typ))
+            at = 16 + tsize + val
+            if struct.unpack_from("<H", k, at)[0] != old:
+                fail("rkunix: %s reads %d, not %d" % (name, struct.unpack_from("<H", k, at)[0], old))
+            struct.pack_into("<H", k, at, new)
+            return
+    fail("rkunix: no symbol %s" % name)
+
+
 def fail(msg):
     sys.exit("v7_pack: " + msg)
 
@@ -127,7 +159,11 @@ def main():
     ap.add_argument("--usr", metavar="IMAGE", help="also write RK1: a /usr file system (USR_SET), mounted by /etc/rc")
     ap.add_argument("--usr-rp", metavar="IMAGE", help="also write the RP03's /usr: the WHOLE /usr dump for /dev/rp3, "
                     "mounted by /etc/rc (rk_image.py --rp)")
+    ap.add_argument("--pico2w", action="store_true", help="the Pico 2 W's pack: no PSRAM, so a smaller root "
+                    "(PICO2W_SKIP) and the kernel's swap on the 112-block RAM disk")
     a = ap.parse_args()
+    if a.pico2w and (a.usr or a.usr_rp):
+        fail("--pico2w is a root pack alone: the Pico 2 W has no second drive")
     if a.usr and a.usr_rp:
         fail("--usr (RK1) and --usr-rp (the RP03) both mount on /usr: give one")
     out = os.path.abspath(a.o)
@@ -138,7 +174,8 @@ def main():
             g.write(f.read())
         # 1. the root, then /usr/include
         run(os.path.join(HERE, "v7tape.py"), "restore", tape, 5, "-o", out, "--blocks", FS_BLOCKS,
-            "--inodes", INODES, "--name", "root", "--skip", "/hphtunix", "/hptmunix", "/rphtunix", "/rptmunix")
+            "--inodes", INODES, "--name", "root", "--skip", "/hphtunix", "/hptmunix", "/rphtunix", "/rptmunix",
+            *(PICO2W_SKIP if a.pico2w else []))
         run(os.path.join(HERE, "v7tape.py"), "restore", tape, 6, "--into", out, "-o", out, "--at", "/usr",
             "--only", "/include")
         # 2. the kernel
@@ -173,6 +210,8 @@ def main():
                 break
         else:
             fail("rkunix: no 'mov $026234,36(r3)' (the console's flags) in its text")
+        if a.pico2w:                             # nswap 872 (c.o) -> the Pico 2 W's 400 (PICO2W_NSWAP)
+            set_data_word(k, "_nswap", 872, PICO2W_NSWAP)
         open(kern, "wb").write(k)
         # 3. the pack
         d = open(out, "rb").read()
@@ -180,7 +219,7 @@ def main():
         run(v7fs, "put", out, kern, "/rkunix", "--mode", "0644", "-o", out)
         if "unix" not in run(v7fs, "ls", out, "/").split():  # ps reads its names from /unix: the kernel that runs
             run(v7fs, "ln", out, "/rkunix", "/unix", "-o", out)
-        for name, kind, major, minor in DEVICES + RP_DEVICES:
+        for name, kind, major, minor in DEVICES + ([] if a.pico2w else RP_DEVICES):
             run(v7fs, "mknod", out, "/dev/" + name, kind, major, minor, "--mode", "0640", "-o", out)
         # date: the board-built one (media/unix/v7): a two-digit year under 70 is 20yy
         dp = os.path.join(tmp, "date")
@@ -264,7 +303,12 @@ def main():
             print(run(v7fs, "check", rp_out).strip().splitlines()[-1])
             print("v7_pack: %s - the RP03's rp3, the whole /usr (%d blocks); multi-user mounts it on /usr, "
                   "single-user: /etc/mount /dev/rp3 /usr" % (a.usr_rp, RP_USR_BLOCKS))
-    print("v7_pack: %s - %d blocks; RK0 for MEM 1024, BOOT RK0, boot at the @, rk(0,0)rkunix at the :" % (a.o, BLOCKS))
+    if a.pico2w:
+        print("v7_pack: %s - %d blocks, the Pico 2 W's (swap 4000-%d): rk_image.py pack ... --chip pico2 --swap "
+              "4000,%d; BOOT RK0, boot at the @, rk(0,0)rkunix at the :" % (a.o, BLOCKS, 4000 + PICO2W_NSWAP - 1,
+              PICO2W_RAMDISK))
+    else:
+        print("v7_pack: %s - %d blocks; RK0 for MEM 1024, BOOT RK0, boot at the @, rk(0,0)rkunix at the :" % (a.o, BLOCKS))
 
 
 if __name__ == "__main__":

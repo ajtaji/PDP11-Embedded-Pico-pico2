@@ -493,6 +493,22 @@ directory under `/usr` there is covered by `/usr` once it is mounted). Send
 `psram_build.py`). A firmware upload alone keeps the disks, and what was saved
 on them.
 
+**On the Pico 2 W (no PSRAM): it runs, with a limit.** `python tools/v7_pack.py -o
+v7p2w.rk --pico2w` makes a root pack that fits the Pico 2 W's flash (it leaves out
+Fortran, the typesetting programs and the uucp and mail-transfer programs) and gives
+V7 a 700-block swap area; pack it with `rk_image.py pack v7p2w.rk --chip pico2 --swap
+4000,112 --name v7root --autoboot boot,0 --autoboot-then "::rk(0,0)rkunix" --firmware
+diag.bin --combined v7p2w.uf2 -o v7p2w-pack.uf2`. Tried on a Pico 2 W (2026-10-22): it
+boots by itself to `#` with `mem = 79360` (77 KB for programs), `df`, `dc`, `ps`,
+multi-user and `login`, `cc` builds and runs a `double` program (4 s), and `time od
+/unix` takes 15.0 s - as on the Pico Plus 2 W. The limit is the RAM for writes: with
+77 KB for programs V7 swaps a lot, and its swap and `/tmp` together outgrow the 112-block
+swap RAM disk and 254-block write overlay after two or three compiles; from then on
+writes are refused (the statistics block says `FULL`). Nothing is saved on this board.
+V7's fork() wants swap room for a whole 128 KB process (`ctod(MAXMEM)`, 256 blocks) even
+though it writes nothing there, which is why the swap area is 700 blocks and not the
+RAM disk's 112: with 112, init can never fork a shell.
+
 **A floating point benchmark.** E. J. Olson's `givens` from the pichart
 suite ([givens-pdp.tar](https://fractal.math.unr.edu/~ejolson/pi/pichart/givens-pdp.tar))
 builds unchanged:
