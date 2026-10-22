@@ -66,7 +66,10 @@
 #FPS_V   = $0002
 #FPS_C   = $0001
 #FPS_CC  = $000F
-#FPS_RW  = $CFEF                 ; ER ID IUV IU IV IC D L T and the codes
+#FPS_MM  = $0010                 ; FMM, maintenance mode: kept as written, no effect (2026-10-22)
+#FPS_RW  = $CFFF                 ; ER ID IUV IU IV IC D L T MM and the codes. MM: DEC's JFPAA1 (the
+                                 ; KDJ11 FPA diagnostic, XXDP+) tests 1 and 3 want bit 4 to read back as
+                                 ; LDFPS and SETF/SETD/SETI/SETL leave it; simh's mask drops it
 ; ---- FEC -----------------------------------------------------------------
 #FEC_OP    = 2
 #FEC_DZRO  = 4
@@ -968,8 +971,12 @@ Procedure FpExec()
           EndIf
         Case 1                                ; TSTf
           FpEa(FxDs, FxLenf)
-          If FpQuit = 0 And FpReadF(#P_SRC, FxDs, FxLenf)
-            Fps = FpSetCc(Fps, PH(#P_SRC), 0)
+          If FpQuit = 0
+            If FpReadF(#P_SRC, FxDs, FxLenf)
+              Fps = FpSetCc(Fps, PH(#P_SRC), 0)
+            ElseIf FpQuit = 0 And Fec = #FEC_UNDFV
+              Fps = FpSetCc(Fps, PH(#P_SRC), 0)   ; -0 with FIUV: the FPA sets N Z (V C clear) as it flags
+            EndIf                                 ; it - DEC's JFPBA0 test 32 (simh leaves the codes)
           EndIf
         Default                               ; 2 ABSf, 3 NEGf
           FpEa(FxDs, FxLenf)

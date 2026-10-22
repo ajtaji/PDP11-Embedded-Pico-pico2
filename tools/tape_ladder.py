@@ -31,6 +31,7 @@ EACH TAPE
     G  start, switches                -> "#GO start"
     then the program's own output is read until a verdict:
       PASS  a status line with 1 or more bells, or "END PASS" / "END OF" typed
+            (an XXDP pass line "END PASS ... TOTAL ERRORS SINCE LAST REPORT n" passes only with n = 0)
       FAIL  "HALT at"
       NO VERDICT  neither within the tape's seconds
     and the next tape starts with R. At the end, Q (the report firmware's
@@ -101,6 +102,13 @@ def read_plan(path, tapes_dir):
 def verdict(text):
     if "HALT at" in text:
         return "FAIL"
+    # an XXDP diagnostic's pass line counts its errors: "END PASS #  1  TOTAL ERRORS SINCE LAST REPORT   1"
+    # is a FAIL, and the line is judged only once it is whole (JFPBA0, 2026-10-22)
+    m = re.search(r"END PASS[^\n]*TOTAL ERRORS SINCE LAST REPORT\s+(\d+)\s*\n", text)
+    if m:
+        return "FAIL" if int(m.group(1)) else "PASS"
+    if re.search(r"END PASS[^\n]*\Z", text):
+        return None
     if re.search(r"\b[1-9]\d* bells", text) or "END PASS" in text or "END OF" in text:
         return "PASS"
     return None

@@ -7,7 +7,7 @@
 # Verdicts are tape_ladder's own: PASS = a bell, or "END PASS"/"END OF" typed;
 # FAIL = "HALT at"; otherwise NO VERDICT.
 #
-# EXPECTED: 17 PASS, and two HALTs that are right for a J-11:
+# EXPECTED: 19 PASS, and two HALTs that are right for a J-11:
 #   18_DZQKC  HALT at 014304 - it refuses to run on a large CPU, and a J-11 is one.
 #   19_DEQKC  HALT at 000006 after 22 instructions - it reads 177760, which a KDJ11 does not have.
 #
@@ -45,3 +45,10 @@
 17_DFKAC | papertape/maindec-11-dfkac-a-pb.bin | --start 200 | 120
 18_DZQKC | papertape/maindec-11-dzqkc-e-pb.bin | --start 200 | 120
 19_DEQKC | pcjs/tapes-diag/MAINDEC-11-DEQKC-B1-PB.json |  | 120
+# 20 and 21: the KDJ11 FPA's own diagnostics, CJFPAA and CJFPBA (FPF11 parts 1 and 2), taken off the
+# XXDP+ pack (python tools/xxdp_extract.py xxdp-plus-du.dsk.gz JFPAA1.BIC JFPBA0.BIC -o xxdp). Each
+# loops, typing "END PASS #n TOTAL ERRORS SINCE LAST REPORT e"; tape_ladder passes it only with e = 0.
+# Both pass with 0 errors since 2026-10-22, when FPS bit 4 (FMM) was made to read back and TST of -0
+# with FIUV set the condition codes (pico2/fp11.pico2).
+20_JFPAA1 | xxdp/jfpaa1.bic | --start 200 | 120
+21_JFPBA0 | xxdp/jfpba0.bic | --start 200 | 120
