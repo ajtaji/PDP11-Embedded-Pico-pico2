@@ -37,7 +37,7 @@ The UNIX files inside the disk packs are covered by the Caldera licence in
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `pico2w-v6/combined.uf2` | 3,236,352 | `13c365ea0640750350075b6531df0a78c413b5c95ddae3472f45327ca33734b4` |
+| `pico2w-v6/combined.uf2` | 3,246,080 | `5a12af8bf7ad7fdc4835863f6631254266083f8885ef3d318b6635255f67ee1a` |
 
 Firmware and disk pack in one UF2: hold BOOTSEL, plug in, copy the file to
 the `RP2350` drive. At the serial console:
@@ -50,8 +50,12 @@ mem = 556
 #
 ```
 
-`time od /rkunix >/dev/null` takes 9.45 s timed from the host on a Pico 2 W with this file
-(2026-10-21; 10.46 s with the file built from `658cc72`, 10.36 s timed from the host with the file of 2026-10-20; 13.24 s before the hot paths in assembly of 2026-10-19, 13.86 s before
+Its firmware was rebuilt on 2026-10-22 from a clean `git archive` of `ce1436f` (SHA-256 `101e0eab...003a`: the
+floating point fixes that DEC's KDJ11 FPA diagnostics found, and the RP11 and store code, which this board
+does not use); the pack is the one below, unchanged. With it, on a Pico 2 W: `mem = 556`, `time od /rkunix
+>/dev/null` 9.0 s by V6's `time` (whole seconds), and the ladder 19 of 21 (`../media/diagnostics/ladder.txt`,
+the two J-11 HALTs). `time od /rkunix >/dev/null` takes 9.45 s timed from the host on a Pico 2 W with the file
+of 2026-10-21 ( 10.46 s with the file built from `658cc72`, 10.36 s timed from the host with the file of 2026-10-20; 13.24 s before the hot paths in assembly of 2026-10-19, 13.86 s before
 the paste fix, 14.22 s before the dispatch tails in assembly, 17.43 s before the compiler's code
 generation pass of 2026-10-03, 19.3 s before the dispatch pass of 2026-10-03, 21.7 s before the
 speed pass of 2026-10-02). No clock ticks are dropped. The file was copied to the `RP2350`
@@ -101,10 +105,11 @@ python tools/psram_build.py --board feather   --compiler PureMetalForge.exe
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `picoplus2-v7/combined.uf2` | 22,850,560 | `597a4ec43d25d663ec4bf7e4094c370b97d08e921f3f684e1d7730c27b651f36` |
+| `picoplus2-v7/combined.uf2` | 22,850,560 | `eb4b4809c4ccc6842d23b7059b6d6b53e0d41fc95b015663d4521cc0e0cafef0` |
 
-Rebuilt on 2026-10-22 from a clean `git archive` of commit `0fd25ce`: the PSRAM firmware (SHA-256
-`4b147bdd...6f84`, with the J-11's floating point unit, the RP11 controller, `../J11_18MHz_KDJ11_BF/pico2/rp11.pico2`,
+Rebuilt on 2026-10-22 from a clean `git archive` of commit `ce1436f` (the same as `0fd25ce`'s file but for the
+floating point fixes DEC's KDJ11 FPA diagnostics found; booted on a Pico Plus 2 W: an empty store, `df`, `od /unix`
+in 14.0 s): the PSRAM firmware (SHA-256 `abccd1ee...9526`, with the J-11's floating point unit, the RP11 controller, `../J11_18MHz_KDJ11_BF/pico2/rp11.pico2`,
 and the store of saved changes, `store.pico2`) and V7's two disks: RK0 the root file system and kernel
 (`tools/v7_pack.py`), and an RP03 holding the distribution's whole `/usr` - sources, documents, dictionary,
 games - on `/dev/rp3`, 20,800 blocks, stored mapped where RK1 would go (`tools/rk_image.py --rp`). This
