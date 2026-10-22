@@ -1,7 +1,7 @@
 # Ready-to-flash Unix images
 
 **Read this first (2026-10-21).** The Pico 2 W and Pico Plus 2 W files were rebuilt on 2026-10-21
-from the source of commit `8e7a63f` (the speed pass: the stack, JSR, RTS and DIV in assembly, the
+from the source of commit `bb9c842` (the speed pass: the stack, JSR, RTS and DIV in assembly, the
 fetch window kept per mode, and on the PSRAM boards 224 KB of the memory and the unmapped run loop in
 SRAM - `../docs/BENCHMARKS.md`, "The speed pass"); the Pico W files from `658cc72`, whose RP2040
 source the speed pass does not touch (V7's two-step auto-boot; the Pico 2 W's 152 KB of memory
