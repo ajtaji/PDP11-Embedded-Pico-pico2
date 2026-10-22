@@ -403,6 +403,15 @@ system and kernel; and an RP03 on an RP11 controller holding the whole `/usr`
 of the distribution - sources, documents, the dictionary, games - on
 `/dev/rp3`, where V7 shipped it.
 
+**On the Adafruit Feather RP2350 HSTX** flash `images/feather-v7/combined.uf2`
+the same way. Everything below holds for it but the RP03: its 8 MB of flash
+cannot hold the whole `/usr`, so `/usr` is a 4,000-block RK1 (the libraries,
+nroff's macros, the manual, the headers), which `/etc/rc` mounts in
+multi-user and `/etc/mount /dev/rk1 /usr` mounts in single-user. It is built
+with `v7_pack.py -o v7root.rk --usr v7usr.rk` and `rk_image.py pack v7root.rk
+--chip feather ... --drive1 v7usr.rk` (the build lines below, with those
+changes).
+
 **It boots by itself.** Open the board's serial port; after the banner:
 
 ```

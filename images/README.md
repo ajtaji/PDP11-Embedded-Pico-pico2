@@ -142,6 +142,25 @@ from the working tree that became `0fd25ce`:
 The pack checksum the board prints: `RK0 76789AFF 4F8A12D0` (the RP disk is not summed). HOWTO section 12
 has the use and the build.
 
+## Adafruit Feather RP2350 HSTX: Seventh Edition Unix (V7), 2 MB, floating point, saved to flash
+
+| File | Size | SHA-256 |
+|---|---|---|
+| `feather-v7/combined.uf2` | 9,464,832 | `d922da3c7cf466d08ed6156d9feb0191120aadd36f019e5fdd9f1536ab08a3ba` |
+
+Built on 2026-10-22 from a clean `git archive` of the current source with the same firmware as
+`feather/combined.uf2` (SHA-256 `5a2ccc1c...7e5d`), and V7's packs: RK0 the root file system and kernel,
+RK1 a 4,000-block `/usr` - the libraries and nroff's macros, the manual, the headers (`tools/v7_pack.py
+--usr`). The Feather's 8 MB of flash cannot hold the whole `/usr` the Pico Plus 2 W's RP03 has. What Unix
+writes is saved into the top 1 MB of the flash by itself, or at once with `sync` and Ctrl-] `w`.
+
+Copied to a Feather RP2350 HSTX's boot drive on 2026-10-22, it boots by itself (`mem = 2012672`, as on
+the Pico Plus 2 W); `df` lists `/dev/rk0` and `/dev/rk1`, a C program with `double` arithmetic compiles
+and prints 3.142857, `time od /unix >/dev/null` takes 14.0 s, Ctrl-D goes multi-user (`/etc/rc` mounts RK1
+on `/usr`, root logs in with no password), and a file written to `/usr` and synced was saved by itself
+(12 saves, 53 blocks) and was there after the same file was flashed again. Pack checksums at start-up:
+`RK0 0A8F9683 5201E310 RK1 68FF2FAA B29A1646`. HOWTO section 12 has the use.
+
 ## Pico W (RP2040): Mini-Unix
 
 | File | Size | SHA-256 |
