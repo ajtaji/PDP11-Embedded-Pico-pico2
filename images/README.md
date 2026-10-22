@@ -81,7 +81,7 @@ C compiler builds and runs a program, `dc` runs, `time od /rkunix >/dev/null` ta
 the host (10.66 s with the file built from `658cc72`, 10.42 s with the one from `dccf68e`; 13.37 s before the hot paths in assembly), and no clock tick is dropped. Its
 firmware (SHA-256 `f326ed7d...0bb6`) has the floating point unit, which V7 and the benchmarks of
 `../docs/BENCHMARKS.md` use; the pack regions have the checksums the board prints at start-up
-(`RK0 21C285A3 5CA82BF0 RK1 1215D2AC 967B3EC6`). V7 is in `picoplus2-v7/` (below; rebuilt on 2026-10-22, with saving to flash). It is for the Pico Plus 2 and the Pico Plus
+(`RK0 21C285A3 5CA82BF0 RK1 1215D2AC 967B3EC6`). V7 is in `picoplus2-v7/` (below; rebuilt on 2026-10-22: the whole `/usr`, saves to flash by itself). It is for the Pico Plus 2 and the Pico Plus
 2 W (same chip, pin and flash by the makers' board files); the radio is not used.
 
 `feather/combined.uf2` is the 2026-10-07 build of the earlier layout (see the top of this file):
@@ -96,20 +96,20 @@ python tools/psram_build.py --board picoplus2 --compiler PureMetalForge.exe
 python tools/psram_build.py --board feather   --compiler PureMetalForge.exe
 ```
 
-## Pimoroni Pico Plus 2 W: Seventh Edition Unix (V7), 2 MB, floating point, the whole /usr
+## Pimoroni Pico Plus 2 W: Seventh Edition Unix (V7), 2 MB, floating point, the whole /usr, saved to flash
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `picoplus2-v7/combined.uf2` | 22,881,280 | `1d520c104ea8b98e33202975a462f520d477096735167af563162a4b346c0bc9` |
+| `picoplus2-v7/combined.uf2` | 22,850,560 | `597a4ec43d25d663ec4bf7e4094c370b97d08e921f3f684e1d7730c27b651f36` |
 
-Rebuilt on 2026-10-22 from a clean `git archive` of commit `ac69df1`: the PSRAM firmware (SHA-256
-`c0806a61...e685`, with the J-11's floating point unit and the RP11 controller, `../J11_18MHz_KDJ11_BF/pico2/rp11.pico2`)
-and V7's two disks: RK0 the root file system and kernel (`tools/v7_pack.py`), and an RP03 holding the
-distribution's whole `/usr` - sources, documents, dictionary, games - on `/dev/rp3`, 22,800 blocks, stored
-mapped where RK1 would go (`tools/rk_image.py --rp`). This build is **not read-only**: what Unix writes
-lives in the PSRAM until `sync` and then Ctrl-] `w` save it to the flash, and the RP disk's writes are
-saved by themselves when their 3,888 PSRAM slots fill (HOWTO section 12, Saving). Copied to a Pico Plus
-2 W's boot drive, it boots by itself:
+Rebuilt on 2026-10-22 from a clean `git archive` of commit `0fd25ce`: the PSRAM firmware (SHA-256
+`4b147bdd...6f84`, with the J-11's floating point unit, the RP11 controller, `../J11_18MHz_KDJ11_BF/pico2/rp11.pico2`,
+and the store of saved changes, `store.pico2`) and V7's two disks: RK0 the root file system and kernel
+(`tools/v7_pack.py`), and an RP03 holding the distribution's whole `/usr` - sources, documents, dictionary,
+games - on `/dev/rp3`, 20,800 blocks, stored mapped where RK1 would go (`tools/rk_image.py --rp`). This
+build is **not read-only**: what Unix writes is saved into the top 1 MB of the flash by itself a few seconds
+after the disks go quiet, or at once with `sync` and Ctrl-] `w`, and comes back at the next power-up
+(HOWTO section 12, Saving). Copied to a Pico Plus 2 W's boot drive, it boots by itself:
 
 ```
 auto-boot: RK0, switches 000000, then "boot" at the @ prompt, then "rk(0,0)rkunix" at the : prompt. Press Esc within 2 s for the diagnostic console.
@@ -122,15 +122,20 @@ mem = 2012672
 #
 ```
 
-Tried on the board with this file (2026-10-22): it boots by itself as above (the banner: `RP03 drive 0
-on the RP11: blocks 7000-29799 (17019 stored in flash)`), `df` lists `/dev/rk0` and `/dev/rp3`, a C
-program with `double` arithmetic compiles and prints 3.142857, `dc` gives 2^100, `time od /unix
->/dev/null` takes 14.0 s (15.03 s with the file of 2026-10-21, 17.00 s with the one built from
-`658cc72`), and Ctrl-D to multi-user, where `/etc/rc` mounts `/dev/rp3` on `/usr` and root logs in with no
-password. With firmware and packs built the same way from the working tree that became `ac69df1`: 2.36 MB
-written to `/usr` with one save by itself, then Ctrl-] `w` and a restart: `icheck /dev/rp3` clean, the files
-whole; raw reads of `/dev/rrp3` equal to block reads. The pack checksum the board prints: `RK0 6FE2AED2
-98997340` (the RP disk is not summed). HOWTO section 12 has the use and the build.
+Tried on the board with this file (2026-10-22): it boots by itself as above, its banner saying `the store: 0
+saved blocks copied over the packs (generation 0, 256 of 256 sectors free)`; `df` lists `/dev/rk0` and
+`/dev/rp3`; a file written and synced was saved by itself (4 saves, 35 blocks); `time od /unix >/dev/null`
+takes 15.0 s (V7's `time` counts whole seconds: 14.0 to 15.0 s in runs of the earlier builds; 15.03 s with
+the file of 2026-10-21, 17.00 s with the one built from `658cc72`); Ctrl-D to multi-user, where `/etc/rc`
+mounts `/dev/rp3` on `/usr` and root logs in with no password. With firmware and packs built the same way
+from the working tree that became `0fd25ce`:
+- a save by itself, then a restart: the files and the date came back;
+- 25 saves of 400 blocks each (1,477 sector writes, 1,367 erases): the newest version came back;
+- a fold of more than the store holds, then a save into the store, then a restart: everything intact, and
+  `icheck` is clean on `/dev/rp3` and `/dev/rk0`;
+- raw reads of `/dev/rrp3` equal block reads.
+The pack checksum the board prints: `RK0 76789AFF 4F8A12D0` (the RP disk is not summed). HOWTO section 12
+has the use and the build.
 
 ## Pico W (RP2040): Mini-Unix
 
