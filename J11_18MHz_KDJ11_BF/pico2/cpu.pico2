@@ -706,9 +706,19 @@ EndProcedure
 ; worth from the caller's budget: CpuRun returns sooner, having run fewer
 ; instructions. Nothing the program can see changes - the emulated clock
 ; (InstrCount) counts only the instructions run.
+; When the window has room for k more, the k come out of the window itself
+; (RunLeft and RunWindow both shrink, so CpuNow does not move): the same
+; budget charged, and no window end - a context switch writes 32 PARs and
+; PDRs, and each used to end a window (2026-10-23: 2.6% of a compile's time
+; went to the window ends). Only a window with no room for them ends.
 ProcedureRAM MmuCharge(k.i)
-  CpuEventIn(1)
-  RunBank = RunBank - k
+  If RunLeft > k + 1
+    RunLeft = RunLeft - k
+    RunWindow = RunWindow - k
+  Else
+    CpuEventIn(1)
+    RunBank = RunBank - k
+  EndIf
 EndProcedure
 
 ; The whole map: after MMR3 changes (D space, 22-bit mapping) and at reset.

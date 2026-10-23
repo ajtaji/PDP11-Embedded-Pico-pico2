@@ -11,8 +11,8 @@
 ;  Include it after cpu and before instructions.
 ; ======================================================================
 Global Dim OpTableM.Label(8192)
-Global Dim OpAsmM.Label(8)                 ; JSR, RTS, DIV: the assembly entry ...
-Global Dim OpRefM.Label(8)                 ; ... and the plain one (tools/mmu_gen.py, pico2_ops)
+Global Dim OpAsmM.Label(11)                 ; JSR, RTS, DIV: the assembly entry ...
+Global Dim OpRefM.Label(11)                 ; ... and the plain one (tools/mmu_gen.py, pico2_ops)
 Global Dim MovAsmM.Label(7)                ; the MOV handlers by mode: the assembly entry ...
 Global Dim MovRefM.Label(7)                ; ... and the plain one (tools/mmu_gen.py, asm_mov)
 Global OpTableReadyM.i                    ; 0 until the first CpuRun fills OpTable
@@ -643,6 +643,52 @@ CompilerEndIf
 
 ;-MOV-------------------------------------------------------------------
 InstructionMOV_01M:            ; 01SSDD   entries $0200-$03FF
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+  ASM Uses Op, FlagNZ
+    and.w r0, r8, #0xe00
+    cmp r0, #0
+    bne __movm_smem
+    ubfx r0, r8, #6, #3
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+    b __movm_shave
+__movm_smem:
+    ubfx r0, r8, #6, #6
+    bl __eaw
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __rdw
+__movm_shave:
+    ldr r1, =global_src
+    str r0, [r1]
+    and.w r1, r8, #0x38
+    cmp r1, #0
+    bne __movm_dmem
+    and.w r1, r8, #7
+    lsls r1, r1, #2
+    ldr r2, =global_reg
+    str r0, [r2, r1]
+    b __movm_done
+__movm_dmem:
+    and.w r0, r8, #0x3f
+    bl __eaw
+    ldr r1, =global_ea
+    str r0, [r1]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    bl __wrw
+__movm_done:
+    ldr r1, =global_src
+    ldr r4, [r1]
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+  EndASM
+  NextSyncedM()
+CompilerEndIf
+InstructionMOV_01RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "MOV"
   MMSrcWord()
@@ -2073,6 +2119,42 @@ CompilerEndIf
 ; One address space until the memory management unit is modelled, so the
 ; "previous" space is this one.
 InstructionMFPI_0065M:         ; 0065SS   entries $01A8-$01AF
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+  If (Op & $38) = 0
+    Src = Reg(Op & 7)
+    If (Op & 7) = 6                      ; SP: the PREVIOUS mode's (PSW 13-12)
+      Src = ModeSp((PswHigh >> 12) & 3)
+    EndIf
+    PushM(Src)
+  Else
+    ASM Uses Op
+      and.w r0, r8, #0x3f
+      bl __eaw
+      ldr r1, =global_ea
+      str r0, [r1]
+      ldr r1, =global_prvbase
+      ldr r1, [r1]
+      ubfx r2, r8, #15, #1
+      add.w r1, r1, r2, lsl #3
+      ldr r2, =global_eabase
+      str r1, [r2]
+      bl __rdw
+      ldr r1, =global_src
+      str r0, [r1]
+      ldr r1, =global_trapvector
+      ldr r1, [r1]
+      cmp r1, #0
+      bne __mfpim_nopush
+      bl __pushm
+__mfpim_nopush:
+    EndASM
+  EndIf
+  FlagNZ = Src
+  FlagV = 0
+  NextSyncedM()
+CompilerEndIf
+InstructionMFPI_0065RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "MFPI"
   If (Op & $38) = 0
@@ -2104,6 +2186,41 @@ CompilerEndIf
   NextSyncedM()
 
 InstructionMTPI_0066M:         ; 0066DD   entries $01B0-$01B7
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+  ASM
+    bl __popm
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+  If (Op & $38) = 0
+    If (Op & 7) = 6                      ; SP: the PREVIOUS mode's (PSW 13-12)
+      SetModeSp((PswHigh >> 12) & 3, Src)
+    Else
+      Reg(Op & 7) = Src
+    EndIf
+  Else
+    ASM Uses Op
+      and.w r0, r8, #0x3f
+      bl __eaw
+      ldr r1, =global_ea
+      str r0, [r1]
+      ldr r1, =global_prvbase
+      ldr r1, [r1]
+      ubfx r2, r8, #15, #1
+      add.w r1, r1, r2, lsl #3
+      ldr r2, =global_eabase
+      str r1, [r2]
+      ldr r1, =global_src
+      ldr r1, [r1]
+      bl __wrw
+    EndASM
+  EndIf
+  FlagNZ = Src
+  FlagV = 0
+  NextSyncedM()
+CompilerEndIf
+InstructionMTPI_0066RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "MTPI"
   Src = PopM()
@@ -4920,6 +5037,12 @@ BuildTableM:
   OpRefM(6) = ?InstructionDEC_0053RefM
   OpAsmM(7) = ?InstructionSXT_0067M
   OpRefM(7) = ?InstructionSXT_0067RefM
+  OpAsmM(8) = ?InstructionMFPI_0065M
+  OpRefM(8) = ?InstructionMFPI_0065RefM
+  OpAsmM(9) = ?InstructionMTPI_0066M
+  OpRefM(9) = ?InstructionMTPI_0066RefM
+  OpAsmM(10) = ?InstructionMOV_01M
+  OpRefM(10) = ?InstructionMOV_01RefM
   OpTableReadyM = 1
   Goto RunStartM
 EndProcedure

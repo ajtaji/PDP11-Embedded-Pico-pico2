@@ -77,13 +77,14 @@ Global NDiffA.i, NDiffB.i
 Global Checks.i, Fast.i, Slow.i, Failures.i, FirstBad.i, FirstOp.i, FirstField.i
 Global TPc.i, TOp.i, TPair.i, TRs.i, TRd.i
 Global Dim SReg.i(8)
-Global Dim SPar.i(16)
-Global Dim SPdr.i(16)
+Global Dim SPar.i(64)
+Global Dim SPdr.i(64)
 Global Dim SAlt.i(6)
 Global Dim SBank.i(4)
 Global GK.i, GS.i, GD.i, GN.i, GI.i, GK2.i, GN2.i
 Global Osm.i, Odm.i, Oi.i, Ow.i, Ofield.i, Mr.i, Mt0.i
 Global SNZ.i, SV.i, SC.i, SMmr0.i, SMmr1.i, SMmr3.i, SPcRec.i
+Global OpPsw.i = $00E0                ; the PSW a check starts from: kernel; MFPI/MTPI vary the previous mode
 
 ; FlagNZ lives in r4 (cpu.pico2): only these two small procedures name it, so no
 ; procedure here that saves r4 in its frame touches it (PM1126).
@@ -174,6 +175,18 @@ Procedure.i RndMapped()
   ProcedureReturn RndN($8000) * 2
 EndProcedure
 
+; An even address in one of the previous mode's windows (space sp: 0 I, 8 D).
+Procedure.i RndMappedPrv(sp.i)
+  Define t.i, e.i
+  For t = 1 To 16
+    e = PrvBase + sp + RndN(8)
+    If MapWHi(e) > MapWLo(e)
+      ProcedureReturn (MapWLo(e) + RndN(MapWHi(e) - MapWLo(e))) & $FFFE
+    EndIf
+  Next
+  ProcedureReturn RndN($8000) * 2
+EndProcedure
+
 ; A register value: mostly an address in a write window (the fast path),
 ; sometimes any even address, odd, near the stack limit, or anything.
 Procedure.i RndReg()
@@ -195,7 +208,10 @@ EndProcedure
 ; most read/write with W set, some read-only, some not resident, some growing down.
 Procedure RandomMap()
   Define e.i, k.i, acf.i
-  For e = 0 To 15
+  For e = 0 To 63
+    If e = 32                           ; mode 2 does not exist: its entries stay empty
+      e = 48
+    EndIf
     If RndN(4) = 0
       Par(e) = $380 + RndN($C80)        ; past the memory: no window
     Else
@@ -220,14 +236,11 @@ Procedure RandomMap()
       Pdr(e) = (Pdr(e) & $00FF) | $7F00 ; most pages whole: more fast windows
     EndIf
   Next
-  For e = 16 To 63
+  For e = 32 To 47
     Par(e) = 0
     Pdr(e) = 0
   Next
-  Mmr3 = 0
-  If RndN(2)
-    Mmr3 = 4                            ; kernel D space on
-  EndIf
+  Mmr3 = RndN(8)                        ; D space on or off for kernel (4), supervisor (2), user (1)
   MmuRecompute()
 EndProcedure
 
@@ -248,7 +261,7 @@ EndProcedure
 
 Procedure SaveState()
   For GI = 0 To 7 : SReg(GI) = Reg(GI) : Next
-  For GI = 0 To 15 : SPar(GI) = Par(GI) : SPdr(GI) = Pdr(GI) : Next
+  For GI = 0 To 63 : SPar(GI) = Par(GI) : SPdr(GI) = Pdr(GI) : Next
   For GI = 0 To 5 : SAlt(GI) = RegAlt(GI) : Next
   For GI = 0 To 3 : SBank(GI) = StackBank(GI) : Next
   SNZ = NzRead() : SV = FlagV : SC = FlagC
@@ -258,9 +271,9 @@ EndProcedure
 ; Back to the saved state exactly: a trap in the run before may have changed
 ; the mode, the register set, the stack pointers and the map's entry bases.
 Procedure LoadState()
-  PswSet($00E0)                         ; kernel, register set 0, priority 7
+  PswSet(OpPsw)                         ; kernel, register set 0, priority 7 (and a previous mode)
   For GI = 0 To 7 : Reg(GI) = SReg(GI) : Next
-  For GI = 0 To 15 : Par(GI) = SPar(GI) : Pdr(GI) = SPdr(GI) : Next
+  For GI = 0 To 63 : Par(GI) = SPar(GI) : Pdr(GI) = SPdr(GI) : Next
   For GI = 0 To 5 : RegAlt(GI) = SAlt(GI) : Next
   For GI = 0 To 3 : StackBank(GI) = SBank(GI) : Next
   Mmr3 = SMmr3
@@ -300,7 +313,7 @@ Procedure Snap(*snap.i, *diff.i, *nd.i)
   PokeL(GS + 84, Fw(3))
   PokeL(GS + 88, PswGet())
   GK2 = 0
-  For GI = 0 To 15 : GK2 = GK2 * 31 + Pdr(GI) : Next
+  For GI = 0 To 63 : GK2 = GK2 * 31 + Pdr(GI) : Next
   PokeL(GS + 92, GK2)
   PokeL(GS + 96, Halted)
   PokeL(GS + 100, Bool(Src = #NOT_RUN))
@@ -653,7 +666,7 @@ EndProcedure
 ; the dividend and divisor often at the edges (0, -1, 077777, 100000, a quotient
 ; just out of range). The same fields and the same memory as the MOV check.
 Global OpChecks.i, OpFailures.i, OpFirst.i, OpKind.i, OpR.i
-Global Dim OpCount.i(8)
+Global Dim OpCount.i(11)
 Global Dim EdgeW.i(8)
 
 Procedure.i RndEdge()
@@ -664,6 +677,7 @@ Procedure.i RndEdge()
 EndProcedure
 
 Procedure OpsOne()
+  OpPsw = $00E0
   PswSet($00E0)
   RandomMap()
   For Oi = 0 To 6 : Reg(Oi) = RndReg() : Next
@@ -671,8 +685,16 @@ Procedure OpsOne()
   If TPc < 0
     ProcedureReturn
   EndIf
-  OpKind = RndN(8)
+  OpKind = RndN(11)
   OpR = RndN(8)
+  If OpKind = 8 Or OpKind = 9           ; MFPI/MTPI: kernel, the previous mode kernel, supervisor or user
+    Oi = RndN(3)
+    If Oi = 2
+      Oi = 3
+    EndIf
+    OpPsw = $00E0 | (Oi << 12)
+    PswSet(OpPsw)
+  EndIf
   If OpKind = 0                         ; JSR R, dd
     TOp = $0800 | (OpR << 6) | RndN(64)
     If RndN(8) <> 0 And (TOp & $38) = 0
@@ -690,6 +712,12 @@ Procedure OpsOne()
     TOp = $0AC0 | RndN(64)
   ElseIf OpKind = 7                     ; SXT dd
     TOp = $0DC0 | RndN(64)
+  ElseIf OpKind = 8                     ; MFPI ss, or MFPD (bit 15)
+    TOp = $0D40 | RndN(64) | (RndN(2) << 15)
+  ElseIf OpKind = 9                     ; MTPI dd, or MTPD
+    TOp = $0D80 | RndN(64) | (RndN(2) << 15)
+  ElseIf OpKind = 10                    ; MOV ss, dd: every mode pair
+    TOp = $1000 | RndN(4096)
   Else                                  ; DIV R, ss
     TOp = $7200 | (OpR << 6) | RndN(64)
     If RndN(3) = 0
@@ -713,6 +741,12 @@ Procedure OpsOne()
     Reg(TOp & 7) = Oi
     PokeU(MapHost(CurD + (Oi >> 13)) + Oi, EdgeW(RndN(8)))
   EndIf
+  If (OpKind = 8 Or OpKind = 9) And (TOp & 7) < 6 And RndN(2) = 0
+    Reg(TOp & 7) = RndMappedPrv((TOp >> 12) & 8)
+    If (TOp & $38) = $20
+      Reg(TOp & 7) = (Reg(TOp & 7) + 2) & $FFFF      ; -(R) lands in the window
+    EndIf
+  EndIf
   Ow = TPc + MapHost(CurI + (TPc >> 13))
   PokeU(Ow, TOp)
   PokeU(Ow + 2, RndN($10000))
@@ -720,6 +754,12 @@ Procedure OpsOne()
     PokeU(Ow + 2, (RndMapped() - Reg(RndN(7))) & $FFFF)
   EndIf
   PokeU(Ow + 4, (RndMapped() - Reg(RndN(7))) & $FFFF)   ; a second index word (CMP X(R),Y(R))
+  If (OpKind = 8 Or OpKind = 9) And RndN(2) = 0           ; X(R) and absolute into the previous mode's window
+    PokeU(Ow + 2, (RndMappedPrv((TOp >> 12) & 8) - Reg(TOp & 7)) & $FFFF)
+    If (TOp & 7) = 7
+      PokeU(Ow + 2, RndMappedPrv((TOp >> 12) & 8))
+    EndIf
+  EndIf
   If OpKind >= 3 And RndN(3) = 0                          ; a memory operand at an edge
     Oi = RndMapped()
     PokeU(MapHost(CurD + (Oi >> 13)) + Oi, RndEdge())
@@ -748,6 +788,7 @@ Procedure OpsOne()
   RunOnce(OpRefM(OpKind))
   Snap(@SnapB(0), @DiffB(0), @NDiffB)
   OpTableM(TOp >> 3) = OpAsmM(OpKind)  ; the table as built
+  OpPsw = $00E0
   OpChecks = OpChecks + 1
   OpCount(OpKind) = OpCount(OpKind) + 1
   Ofield = -1
@@ -887,7 +928,8 @@ Procedure Main()
     Next
     Say("ASMCHECK ops checks=") : Num(OpChecks) : Say(" jsr=") : Num(OpCount(0)) : Say(" rts=") : Num(OpCount(1))
     Say(" div=") : Num(OpCount(2)) : Say(" cmp=") : Num(OpCount(3)) : Say(" tst=") : Num(OpCount(4))
-    Say(" inc=") : Num(OpCount(5)) : Say(" dec=") : Num(OpCount(6)) : Say(" sxt=") : Num(OpCount(7)) : Say(" failures=") : Num(OpFailures)
+    Say(" inc=") : Num(OpCount(5)) : Say(" dec=") : Num(OpCount(6)) : Say(" sxt=") : Num(OpCount(7))
+    Say(" mfpi=") : Num(OpCount(8)) : Say(" mtpi=") : Num(OpCount(9)) : Say(" mov=") : Num(OpCount(10)) : Say(" failures=") : Num(OpFailures)
     If OpFailures = 0
       Say(" PASS")
     Else

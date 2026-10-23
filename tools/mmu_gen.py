@@ -1375,7 +1375,135 @@ __sxtm_nz:
   EndASM
   NextSyncedM()
 """
-OPS = ["JSR_004", "RTS_00020", "DIV_071", "CMP_02", "TST_0057", "INC_0052", "DEC_0053", "SXT_0067"]
+# MFPI / MFPD and MTPI / MTPD: the memory operand in assembly, in the PREVIOUS
+# mode's space (PrvBase, plus 8 for the D space when bit 15 is set: MFPD, MTPD)
+# - __eaw forms the address in the current mode, EaBase is pointed at the
+# previous mode's entries, and __rdw / __wrw go through that window (or on to
+# MmuReadWord / MmuWriteWord). MFPI pushes with __pushm unless the read aborted
+# (V6's fuword relies on nothing being pushed); MTPI pops with __popm first, as
+# the plain handler does. A register operand (and the previous mode's SP)
+# stays in Basic. 2026-10-23: the kernel's copyin, copyout, fuword and suword
+# are MFPI/MTPI - 5.7% of a compile's time in the plain handlers.
+MFPI_ASM = """  PcOutM()
+  If (Op & $38) = 0
+    Src = Reg(Op & 7)
+    If (Op & 7) = 6                      ; SP: the PREVIOUS mode's (PSW 13-12)
+      Src = ModeSp((PswHigh >> 12) & 3)
+    EndIf
+    PushM(Src)
+  Else
+    ASM Uses Op
+      and.w r0, r8, #0x3f
+      bl __eaw
+      ldr r1, =global_ea
+      str r0, [r1]
+      ldr r1, =global_prvbase
+      ldr r1, [r1]
+      ubfx r2, r8, #15, #1
+      add.w r1, r1, r2, lsl #3
+      ldr r2, =global_eabase
+      str r1, [r2]
+      bl __rdw
+      ldr r1, =global_src
+      str r0, [r1]
+      ldr r1, =global_trapvector
+      ldr r1, [r1]
+      cmp r1, #0
+      bne __mfpim_nopush
+      bl __pushm
+__mfpim_nopush:
+    EndASM
+  EndIf
+  FlagNZ = Src
+  FlagV = 0
+  NextSyncedM()
+"""
+
+MTPI_ASM = """  PcOutM()
+  ASM
+    bl __popm
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+  If (Op & $38) = 0
+    If (Op & 7) = 6                      ; SP: the PREVIOUS mode's (PSW 13-12)
+      SetModeSp((PswHigh >> 12) & 3, Src)
+    Else
+      Reg(Op & 7) = Src
+    EndIf
+  Else
+    ASM Uses Op
+      and.w r0, r8, #0x3f
+      bl __eaw
+      ldr r1, =global_ea
+      str r0, [r1]
+      ldr r1, =global_prvbase
+      ldr r1, [r1]
+      ubfx r2, r8, #15, #1
+      add.w r1, r1, r2, lsl #3
+      ldr r2, =global_eabase
+      str r1, [r2]
+      ldr r1, =global_src
+      ldr r1, [r1]
+      bl __wrw
+    EndASM
+  EndIf
+  FlagNZ = Src
+  FlagV = 0
+  NextSyncedM()
+"""
+# MOV's general handler (the mode pairs MOV_PAIRS does not specialise): the
+# source from a register or through __eaw and __rdw, the destination to a
+# register or through __eaw and __wrw - CMP's shape. As the plain handler, a
+# source read that aborts still goes on to the destination (the trap is taken
+# at the tail), and N and Z are set last: a destination write that aborts saves
+# the PSW as it was (asm_check caught the earlier order). 2026-10-23: 4.0% of od's and a compile's time, on average.
+MOV_ASM = """  PcOutM()
+  ASM Uses Op, FlagNZ
+    and.w r0, r8, #0xe00
+    cmp r0, #0
+    bne __movm_smem
+    ubfx r0, r8, #6, #3
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+    b __movm_shave
+__movm_smem:
+    ubfx r0, r8, #6, #6
+    bl __eaw
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __rdw
+__movm_shave:
+    ldr r1, =global_src
+    str r0, [r1]
+    and.w r1, r8, #0x38
+    cmp r1, #0
+    bne __movm_dmem
+    and.w r1, r8, #7
+    lsls r1, r1, #2
+    ldr r2, =global_reg
+    str r0, [r2, r1]
+    b __movm_done
+__movm_dmem:
+    and.w r0, r8, #0x3f
+    bl __eaw
+    ldr r1, =global_ea
+    str r0, [r1]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    bl __wrw
+__movm_done:
+    ldr r1, =global_src
+    ldr r4, [r1]
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+  EndASM
+  NextSyncedM()
+"""
+OPS = ["JSR_004", "RTS_00020", "DIV_071", "CMP_02", "TST_0057", "INC_0052", "DEC_0053", "SXT_0067",
+       "MFPI_0065", "MTPI_0066", "MOV_01"]
 
 
 def handler(text, name):
@@ -1393,7 +1521,8 @@ def pico2_ops(text):
     at = "__eaw_slow:\n    mov r0, r12\n    ldr r1, =global_easpec\n    str r0, [r1]\n    b eawordm\n  EndASM\nCompilerEndIf\n"
     if text.count(at) != 1:
         fail("pico2_ops: __eaw's end moved; teach tools/mmu_gen.py.")
-    no_scaled_index(ASM_STACK + JSR_ASM + RTS_ASM + DIV_ASM + ASM_RW + CMP_ASM + TST_ASM + INCDEC_ASM + SXT_ASM, "ASM_STACK")
+    no_scaled_index(ASM_STACK + JSR_ASM + RTS_ASM + DIV_ASM + ASM_RW + CMP_ASM + TST_ASM + INCDEC_ASM + SXT_ASM
+                    + MFPI_ASM + MTPI_ASM + MOV_ASM, "ASM_STACK")
     no_scaled_index(ASM_EAB, "__eab")
     text = text.replace(at, at + "CompilerIf #ASM_OPS = 1\n  ASM\n" + ASM_STACK + ASM_RW + "  EndASM\nCompilerEndIf\n"
                         + "CompilerIf #ASM_EA = 1\n  ASM\n" + ASM_EAB + "  EndASM\nCompilerEndIf\n")
@@ -1428,6 +1557,12 @@ def pico2_ops(text):
             fast = INCDEC_ASM % {"l": "inc", "op": "adds", "v": "0x7fff"}
         elif name.startswith("DEC"):
             fast = INCDEC_ASM % {"l": "dec", "op": "subs", "v": "0x8000"}
+        elif name.startswith("MFPI"):
+            fast = MFPI_ASM
+        elif name.startswith("MTPI"):
+            fast = MTPI_ASM
+        elif name == "MOV_01":
+            fast = MOV_ASM
         else:
             fast = SXT_ASM
         text = (text[:i] + "CompilerIf #ASM_OPS = 1\n" + fast + "CompilerEndIf\n"
