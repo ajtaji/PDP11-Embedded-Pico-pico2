@@ -121,3 +121,24 @@ How each was run, and what was different:
 
 Measured 2026-10-21.
 
+## SIM-H on the RP2350 (serialcomms' figures)
+
+[Serialcomms/Raspberry_Pico_SIMH](https://github.com/Serialcomms/Raspberry_Pico_SIMH):
+an early version of SIMH's PDP-11 for RP2350 boards, its packs kept in the
+flash with SPIFFS. Not run here: these are the figures serialcomms posted
+(2026-10-23), from his own board, by Unix's own `time` (whole seconds),
+after two runs of each program to warm it. The board's clock and the system
+were not stated; the repository's README boots Mini-Unix. The programs are
+the same two (the Sieve prints 1899 primes, the Whetstone X = 18178/10000).
+Beside them, this emulator's `time` figures for the same programs from the
+tables above, at 150 MHz:
+
+| Program | SIM-H (serialcomms) | this emulator |
+|---|---|---|
+| `time sieve` (BYTE Sieve, 10 iterations) | real 8.0, user 6.5, sys 1.3 | user 2.5 (Mini-Unix, Pico Plus 2 W) |
+| `time whet` (1,000 KWhetstones, double precision) | real 7.0, user 7.2, sys 0.5 | user 4.4 (V6, Pico Plus 2 W) |
+
+By user time this emulator is about 2.6 times as fast on the Sieve and 1.6
+times on the Whetstone. That is only as good as the conditions are alike:
+the systems, boards and clocks may differ, and none of SIM-H's figures was
+taken by this repository's script or timed from the host.
