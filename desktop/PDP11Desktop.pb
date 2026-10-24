@@ -825,7 +825,11 @@ Repeat
   pw = r\right - r\left : ph = r\bottom - r\top
   If pw < 1 Or ph < 1 : Continue : EndIf
   Util_BaseWidth = pw : Util_BaseHeight = ph
-  Util_WinWidth = cw : Util_WinHeight = chh
+  ; Util_Win* so that DesktopScaledX/Y() of it IS the physical client: under
+  ; per-monitor-v2 DesktopResolutionX() can say 1.0 while the display is at
+  ; 125%, and GadgetWidth() then leaves Neon_PhysWinHeight() short - every
+  ; scissored widget (the tab strips) empties (the vault's 8051 desktop note).
+  Util_WinWidth = pw / DesktopResolutionX() : Util_WinHeight = ph / DesktopResolutionY()
   GL_ViewportX = 0 : GL_ViewportY = 0 : GL_ViewportW = pw : GL_ViewportH = ph
   DeskW = pw : DeskH = ph
   mx = WindowMouseX(DeskWin) : my = WindowMouseY(DeskWin)
