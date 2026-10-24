@@ -231,6 +231,7 @@ EndProcedure
 Global songRow.w, rowTick.w
 Global Dim vol.w(4)
 Global Dim decay.w(4)
+Global kickHz.w                ; the kick's pitch while it falls, 0 when no kick sounds
 
 Procedure Voice(v.w, hz.w, volume.w, wave.w)
   Protected a.w = #SND_VOICE + v * #SND_STRIDE
@@ -247,20 +248,36 @@ Procedure MusicTick()
     For v = 0 To 2
       n = PeekW(p + v * 2)
       If n
-        vol(v) = 13 - v * 2
-        Voice(v, PeekW(?note_hz + n * 2), vol(v), PeekW(?voice_wave + v * 2))
+        vol(v) = PeekW(?voice_vol + v * 2)
+        If v = 2
+          Voice(v, PeekW(?note_hz + n * 2) * 2, vol(v), #W_SAW)    ; the bass an octave up: small speakers lose 110 Hz
+        Else
+          Voice(v, PeekW(?note_hz + n * 2), vol(v), PeekW(?voice_wave + v * 2))
+        EndIf
       EndIf
     Next
     drum = PeekW(p + 6)
     If drum
       vol(3) = PeekW(?drum_vol + drum * 2)
-      Voice(3, PeekW(?drum_hz + drum * 2), vol(3), #W_NOISE)
+      If drum = 1
+        kickHz = PeekW(?drum_hz + 2)                         ; the kick: a square whose pitch falls - a thump
+        Voice(3, kickHz, vol(3), #W_SQUARE)
+      Else
+        kickHz = 0
+        Voice(3, PeekW(?drum_hz + drum * 2), vol(3), #W_NOISE)
+      EndIf
     EndIf
     songRow + 1
     If songRow >= #SONG_ROWS : songRow = 16 * 4 : EndIf        ; the loop skips the intro
   EndIf
   rowTick + 1
   If rowTick >= #ROW_TICKS : rowTick = 0 : EndIf
+  ; the kick's pitch falls by a quarter a tick
+  If kickHz > 0
+    kickHz = kickHz - kickHz / 4
+    If kickHz < 40 : kickHz = 0 : EndIf
+    If Not previewMode : PokeW(#SND_VOICE + 3 * #SND_STRIDE, kickHz) : EndIf
+  EndIf
   ; the envelopes: every voice fades, the drums fast
   For v = 0 To 3
     If vol(v) > 0
@@ -277,12 +294,14 @@ EndProcedure
 DataSection
 voice_wave:
   Data.w 0, 1, 2, 3            ; lead square, arpeggio triangle, bass sawtooth, drums noise
+voice_vol:
+  Data.w 11, 8, 15             ; lead, arpeggio, bass at a note's start
 voice_decay:
-  Data.w 3, 2, 4, 1            ; ticks per volume step
+  Data.w 3, 2, 6, 1            ; ticks per volume step
 drum_hz:
-  Data.w 0, 90, 1800, 7000     ; -, kick, snare, hat
+  Data.w 0, 160, 2400, 8000    ; -, kick (its starting pitch), snare, hat
 drum_vol:
-  Data.w 0, 15, 12, 6
+  Data.w 0, 15, 14, 10
 EndDataSection
 
 ; --------------------------------------------------------------- palette
