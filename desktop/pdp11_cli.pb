@@ -250,10 +250,20 @@ For k = k To CountProgramParameters() - 1
       PrintN(line$ + " PSW=" + OctStr(PswGet(), 6) + " MMU " + Str(MmuOn) + " MMR3=" + OctStr(Mmr3, 2) + " waiting " + Str(Waiting) + " halted " + Str(Halted) + " IntReq " + Str(IntReq) + "]")
       PrintN("[cli: mem at PC: " + OctStr(Mem((Reg(7) >> 1) & $FFFFF), 6) + " " + OctStr(Mem(((Reg(7) >> 1) + 1) & $FFFFF), 6) + "  RK reads " + Str(RkReads) + " CS " + OctStr(RkCsRead(), 6) + " KwTicks " + Str(KwTicks) + " KwIe " + Str(KwIe) + "]")
     Case "dump"                             ; dump:ADDR,WORDS (octal physical address)
-      Define da.l = OctVal(StringField(rest$, 1, ",")), dn.l = Val(StringField(rest$, 2, ",")), di.l
+      ; 160000-177777 is the I/O page: the demo devices' registers (164000-164177,
+      ; read without side effects) are shown, the rest as ------ (reading a device
+      ; register can change it). Elsewhere, memory; ------ where there is none.
+      Define da.l = OctVal(StringField(rest$, 1, ",")), dn.l = Val(StringField(rest$, 2, ",")), di.l, dv.l, dx.l
       For di = 0 To dn - 1
-        If di % 8 = 0 : PrintN("") : Print(OctStr(da + di * 2, 6) + ":") : EndIf
-        Print(" " + OctStr(Mem(((da >> 1) + di) & $FFFFF), 6))
+        dx = (da + di * 2) & $3FFFFE
+        If di % 8 = 0 : PrintN("") : Print(OctStr(dx, 6 + 2 * Bool(dx > $FFFF)) + ":") : EndIf
+        If dx >= $E000 And dx <= $FFFF
+          dv = -1
+          If (dx & $FF80) = #DEMO_BASE : dv = DdRead(dx) : EndIf
+        Else
+          dv = MachPeekPhys(dx)
+        EndIf
+        If dv < 0 : Print(" ------") : Else : Print(" " + OctStr(dv, 6)) : EndIf
       Next
       PrintN("")
     Case "trace"                            ; trace:N  one instruction at a time
