@@ -1146,6 +1146,7 @@ EndProcedure
 ;  shown. The KDJ11-B has no switches; the diagnostics read them anyway.
 ; ======================================================================
 Procedure.l IoRead(a.l)                  ; a is even and past the end of RAM
+  If (a & $FF80) = #DEMO_BASE : ProcedureReturn DdRead(a) : EndIf   ; desktop_gen: the demo devices
   If a = #PSW_ADDR
     ProcedureReturn PswGet()
   ElseIf a = #DL11_RCSR
@@ -1197,6 +1198,7 @@ EndProcedure
 ; v's low byte is the new value of the register's low byte; the DL11 has
 ; nothing in its high bytes. The PSW is not handled here (see PdpWriteWord).
 Procedure IoWrite(a.l, v.l)              ; a is even and past the end of RAM
+  If (a & $FF80) = #DEMO_BASE : DdWrite(a, v) : ProcedureReturn : EndIf   ; desktop_gen: the demo devices
   If a = #DL11_RCSR
     If v & $40
       If Dl11RxIe = 0 And Dl11RxDone = 1
@@ -1353,6 +1355,7 @@ Procedure PdpWriteByte(a.l, v.l)
   If a = #MAINT_ADDR + 1                 ; the maintenance register's high byte: nothing to write
     ProcedureReturn
   EndIf
+  If (a & $FF80) = #DEMO_BASE : DdWriteByte(a, v) : ProcedureReturn : EndIf   ; desktop_gen: the demo devices
   If a & 1                               ; a device's high byte: nothing there
     If (a & $FFFE) < #DL11_RCSR Or (a & $FFFE) > #SWR_ADDR
       CpuErr = CpuErr | #CPUE_IO
@@ -2141,6 +2144,7 @@ Procedure DevService()
   If DevActive
     DevPoll()
   EndIf
+  DdPoll()                               ; desktop_gen: the demo display's frame and its interrupt
   ; an interrupt, if one is asked for and the priority lets it in: the
   ; highest bus request level first (clock BR6, disk BR5, console BR4),
   ; and on the console the receiver first, as it sits nearer the processor
@@ -9166,6 +9170,7 @@ Procedure BuildOpcodeTable()
 EndProcedure
 
 XIncludeFile "../machine_disk.pbi"      ; the desktop's disk storage (disk.pico2's place)
+XIncludeFile "../machine_demo.pbi"      ; the demo display and tone generator (desktop only)
 ; ======== kw11.pico2 (J11_18MHz_KDJ11_BF/pico2) ========
 ; ======================================================================
 ;  kw11.pico2 - the KW11-L line clock at 177546, vector 100, BR6, for the

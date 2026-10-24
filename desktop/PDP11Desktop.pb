@@ -23,6 +23,7 @@ CompilerEndIf
 XIncludeFile #GL_ENGINE_DIR$ + "GlTypes.pbi"
 XIncludeFile #GL_ENGINE_DIR$ + "GlUtilities.pbi"
 XIncludeFile #GL_ENGINE_DIR$ + "GlMath.pbi"
+XIncludeFile #GL_ENGINE_DIR$ + "GlSpriteFunctions.pbi"   ; DrawGLSprite: the demo display (desk_demo.pbi)
 XIncludeFile #GL_ENGINE_DIR$ + "GlUI.pbi"
 XIncludeFile #GL_ENGINE_DIR$ + "GlUIChrome.pbi"
 
@@ -48,6 +49,8 @@ Global DeskMemAddr.l = $DE00               ; the memory pane's first physical ad
 Global DeskMemS.String, DeskBrkS.String
 Global *DeskTermFont.GLFont
 Global DeskWheel.l
+Global DeskLadderOn.l                      ; the ladder runs in the window
+Global DeskDdShown.l                       ; the window has gone to the Display tab once (desk_demo.pbi)
 
 #DESK_TRACE = 64
 Global Dim DeskTracePc.l(#DESK_TRACE)
@@ -128,8 +131,34 @@ Procedure TermClear()
 EndProcedure
 
 ; ---- the machine, from the window ----------------------------------------------------
+; A standalone program (an absolute-loader file, as the compiler writes one), as
+; pdp11_cli's lda: runs it: memory cleared, loaded, started at its transfer
+; address with the MMU off. Boot goes back to the image.
+Procedure DeskRunLda(file$)
+  DeskRunning = 0 : DeskLadderOn = 0
+  MachTapeReset()
+  If MachLoadTape(file$) = 0
+    DeskSay("could not load: " + MachTapeWhy$)
+    ProcedureReturn
+  EndIf
+  If MachTapeStart & 1
+    DeskSay(GetFilePart(file$) + ": the transfer address " + DeskOct(MachTapeStart, 6) + " is odd (do not start)")
+    ProcedureReturn
+  EndIf
+  TermClear()
+  DeskDdShown = 0
+  MachTapeGo(MachTapeStart, 0)
+  DeskTraceN = 0
+  DeskRunning = 1
+  DeskSay("running " + GetFilePart(file$) + " from " + DeskOct(MachTapeStart, 6))
+EndProcedure
+
 Procedure DeskLoad(file$)
   DeskRunning = 0
+  If LCase(GetExtensionPart(file$)) = "lda"
+    DeskRunLda(file$)
+    ProcedureReturn
+  EndIf
   If MachLoadImage(file$) = 0
     DeskSay("could not load: " + MachWhy$)
     ProcedureReturn
@@ -144,6 +173,7 @@ EndProcedure
 Procedure DeskBoot()
   If *MdPack0 = 0 : DeskSay("no image loaded") : ProcedureReturn : EndIf
   TermClear()
+  DeskDdShown = 0
   MachBootRk(0, MachHdrSwitches)
   DeskAutoStage = Bool(MachHdrAutoName$ <> "")
   DeskRunning = 1
@@ -221,7 +251,7 @@ Procedure DeskRunFor(ms.l)
 EndProcedure
 
 ; ---- the ladder in the window -------------------------------------------------------
-Global DeskLadderOn.l, DeskLadderT0.q, DeskLadderPlan$
+Global DeskLadderT0.q, DeskLadderPlan$
 Structure DeskRungResult
   name$
   verdict$
@@ -301,6 +331,8 @@ Global DeskW.f, DeskH.f                    ; the canvas, physical pixels
 Procedure.f S(v.f)
   ProcedureReturn Neon_S(v)
 EndProcedure
+
+XIncludeFile "desk_demo.pbi"              ; the Display tab and the sound (machine_demo.pbi)
 
 Procedure DeskLamp(x.f, y.f, d.f, on.l, r.f, g.f, b.f)
   If on
@@ -578,7 +610,7 @@ Procedure DeskTopBar(h.f)
   Neon_Text(*Neon_FontBold, x, y + (bh - *Neon_FontBold\LineHeight) / 2, "PDP-11/J-11", Neon_C_AmbR, Neon_C_AmbG, Neon_C_AmbB)
   x + S(120)
   If Neon_Button(x, y, S(70), bh, "Open...")
-    f$ = OpenFileRequester("A PDP-11 image (the board's combined UF2)", DeskImage$, "UF2 images (*.uf2)|*.uf2|All files (*.*)|*.*", 0)
+    f$ = OpenFileRequester("A PDP-11 image (the board's combined UF2) or a program (.lda)", DeskImage$, "Images and programs (*.uf2;*.lda)|*.uf2;*.lda|All files (*.*)|*.*", 0)
     If f$ <> "" : DeskLoad(f$) : EndIf
   EndIf
   x + S(76)
@@ -639,11 +671,12 @@ Procedure DeskDraw()
   lx = gap : rx = lx + lw + gap
   y = top + gap
   ; the left: console, ladder, log
-  DeskTab = Neon_TabStrip(10, lx, y, lw, S(30), "Console (DL11 177560)|Diagnostic ladder|Log", DeskTab)
+  DeskTab = Neon_TabStrip(10, lx, y, lw, S(30), "Console (DL11 177560)|Diagnostic ladder|Log|Display (164000)", DeskTab)
   Select DeskTab
     Case 0 : DeskTerminal(lx, y + S(30), lw, DeskH - y - S(30) - gap - S(22))
     Case 1 : DeskLadderPane(lx, y + S(30), lw, DeskH - y - S(30) - gap - S(22))
     Case 2 : DeskLogPane(lx, y + S(30), lw, DeskH - y - S(30) - gap - S(22))
+    Case 3 : DeskDisplayPane(lx, y + S(30), lw, DeskH - y - S(30) - gap - S(22))
   EndSelect
   If ListSize(DeskLog())
     LastElement(DeskLog())
@@ -729,6 +762,8 @@ DeskFonts(Neon_UIScale)
 GL_SetVSync(0)
 SetActiveGadget(DeskGl)
 TermClear()
+DeskDdInit()
+DeskAudioOpen()
 
 Define img$
 If CountProgramParameters() > 0
@@ -738,7 +773,7 @@ Else
 EndIf
 If FileSize(img$) > 0
   DeskLoad(img$)
-  DeskBoot()
+  If LCase(GetExtensionPart(img$)) <> "lda" : DeskBoot() : EndIf
 Else
   DeskSay("no image: Open... one (images/*/combined.uf2)")
 EndIf
@@ -807,6 +842,10 @@ Repeat
     DeskRunFor(14)
   Else
     Delay(10)
+  EndIf
+  DeskAudioPump()
+  If DdUsed And DeskDdShown = 0              ; a program drew: show it, once
+    DeskDdShown = 1 : DeskTab = 3
   EndIf
   now = ElapsedMilliseconds()
   If now - DeskSpeedT >= 1000

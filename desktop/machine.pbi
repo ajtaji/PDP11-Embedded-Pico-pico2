@@ -29,3 +29,12 @@ Procedure.l Micros()                      ; microseconds, wrapping at 32 bits as
 EndProcedure
 
 ; SmpBarrier: cpu.pico2's own (its dmb, Arm assembly, is dropped: one thread on the PC)
+
+; ---- the demo devices (machine_demo.pbi): what the core's hooks need first ---
+#DEMO_BASE   = $E800                 ; 164000-164177
+#INT_DEMO    = 32                    ; an IntReq bit no board device uses
+#VEC_DEMO    = $D0                   ; 000320
+Declare.l DdRead(a.l)
+Declare DdWrite(a.l, v.l)
+Declare DdWriteByte(a.l, v.l)
+Declare DdPoll()

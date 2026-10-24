@@ -42,6 +42,9 @@ this tool rather than producing a different machine):
     also brings the RP11's flash storage); here cpu.pico2's and rk11.pico2's
     memory blocks answer to #DESK_MEM and the window #PS_MEM is PsMem, a
     buffer (machine.pbi), so V7's 2 MB runs as on the Pico Plus 2.
+  * The demo devices (desktop/machine_demo.pbi, 164000-164177, vector 320):
+    four hooks, at IoRead, IoWrite, WriteByte and DevService. Desktop only
+    until a board has a video and audio output for them.
   * Declare lines for every procedure (PureBasic, unlike PureMetal, wants a
     procedure declared before a call that comes first).
 
@@ -166,6 +169,22 @@ def transform(name, text):
         text, k = re.subn(r"CompilerIf #PSRAM = 1(?!\s*\n#RAM_BYTES)", "CompilerIf #DESK_MEM = 1", text)
         if k == 0:
             fail(name + ": no CompilerIf #PSRAM = 1 to give #DESK_MEM; teach desktop/tools/desktop_gen.py.")
+    if name == "cpu.pico2":
+        # THE DEMO DEVICES (desktop/machine_demo.pbi): the display and the tone
+        # generator the compiler's demo writes to, 164000-164177, vector 320.
+        # Desktop only until a board has video and audio for them: four hooks.
+        text = exact(text, "Procedure.i IoRead(a.i)                  ; a is even and past the end of RAM\n",
+                     "Procedure.i IoRead(a.i)                  ; a is even and past the end of RAM\n"
+                     "  If (a & $FF80) = #DEMO_BASE : ProcedureReturn DdRead(a) : EndIf   ; desktop_gen: the demo devices\n", name, 1)
+        text = exact(text, "Procedure IoWrite(a.i, v.i)              ; a is even and past the end of RAM\n",
+                     "Procedure IoWrite(a.i, v.i)              ; a is even and past the end of RAM\n"
+                     "  If (a & $FF80) = #DEMO_BASE : DdWrite(a, v) : ProcedureReturn : EndIf   ; desktop_gen: the demo devices\n", name, 1)
+        text = exact(text, "  If a & 1                               ; a device's high byte: nothing there\n",
+                     "  If (a & $FF80) = #DEMO_BASE : DdWriteByte(a, v) : ProcedureReturn : EndIf   ; desktop_gen: the demo devices\n"
+                     "  If a & 1                               ; a device's high byte: nothing there\n", name, 1)
+        text = exact(text, "  ; an interrupt, if one is asked for and the priority lets it in: the\n",
+                     "  DdPoll()                               ; desktop_gen: the demo display's frame and its interrupt\n"
+                     "  ; an interrupt, if one is asked for and the priority lets it in: the\n", name, 1)
     if name == "fp11.pico2":
         text = exact(text, "ProcedureReturn Bool((a ! $80000000) < (b ! $80000000))",
                      "Protected ua.q = a & $FFFFFFFF, ub.q = b & $FFFFFFFF : ProcedureReturn Bool(ua < ub)   ; desktop_gen: unsigned, in quads (a compare of .l operands is 32-bit even with a 64-bit mask in it)",
@@ -188,7 +207,8 @@ def build():
     parts, texts, report = [], [], []
     for f in FILES:
         if f == "@disk":
-            parts.append('XIncludeFile "../machine_disk.pbi"      ; the desktop\'s disk storage (disk.pico2\'s place)\n')
+            parts.append('XIncludeFile "../machine_disk.pbi"      ; the desktop\'s disk storage (disk.pico2\'s place)\n'
+                         'XIncludeFile "../machine_demo.pbi"      ; the demo display and tone generator (desktop only)\n')
             continue
         src = open(os.path.join(SRC, f), encoding="utf-8", errors="strict").read().replace("\r\n", "\n")
         t, nasm = transform(f, src)

@@ -67,16 +67,39 @@ and the second step at its prompt.
   instruction. With a breakpoint or the trace on, the processor runs one
   instruction at a time, which is slower, and the speed readout says so.
 
+## The demo devices (desktop only, for now)
+
+A raster display and a 4-voice tone generator for the compiler's PDP-11 demo
+(`desktop/machine_demo.pbi`; the registers are listed at its top). The display
+is 320x200 at 4 bits a pixel. Its framebuffer is in memory, at the address
+DPBASE (164002) gives in 64-byte units. The CSR is at 164000 and the frame
+interrupt is at vector 320, BR4. Each voice has a pitch in Hz, a volume and a
+waveform, at 164100; SNDCSR (164142) turns the sound on. The window has a
+Display tab and plays the voices. `pdp11_cli shot:FILE.bmp` saves the frame.
+They are not in the board's firmware: desktop_gen.py hooks them into the core.
+They move into the pico2 sources when a board has a video and audio output for them.
+
 ## The console program
 
 ```
 pdp11_cli IMAGE.uf2 [BOOT d,switches] [step ...]
 pdp11_cli ladder:PLAN[@NAME]
+pdp11_cli [fill:BYTE] lda:FILE.lda[@SECONDS] [regs | dump:A,N | dis:A,N ...]
 ```
+
+`lda:` runs a standalone program, as a compiler's absolute-loader output. It
+clears memory, loads the file, and starts at the file's transfer address with
+the MMU off and the switches at 0. It prints what the program types on the
+console (177560) and runs until a HALT or the timeout (10 s by default). The
+last line is `cli: HALT at <the HALT's address> R0=... SP=... PSW=... after N instructions`
+or `cli: TIMEOUT ...`. The exit code is 0 on a HALT, 2 on a timeout and 1 if
+the load failed. `fill:BYTE` (octal) before it leaves that byte, not 0, in
+000000-157777 wherever the file loads nothing, so a test can tell which bytes
+the program wrote.
 
 Steps: `until:TEXT[:s]`, `send:TEXT` (with a return), `raw:TEXT`
 (`\r \n \xHH` understood), `wait:S`, `mark`, `stats`, `regs`, `dump:A,N`,
-`dis:A,N`, `trace:N`. Examples:
+`dis:A,N`, `trace:N`, `shot:FILE.bmp`. Examples:
 
 ```
 .\pdp11_cli.exe ..\images\picoplus2\combined.uf2 BOOT 0,173030 "until:@" "send:rkunix" "until:# " "send:ls -l /" "until:# "

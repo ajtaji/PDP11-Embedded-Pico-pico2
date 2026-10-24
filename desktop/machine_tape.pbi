@@ -144,6 +144,7 @@ Procedure MachTapeGo(start.l, switches.l)
   MachBells = 0
   MachTapeText$ = ""
   MachBootDrive = -1
+  DdReset()
 EndProcedure
 
 ; What the program typed, as the board's core 1 takes it: a bell counted, the

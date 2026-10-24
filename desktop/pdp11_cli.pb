@@ -9,6 +9,15 @@
 ;            wait:SECONDS           run on for that long
 ;            stats                  instructions and the rate so far
 ;            mark                   count instructions and time from here
+;            lda:FILE[@SECONDS]     a standalone program: memory cleared, the absolute-loader
+;                                   file loaded and started at its transfer address (MMU off,
+;                                   switches 0), run to HALT or the timeout (default 10 s),
+;                                   the console printed, then "cli: HALT at ..." with the
+;                                   registers; exit 0 on HALT, 2 on a timeout, 1 if the load
+;                                   failed. No image needed; dump:, regs, dis: may follow.
+;            fill:BYTE              (octal) before lda: - 000000-157777 holds BYTE where the
+;                                   file loads nothing, instead of 0
+;            shot:FILE.bmp          the demo display's frame now (machine_demo.pbi), 320x200
 ;            ladder:PLAN[@NAME]     the diagnostic ladder (media/diagnostics/ladder.txt),
 ;                                   or the rungs whose names start with NAME; no image needed
 ;            regs, dump:A,N, trace:N   the processor, memory, one instruction at a time
@@ -122,13 +131,83 @@ Procedure CliLadder(plan$, only$)
   PrintN("cli: ladder " + Str(npass) + " PASS, " + Str(nfail) + " FAIL, " + Str(nnone) + " no verdict")
 EndProcedure
 
+; The demo display's frame (machine_demo.pbi), as the window shows it, into a
+; 24-bit BMP; DCSR's enable bit is not looked at, so a test sees what it drew.
+Procedure CliShot(file$)
+  Protected *px = AllocateMemory(#DEMO_W * #DEMO_H * 4), f.i, y.l, x.l, *row, c.l
+  DdRender(*px, #DEMO_W * 4)
+  f = CreateFile(#PB_Any, file$)
+  If f = 0 : PrintN("cli: cannot write " + file$) : FreeMemory(*px) : ProcedureReturn : EndIf
+  WriteWord(f, $4D42) : WriteLong(f, 54 + #DEMO_W * #DEMO_H * 3) : WriteLong(f, 0) : WriteLong(f, 54)
+  WriteLong(f, 40) : WriteLong(f, #DEMO_W) : WriteLong(f, #DEMO_H) : WriteWord(f, 1) : WriteWord(f, 24)
+  WriteLong(f, 0) : WriteLong(f, #DEMO_W * #DEMO_H * 3) : WriteLong(f, 2835) : WriteLong(f, 2835) : WriteLong(f, 0) : WriteLong(f, 0)
+  For y = #DEMO_H - 1 To 0 Step -1          ; a BMP's rows bottom first
+    *row = *px + y * #DEMO_W * 4
+    For x = 0 To #DEMO_W - 1
+      c = PeekL(*row + x * 4)
+      WriteByte(f, c & $FF) : WriteByte(f, (c >> 8) & $FF) : WriteByte(f, (c >> 16) & $FF)
+    Next
+  Next
+  CloseFile(f)
+  FreeMemory(*px)
+  PrintN("cli: shot " + file$ + " (frame " + Str(DdFrames) + ", DPCSR " + OctStr(DdCsr & $C1, 6) + ", DPBASE " + OctStr(DdBase, 6) + " = " + OctStr((DdBase << 6) & $3FFFFF, 8) + ")")
+EndProcedure
+
+Global CliExit.l                            ; the program's exit code (lda: sets it)
+Global CliFill.l = -1                       ; fill: the byte lda: leaves in 000000-157777 before loading
+
+; A standalone program (an absolute-loader file, as a compiler writes one): what
+; the board's tape reader does with R, T and G, then run to the HALT.
+Procedure CliLda(file$, secs.l)
+  Protected t.q, c.l, r.l, line$
+  If secs <= 0 : secs = 10 : EndIf
+  MachTapeReset()
+  If CliFill >= 0                           ; fill: memory as the program will find it, but for what it loads
+    FillMemory(@Mem(0), $E000, CliFill, #PB_Byte)
+  EndIf
+  If MachLoadTape(file$) = 0
+    PrintN("cli: LOAD FAILED: " + MachTapeWhy$)
+    CliExit = 1 : ProcedureReturn
+  EndIf
+  If MachTapeStart & 1
+    PrintN("cli: LOAD FAILED: " + file$ + " has transfer address " + OctStr(MachTapeStart, 6) + " (odd: do not start)")
+    CliExit = 1 : ProcedureReturn
+  EndIf
+  MachTapeGo(MachTapeStart, 0)
+  CliT0 = ElapsedMilliseconds()
+  t = CliT0 + secs * 1000
+  While ElapsedMilliseconds() < t And Halted = 0
+    MachSlice()
+    c = MachConGet()
+    While c >= 0
+      If c <> 13 And c <> 0 : Print(Chr(c)) : EndIf
+      c = MachConGet()
+    Wend
+  Wend
+  c = MachConGet()
+  While c >= 0
+    If c <> 13 And c <> 0 : Print(Chr(c)) : EndIf
+    c = MachConGet()
+  Wend
+  If Halted
+    line$ = "cli: HALT at " + OctStr(Reg(7), 6)
+    CliExit = 0
+  Else
+    line$ = "cli: TIMEOUT after " + Str(secs) + " s, PC " + OctStr(Reg(7), 6)
+    CliExit = 2
+  EndIf
+  For r = 0 To 5 : line$ + " R" + Str(r) + "=" + OctStr(Reg(r), 6) : Next
+  line$ + " SP=" + OctStr(Reg(6), 6) + " PSW=" + OctStr(PswGet(), 6) + " after " + Str(MachTotal) + " instructions"
+  PrintN("") : PrintN(line$)
+EndProcedure
+
 OpenConsole()
 If CountProgramParameters() < 1
   PrintN("pdp11_cli IMAGE.uf2 [BOOT d,switches] [until:TEXT[:s] | send:TEXT | raw:TEXT | wait:S | stats] ...")
   End 1
 EndIf
 Define img$ = ProgramParameter(0), k.l = 1, a$, verb$, rest$, secs.l, p.l, d.l = 0, sw.l = -1
-If LCase(Left(img$, 7)) = "ladder:"
+If LCase(Left(img$, 7)) = "ladder:" Or LCase(Left(img$, 4)) = "lda:" Or LCase(Left(img$, 5)) = "fill:"
   k = 0
 ElseIf MachLoadImage(img$) = 0
   PrintN("cli: " + MachWhy$) : End 1
@@ -185,6 +264,13 @@ For k = k To CountProgramParameters() - 1
         If ti % 10 = 0 : PrintN("") : EndIf
       Next
       PrintN("")
+    Case "shot"                             ; shot:FILE.bmp  the demo display's frame
+      CliShot(rest$)
+    Case "fill"                             ; fill:BYTE (octal), before lda:
+      CliFill = OctVal(rest$) & $FF
+    Case "lda"
+      CliLda(StringField(rest$, 1, "@"), Val(StringField(rest$, 2, "@")))
+      If CliExit = 1 : End 1 : EndIf
     Case "ladder"
       CliLadder(StringField(rest$, 1, "@"), StringField(rest$, 2, "@"))
     Case "mark"                             ; the count and the clock from here (for stats)
@@ -201,3 +287,4 @@ For k = k To CountProgramParameters() - 1
   EndSelect
 Next
 PrintN("")
+End CliExit

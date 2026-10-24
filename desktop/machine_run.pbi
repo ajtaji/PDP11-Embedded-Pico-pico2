@@ -159,6 +159,7 @@ Procedure MachBootRk(d.l, switches.l)
   ConOutTail = ConOutHead
   KwNext = Micros() + #KW_PERIOD_US
   MachBootDrive = d
+  DdReset()
 EndProcedure
 
 ; ---- the console: what core 1 does with the DL11's two queues --------------
@@ -188,6 +189,7 @@ Procedure.l MachSlice()
   n = CpuRun(#MACH_SLICE)
   MachTotal + n
   KwTick()
+  DdTick()
   DkServe()
   ProcedureReturn n
 EndProcedure
