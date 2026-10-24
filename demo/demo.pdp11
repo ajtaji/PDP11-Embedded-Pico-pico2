@@ -1,0 +1,355 @@
+; ======================================================================
+;  demo.pdp11 - the PureMetal PDP-11 demo
+; ======================================================================
+;
+;  A J-11 doing what a 1980s PDP-11 could never be asked to: a shimmering
+;  logo, a plasma field that never stops moving, a spinning cube and a
+;  scrolling message on a 320 x 200 colour screen, and a four-voice tune.
+;  All of it PureMetal, compiled straight to PDP-11 machine code; no Unix,
+;  no operating system.
+;
+;  Build:  PureMetalForge.exe --compile demo.pdp11 -o demo.hex   (writes demo.lda)
+;  Run:    load demo.lda on the PDP-11 emulator (the window or the Pico build),
+;          which shows the display and plays the sound.
+;
+;  HOW IT IS SPLIT, so it keeps time on a slow machine as well as a fast one:
+;    - the line clock's interrupt (60 a second) plays the music and moves the
+;      palette - the logo's shimmer and the plasma's motion are nothing but
+;      palette changes, so they cost no drawing at all;
+;    - the main loop draws: the cube and the scroller, as fast as it can,
+;      one frame per clock tick at most.
+;
+;  THE SCREEN is an ordinary array, screen(), which the display's base
+;  register points at: 320 x 200 pixels, 4 bits each, 160 bytes a row, the
+;  left pixel of a byte in its low nibble. The register counts in 64-byte
+;  units, so the screen starts at the first such boundary inside the array,
+;  fbOff bytes in.
+;
+;  COLOURS: 0 black, 1-6 the plasma (rotated), 7 the logo's outline, 8-13
+;  the logo's body (a light band runs down it), 14 the scroller, 15 the cube.
+EnableExplicit
+XIncludeFile "demo_assets.pdp11"
+
+;  ---- the display and the sound: the PDP-11 emulator's devices, named by the
+; board (Boards/PDP11_J11.board):
+;   DISPLAY_CSR 164000      bit 0 shown, bit 6 frame interrupt, bit 7 frame
+;   DISPLAY_BASE 164002     the screen's address in 64-byte units
+;   DISPLAY_SCROLL 164004   the row shown at the top
+;   DISPLAY_PALETTE 164040  16 words, 0x0RGB
+;   SOUND_VOICE 164100      voice n at +8n: Hz, volume 0-15, wave
+;   SOUND_MASTER 164140, SOUND_CSR 164142 (bit 0: the sound on)
+#DISP_CSR    = #BOARD_DISPLAY_CSR
+#DISP_BASE   = #BOARD_DISPLAY_BASE
+#DISP_SCROLL = #BOARD_DISPLAY_SCROLL
+#DISP_PAL    = #BOARD_DISPLAY_PALETTE
+#SND_VOICE   = #BOARD_SOUND_VOICE
+#SND_STRIDE  = #BOARD_SOUND_VOICE_STRIDE
+#SND_MASTER  = #BOARD_SOUND_MASTER
+#SND_CSR     = #BOARD_SOUND_CSR
+#ROW_BYTES   = 160
+
+#W_SQUARE = 0
+#W_TRIANGLE = 1
+#W_SAW = 2
+#W_NOISE = 3
+
+Global Dim screen.a(32064)
+Global fbOff.w            ; where the 64-byte-aligned screen starts in screen()
+Global Dim pal.w(16)
+; 1 runs without touching the display or the sound - for looking at frames on
+; a machine that has neither (make_preview.py sets it)
+Global previewMode.w = 0
+
+; ---------------------------------------------------------------- pixels
+Procedure Plot(x.w, y.w, c.w)
+  Protected i.w = fbOff + (y << 7) + (y << 5) + (x >> 1)
+  If x & 1
+    screen(i) = (screen(i) & $0F) | (c << 4)
+  Else
+    screen(i) = (screen(i) & $F0) | c
+  EndIf
+EndProcedure
+
+; Bresenham, all eight octants, in LineColour.
+Global LineColour.w
+Procedure Line(x0.w, y0.w, x1.w, y1.w)
+  Protected dx.w = x1 - x0, dy.w = y1 - y0, sx.w = 1, sy.w = 1, err.w, e2.w
+  If dx < 0 : dx = -dx : sx = -1 : EndIf
+  If dy < 0 : dy = -dy : sy = -1 : EndIf
+  err = dx - dy
+  Repeat
+    Plot(x0, y0, LineColour)
+    If x0 = x1 And y0 = y1 : Break : EndIf
+    e2 = err * 2
+    If e2 > -dy : err - dy : x0 + sx : EndIf
+    If e2 < dx : err + dx : y0 + sy : EndIf
+  ForEver
+EndProcedure
+
+; ------------------------------------------------------------------ logo
+#LOGO_ROW = 8
+#LOGO_X = 48                ; pixels from the left (a whole word): centred
+
+Procedure DrawLogo()
+  Protected y.w, w.w, src.w = ?logo_pixels, dst.w
+  For y = 0 To #LOGO_H - 1
+    dst = @screen(fbOff + (#LOGO_ROW + y) * #ROW_BYTES + #LOGO_X / 2)
+    For w = 0 To #LOGO_W / 4 - 1
+      PokeW(dst, PeekW(src))
+      dst + 2
+      src + 2
+    Next
+  Next
+EndProcedure
+
+; ---------------------------------------------------------------- plasma
+#PL_TOP = 68
+#PL_BOTTOM = 167
+#CUBE_LEFT = 104            ; the cube's black window inside the plasma
+#CUBE_RIGHT = 215
+
+Procedure.w Sine(a.w)
+  ProcedureReturn PeekW(?sine_table + ((a & 255) << 1))
+EndProcedure
+
+; Once, at the start: each pixel's colour 1-6 from three sines. Moving it
+; afterwards is the palette's job.
+Procedure DrawPlasma()
+  Protected x.w, y.w, v.w
+  For y = #PL_TOP To #PL_BOTTOM
+    For x = 0 To 319
+      If x < #CUBE_LEFT Or x > #CUBE_RIGHT
+        v = Sine(x * 3) + Sine(y * 5) + Sine((x + y) * 2 + 64)      ; -381..381
+        Plot(x, y, 1 + (v + 381) * 6 / 763)
+      EndIf
+    Next
+  Next
+EndProcedure
+
+; ------------------------------------------------------------------ cube
+Global Dim cubeX.w(8)
+Global Dim cubeY.w(8)
+Global Dim oldX.w(8)
+Global Dim oldY.w(8)
+Global cubeDrawn.w
+Global angleA.w, angleB.w
+
+; the eight corners (+-1 each) and the twelve edges, as corner numbers
+DataSection
+cube_corners:
+  Data.w -1, -1, -1,  1, -1, -1,  1, 1, -1,  -1, 1, -1
+  Data.w -1, -1, 1,   1, -1, 1,   1, 1, 1,   -1, 1, 1
+cube_edges:
+  Data.w 0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7
+EndDataSection
+
+; Rotate the corners about two axes and project them into the window.
+Procedure CubeProject()
+  Protected i.w, x.w, y.w, z.w, t.w, sa.w, ca.w, sb.w, cb.w, p.w = ?cube_corners
+  sa = Sine(angleA) : ca = Sine(angleA + 64)
+  sb = Sine(angleB) : cb = Sine(angleB + 64)
+  For i = 0 To 7
+    x = PeekW(p) * 34 : y = PeekW(p + 2) * 34 : z = PeekW(p + 4) * 34
+    p + 6
+    ; about the y axis
+    t = (x * ca - z * sa) / 128
+    z = (x * sa + z * ca) / 128
+    x = t
+    ; about the x axis
+    t = (y * cb - z * sb) / 128
+    z = (y * sb + z * cb) / 128
+    y = t
+    ; perspective
+    cubeX(i) = 160 + x * 160 / (z + 200)
+    cubeY(i) = 118 + y * 160 / (z + 200)
+  Next
+EndProcedure
+
+Procedure CubeEdges(useOld.w)
+  Protected e.w, a.w, b.w, p.w = ?cube_edges
+  For e = 0 To 11
+    a = PeekW(p) : b = PeekW(p + 2)
+    p + 4
+    If useOld
+      Line(oldX(a), oldY(a), oldX(b), oldY(b))
+    Else
+      Line(cubeX(a), cubeY(a), cubeX(b), cubeY(b))
+    EndIf
+  Next
+EndProcedure
+
+Procedure CubeFrame()
+  Protected i.w
+  If cubeDrawn
+    LineColour = 0
+    CubeEdges(1)
+  EndIf
+  angleA + 2
+  angleB + 3
+  CubeProject()
+  LineColour = 15
+  CubeEdges(0)
+  For i = 0 To 7
+    oldX(i) = cubeX(i) : oldY(i) = cubeY(i)
+  Next
+  cubeDrawn = 1
+EndProcedure
+
+; -------------------------------------------------------------- scroller
+#SC_ROW = 182
+Global scrollChar.w, scrollColumn.w
+
+; Everything one word (4 pixels) to the left, and 4 new pixels of the
+; current letter at the right.
+Procedure ScrollFrame()
+  Protected r.w, w.w, a.w, bits.w, code.w, n.w, px.w
+  For r = 0 To 7
+    a = @screen(fbOff + (#SC_ROW + r) * #ROW_BYTES)
+    For w = 0 To #ROW_BYTES / 2 - 2
+      PokeW(a, PeekW(a + 2))
+      a + 2
+    Next
+    code = PeekA(?scroll_text + scrollChar)
+    bits = PeekA(?font_rows + code * 8 + r) << scrollColumn
+    px = 0
+    For n = 0 To 3
+      If bits & $80 : px = px | (14 << (n * 4)) : EndIf
+      bits = bits << 1
+    Next
+    PokeW(a, px)
+  Next
+  scrollColumn + 4
+  If scrollColumn >= 8
+    scrollColumn = 0
+    scrollChar + 1
+    If PeekA(?scroll_text + scrollChar) = 255 : scrollChar = 0 : EndIf
+  EndIf
+EndProcedure
+
+; ----------------------------------------------------------------- music
+#ROW_TICKS = 7
+Global songRow.w, rowTick.w
+Global Dim vol.w(4)
+Global Dim decay.w(4)
+
+Procedure Voice(v.w, hz.w, volume.w, wave.w)
+  Protected a.w = #SND_VOICE + v * #SND_STRIDE
+  If previewMode : ProcedureReturn : EndIf
+  PokeW(a, hz)
+  PokeW(a + 2, volume)
+  PokeW(a + 4, wave)
+EndProcedure
+
+Procedure MusicTick()
+  Protected v.w, n.w, p.w, drum.w
+  If rowTick = 0
+    p = ?song_rows + songRow * 8
+    For v = 0 To 2
+      n = PeekW(p + v * 2)
+      If n
+        vol(v) = 13 - v * 2
+        Voice(v, PeekW(?note_hz + n * 2), vol(v), PeekW(?voice_wave + v * 2))
+      EndIf
+    Next
+    drum = PeekW(p + 6)
+    If drum
+      vol(3) = PeekW(?drum_vol + drum * 2)
+      Voice(3, PeekW(?drum_hz + drum * 2), vol(3), #W_NOISE)
+    EndIf
+    songRow + 1
+    If songRow >= #SONG_ROWS : songRow = 16 * 4 : EndIf        ; the loop skips the intro
+  EndIf
+  rowTick + 1
+  If rowTick >= #ROW_TICKS : rowTick = 0 : EndIf
+  ; the envelopes: every voice fades, the drums fast
+  For v = 0 To 3
+    If vol(v) > 0
+      decay(v) = decay(v) + 1
+      If decay(v) >= PeekW(?voice_decay + v * 2)
+        decay(v) = 0
+        vol(v) = vol(v) - 1
+        If Not previewMode : PokeW(#SND_VOICE + v * #SND_STRIDE + 2, vol(v)) : EndIf
+      EndIf
+    EndIf
+  Next
+EndProcedure
+
+DataSection
+voice_wave:
+  Data.w 0, 1, 2, 3            ; lead square, arpeggio triangle, bass sawtooth, drums noise
+voice_decay:
+  Data.w 3, 2, 4, 1            ; ticks per volume step
+drum_hz:
+  Data.w 0, 90, 1800, 7000     ; -, kick, snare, hat
+drum_vol:
+  Data.w 0, 15, 12, 6
+EndDataSection
+
+; --------------------------------------------------------------- palette
+Global frame.w
+DataSection
+plasma_colours:                 ; 12 colours the six plasma entries walk through
+  Data.w $00F, $04F, $08F, $0CF, $0FF, $0FC, $0F8, $4F4, $8F0, $CF4, $8CF, $44F
+logo_ramp:                      ; the body's six rows, dark to light
+  Data.w $F20, $F60, $F90, $FC0, $FE4, $FF8
+EndDataSection
+
+Procedure PaletteTick()
+  Protected i.w, k.w, band.w
+  ; the plasma: every entry one step along the ring, every 4 ticks
+  k = frame >> 2
+  For i = 1 To 6
+    pal(i) = PeekW(?plasma_colours + ((i + k) % 12) * 2)
+  Next
+  ; the logo: its ramp, and a white band moving down it every 8 ticks
+  band = (frame >> 3) % 10
+  For i = 0 To 5
+    If i = band Or i = band - 1
+      pal(8 + i) = $FFF
+    Else
+      pal(8 + i) = PeekW(?logo_ramp + i * 2)
+    EndIf
+  Next
+  If previewMode : ProcedureReturn : EndIf
+  For i = 0 To 15
+    PokeW(#DISP_PAL + i * 2, pal(i))
+  Next
+EndProcedure
+
+; ------------------------------------------------------- the clock's tick
+Global ticks.w
+
+ProcedureInterrupt Clock()
+  ticks + 1
+  frame + 1
+  MusicTick()
+  PaletteTick()
+EndProcedure
+
+; ------------------------------------------------------------------ main
+Procedure Main()
+  Protected last.w
+  pal(0) = $000 : pal(7) = $226 : pal(14) = $FFA : pal(15) = $FFF
+  fbOff = ((@screen(0) + 63) & ~63) - @screen(0)
+  DrawLogo()
+  DrawPlasma()
+  If Not previewMode
+    PokeW(#DISP_BASE, ((@screen(0) + fbOff) >> 6) & $3FF)
+    PokeW(#DISP_SCROLL, 0)
+    PokeW(#DISP_CSR, 1)
+    PokeW(#SND_MASTER, 12)
+    PokeW(#SND_CSR, 1)
+  EndIf
+  PokeW(#BOARD_KW11_LKS, 64)
+  EnableInterrupts
+  Repeat
+    While ticks = last
+      pdp11_wait()
+    Wend
+    last = ticks
+    CubeFrame()
+    ScrollFrame()
+  ForEver
+EndProcedure
+
+Main()
