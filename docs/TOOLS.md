@@ -261,6 +261,14 @@ python tools/pack_install.py --board feather|picoplus2 --image combined.uf2 (--h
 
 For a board with no boot drive at hand. With `--compiler` it builds and uploads the installer (`pico2/packinstall.pico2`); then it sends each pack region of the image a sector at a time, every sector answered with a checksum, the header sector last, and the whole region read back and compared at the end. `--probe` tests one sector first; `--status` only asks what the flash holds (`PACK`, `UNFINISHED`, `BLANK`, `OTHER`); `--sums` prints the image's region checksums, the ones the firmware prints at start-up. The installer refuses a region inside the first 256 KB, past the flash size it measured, or past the size it was built for. It runs on Windows (the hub port from the device's location path) and reads the same from sysfs on Linux, where it has not been run.
 
+## `uf2_firmware.py` - new firmware into an image, the packs left alone
+
+```
+python tools/uf2_firmware.py IMAGE.uf2 FIRMWARE.bin -o NEW.uf2
+```
+
+For a release where only the firmware changed: every block of the image from the radio's region up (the packs) is copied unchanged, the blocks below it are made from the firmware (`diag.bin`, as `psram_build.py` or `--compile ... -o fw.bin` writes it). The packs keep their nonce, so on the PSRAM boards the store of saved changes still belongs to them and survives the reflash (a new `rk_image.py` run would start it empty). It reads the new file back and writes nothing unless the packs came out byte for byte the same. The images of 2026-10-24 were made with it.
+
 ## `board_session.py` - a scripted session at the Unix prompt
 
 ```
