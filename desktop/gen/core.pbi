@@ -354,6 +354,11 @@ CompilerEndIf
 #KW_CSR      = $FF66        ; 177546, the KW11-L's one register
 #RP_BASE     = $FDC8        ; 176710-176736, the RP11's registers (rp11.pico2) ...
 #RP_LAST     = $FDDE        ; ... the last; they answer only with an RP pack in the flash
+CompilerIf #DEMO_DEV = 1     ; the demo's display and tone generator (demo_dev.pico2, tools/demo_build.py)
+#DEMO_BASE   = $E800        ; 164000-164177
+#INT_DEMO    = 32           ; its frame interrupt's IntReq bit, BR4
+#VEC_DEMO    = $D0          ; 000320 (300/304 are kept for a second DL11, docs/TERMINALS.md)
+CompilerEndIf
 #MSER_ADDR   = $FFE4        ; 177744 memory system error   (the KDJ11-B's cache registers:
 #CCR_ADDR    = $FFE6        ; 177746 cache control          no cache is modelled, see
 #HMR_ADDR    = $FFEA        ; 177752 hit/miss               THE CACHE REGISTERS below)
@@ -1147,6 +1152,11 @@ EndProcedure
 ; ======================================================================
 Procedure.l IoRead(a.l)                  ; a is even and past the end of RAM
   If (a & $FF80) = #DEMO_BASE : ProcedureReturn DdRead(a) : EndIf   ; desktop_gen: the demo devices
+  CompilerIf #DEMO_DEV = 1
+    If (a & $FF80) = #DEMO_BASE
+      ProcedureReturn DdRead(a)
+    EndIf
+  CompilerEndIf
   If a = #PSW_ADDR
     ProcedureReturn PswGet()
   ElseIf a = #DL11_RCSR
@@ -1199,6 +1209,12 @@ EndProcedure
 ; nothing in its high bytes. The PSW is not handled here (see PdpWriteWord).
 Procedure IoWrite(a.l, v.l)              ; a is even and past the end of RAM
   If (a & $FF80) = #DEMO_BASE : DdWrite(a, v) : ProcedureReturn : EndIf   ; desktop_gen: the demo devices
+  CompilerIf #DEMO_DEV = 1
+    If (a & $FF80) = #DEMO_BASE
+      DdWrite(a, v)
+      ProcedureReturn
+    EndIf
+  CompilerEndIf
   If a = #DL11_RCSR
     If v & $40
       If Dl11RxIe = 0 And Dl11RxDone = 1
@@ -1355,6 +1371,12 @@ Procedure PdpWriteByte(a.l, v.l)
   If a = #MAINT_ADDR + 1                 ; the maintenance register's high byte: nothing to write
     ProcedureReturn
   EndIf
+  CompilerIf #DEMO_DEV = 1
+    If (a & $FF80) = #DEMO_BASE
+      DdWriteByte(a, v)
+      ProcedureReturn
+    EndIf
+  CompilerEndIf
   If (a & $FF80) = #DEMO_BASE : DdWriteByte(a, v) : ProcedureReturn : EndIf   ; desktop_gen: the demo devices
   If a & 1                               ; a device's high byte: nothing there
     If (a & $FFFE) < #DL11_RCSR Or (a & $FFFE) > #SWR_ADDR
@@ -2144,6 +2166,9 @@ Procedure DevService()
   If DevActive
     DevPoll()
   EndIf
+  CompilerIf #DEMO_DEV = 1
+    DdPoll()                             ; the demo display's vertical blank and its interrupt
+  CompilerEndIf
   DdPoll()                               ; desktop_gen: the demo display's frame and its interrupt
   ; an interrupt, if one is asked for and the priority lets it in: the
   ; highest bus request level first (clock BR6, disk BR5, console BR4),

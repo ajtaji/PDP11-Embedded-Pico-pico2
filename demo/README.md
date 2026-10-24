@@ -2,8 +2,18 @@
 
 A PDP-11 program written in PureMetal and compiled straight to PDP-11 machine code by PureMetal
 Forge: no Unix, no operating system, just the machine. It runs on the PDP-11 emulator's display and
-sound devices, which the desktop emulator has (its window and pdp11_cli); the boards follow when their
-firmware has the devices.
+sound devices: in the desktop emulator (its window and pdp11_cli), and on a Raspberry Pi Pico 2 W in the
+LAFVIN ST7796 kit, on its 320 x 480 panel, with the sound on a Bluetooth speaker. The board's firmware is
+built with the demo in it and starts it at power-up:
+
+```
+python tools/demo_build.py --compiler PureMetalForge.exe --port COMnn [--speaker AA:BB:CC:DD:EE:FF]
+```
+
+Without `--speaker` it plays silent. On the Pico 2 W the PDP-11 runs the demo at about 625,000
+instructions a second (the desktop at many millions): the music, the plasma and the frame rate keep
+time by the 60 Hz frame interrupt, the cube and the scroller move more slowly. The board needs the
+radio's firmware installed once for sound (`PureMetalForge.exe --radio-firmware`).
 
 - **The logo**, rendered from Lato (SIL Open Font License, `fonts/OFL.txt`), with a light band that
   runs down it.

@@ -41,6 +41,7 @@
 #DISK_READ_ONLY = 0
 #DESK_PROBE = 0
 #PSRAM = 0
+#DEMO_DEV = 0                ; 1 = the demo display and tone generator (demo_dev.pico2): only tools/demo_build.py sets it
 #PSRAM_CS_PIN = 8
 #FLASH_CHIP = $400000
 #SRAM_MEM_KB = 56                       ; the test compares all of memory with a shadow copy: 56 KB

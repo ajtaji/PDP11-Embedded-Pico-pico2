@@ -71,6 +71,7 @@ CompilerElse
 CompilerEndIf
 #PSRAM_SRAM_KB = 224         ; with PSRAM: how much of the PDP-11 memory is in SRAM (cpu.pico2, #RAM_BYTES); the rest is in the PSRAM. 224: with CpuRun in SRAM too (psram_build.py), the most that leaves OpTable its 32 KB in one piece
 #SRAM_MEM_KB = 152           ; the PDP-11 memory without PSRAM, in SRAM (cpu.pico2, #RAM_BYTES): 152 KB, the rest of the SRAM going to the file-write overlay (disk.pico2)
+#DEMO_DEV = 0                ; 1 = the demo display and tone generator (demo_dev.pico2): only tools/demo_build.py sets it
 #PS_DISK_UNCACHED = 1        ; the packs in PSRAM: 1 = through the uncached window, 0 = through the XIP cache
 #PS_MEM_UNCACHED = 0         ; the PDP-11 memory in PSRAM: the same choice (psram_pdp11.pico2, WHICH WINDOW)
 EnableExplicit
@@ -756,6 +757,10 @@ Procedure StatsBlock()
   Else
     Say(", interrupts off")
   EndIf
+  CompilerIf #DEMO_DEV = 1
+    StatLine("display 164000: DPCSR ") : Oct(DdCsr & $C1) : Say(", DPBASE ") : Oct(DdBase) : Say(", ")
+    Num(DdFrames) : Say(" frames seen by the PDP-11, ") : Num(DvShown) : Say(" sent to the panel, ") : Num(DdSeq) : Say(" vertical blanks, SPI ") : Num(SpiHz(0) / 1000) : Say(" kHz; sound ") : If AudioRunning : Say("playing to the speaker") : Else : Say("not playing (") : Num(AudioRc) : Say(")") : EndIf
+  CompilerEndIf
   StatLine("uptime  ") : Num(up / 3600) : Ch(58) : Num((up / 600) % 6) : Num((up / 60) % 10) : Ch(58)
   Num((up / 10) % 6) : Num(up % 10) : Say(" since power-up, ") : Num(UpSec - ProgUpSec) : Say(" s since BOOT")
   If C1Alone
@@ -847,6 +852,9 @@ EndProcedure
 
 Procedure StartCpu(start.i, switches.i)  ; core 0
   CpuReset()
+  CompilerIf #DEMO_DEV = 1
+    DdReset()                            ; the demo display and tone generator (demo_dev.pico2)
+  CompilerEndIf
   SwitchReg = switches & $FFFF
   PswSet(0)
   Reg(6) = start
@@ -1687,6 +1695,9 @@ Procedure Core1Main()
     Service()
     DkServe()
     KwTick()
+    CompilerIf #DEMO_DEV = 1
+      DvStep()                           ; the panel from power-up, with or without a PC on the port
+    CompilerEndIf
   Wend
   ClkKhz = ClockSysKhz()                 ; before the banner: its 1 ms is not a gap anyone sees
   t0 = Micros()
@@ -1694,6 +1705,9 @@ Procedure Core1Main()
     Service()
     KwTick()
     DkServe()
+    CompilerIf #DEMO_DEV = 1
+      DvStep()
+    CompilerEndIf
   Wend
   If Mode = #MODE_RUN
     Say("PDP-11 J-11 on Pico 2: ") : SayName() : Say(" from ") : Oct(#TAPE_START)
@@ -1803,6 +1817,9 @@ Procedure Core1Main()
     C1Where = 4
     DkServe()                            ; the disk's storage for core 0's RK11
     KwTick()                             ; the line clock's 60 Hz
+    CompilerIf #DEMO_DEV = 1
+      DvStep()                           ; the demo display's 60 Hz and the panel (demo_dev.pico2)
+    CompilerEndIf
     C1Where = 6
     CompilerIf #DESK_PROBE = 1
       t0 = Micros()
@@ -1821,6 +1838,9 @@ Procedure Core1Main()
         Service()
         KwTick()
       EndIf
+      CompilerIf #DEMO_DEV = 1
+        DvStep()                         ; the next strip as soon as the last has gone
+      CompilerEndIf
     Wend
   ForEver
 EndProcedure
@@ -1861,6 +1881,10 @@ Procedure Main()
     ProbeFeedLoad()
   CompilerEndIf
   PswSnap = PswGet()
+  CompilerIf #DEMO_DEV = 1
+    DvBegin()                            ; the LAFVIN ST7796 panel (demo_dev.pico2), before core 1 owns it
+    DdAudioBegin()                       ; the Bluetooth speaker, when the build has one (core 1 not started: the link key may be written)
+  CompilerEndIf
   SmpBarrier()                           ; all of the above, before core 1 starts
   McCore1ReleaseHold()                   ; a stale hold from a previous program
   If McLaunchCore1() = 6                 ; all six handshake words echoed: core 1 runs Core1Main

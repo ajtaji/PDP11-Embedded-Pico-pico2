@@ -1,0 +1,467 @@
+; ======================================================================
+;  demo_dev.pico2 - the demo display and tone generator on the board:
+;  the same two invented devices as the desktop program's (desktop/
+;  machine_demo.pbi), for the compiler's PDP-11 demo (demo/), shown on the
+;  LAFVIN ST7796 kit's 320 x 480 panel by a Pico 2 W.
+;
+;  Built only by tools/demo_build.py (#DEMO_DEV = 1): it includes this file,
+;  the SPI and ST7796 libraries, and the demo as the built-in tape. The Unix
+;  firmware (#DEMO_DEV = 0) has none of it - cpu.pico2's four hooks compile
+;  to nothing.
+;
+;  THE REGISTERS (octal; agreed with the compiler's PDP-11 back end)
+;    DISPLAY  320 x 200, 4 bits a pixel, 160 bytes a row (32000 bytes);
+;             pixel x of a row is in byte x/2, the LOW nibble the even x
+;      164000 DPCSR   bit 0 ENABLE, bit 6 IE (frame interrupt), bit 7 FRAME
+;                     (set at each 60 Hz vertical blank; writing 1 clears it)
+;      164002 DPBASE  the framebuffer's physical address in 64-byte units
+;      164004 DPSCRY  the framebuffer row shown on the top line, 0-199
+;      164040-164076  DPPAL0-15, 12-bit RGB (0x0RGB)
+;      the frame interrupt: vector 320, BR4
+;    SOUND    voice n at 164100 + 10n: +0 FREQ (Hz), +2 VOL (0-15),
+;             +4 WAVE (0 square, 1 triangle, 2 saw, 3 noise);
+;             164140 SNDVOL (0-15), 164142 SNDCSR bit 0 ENABLE
+;
+;  THE CORES. Core 0 (the PDP-11) reads and writes the registers through
+;  IoRead / IoWrite / WriteByte, and DevService calls DdPoll, which sets
+;  FRAME at each new vertical blank and takes the frame interrupt. Core 1
+;  keeps the 60 Hz (DdTick, in DvStep) and sends the picture to the panel
+;  a strip of 8 rows at a time by DMA (DvStep), straight from the PDP-11's
+;  memory, while the next strip is drawn.
+; ======================================================================
+
+; ---- the device (core 0, but for DdSeq) ------------------------------------
+#DEMO_W = 320
+#DEMO_H = 200
+#DEMO_ROW = 160                          ; bytes a row
+#DEMO_FRAME_US = 16667
+#PCM_RING = 4096                         ; 85 ms at 48 kHz; a power of two
+#DD_FRAME_SAMPLES = 800                  ; 48000 / 60
+#DD_STEP_PER_HZ = 89478                  ; 2^32 / 48000: a voice's phase step for 1 Hz
+
+Global DdCsr.i, DdBase.i, DdScroll.i, DdMaster.i, DdSndCsr.i
+Global Dim DdPal.i(16)
+Global Dim DdFreq.i(4)
+Global Dim DdVol.i(4)
+Global Dim DdWave.i(4)
+Global DdSeq.i                           ; vertical blanks counted by core 1 (DdTick)
+Global DdSeen.i                          ; ... and acted on by core 0 (DdPoll)
+Global DdNext.i                          ; core 1: Micros() of the next vertical blank
+Global DdFrames.i                        ; frames seen by core 0
+Global DdPalSeq.i                        ; palette writes: core 1 rebuilds its colour table when it changes
+Global AudioRunning.i                    ; the speaker is playing (demo_dev's sound part)
+Global AudioRc.i = -1                    ; BtAudioBegin's answer: 0 connected, -1 never tried (a build without sound)
+
+Procedure DdReset()
+  Define i.i
+  DdCsr = 0 : DdBase = $100 : DdScroll = 0 : DdMaster = 15 : DdSndCsr = 0
+  Restore DdEgaPal
+  For i = 0 To 15
+    Read.u DdPal(i)
+  Next
+  For i = 0 To 3
+    DdFreq(i) = 0 : DdVol(i) = 0 : DdWave(i) = 0
+  Next
+  DdPalSeq = DdPalSeq + 1
+  IntReq = IntReq & ~#INT_DEMO
+EndProcedure
+
+ProcedureRAM.i DdRead(a.i)
+  Define r.i
+  r = (a - #DEMO_BASE) & $7E
+  If r = 0
+    ProcedureReturn DdCsr & $C1
+  ElseIf r = 2
+    ProcedureReturn DdBase
+  ElseIf r = 4
+    ProcedureReturn DdScroll
+  ElseIf r >= $20 And r <= $3E
+    ProcedureReturn DdPal((r - $20) >> 1)
+  ElseIf r >= $40 And r <= $5E
+    If (r & 7) = 0
+      ProcedureReturn DdFreq((r - $40) >> 3)
+    ElseIf (r & 7) = 2
+      ProcedureReturn DdVol((r - $40) >> 3)
+    ElseIf (r & 7) = 4
+      ProcedureReturn DdWave((r - $40) >> 3)
+    EndIf
+  ElseIf r = $60
+    ProcedureReturn DdMaster
+  ElseIf r = $62
+    ProcedureReturn DdSndCsr
+  EndIf
+  ProcedureReturn 0
+EndProcedure
+
+ProcedureRAM DdWrite(a.i, v.i)
+  Define r.i
+  Define wasIe.i
+  r = (a - #DEMO_BASE) & $7E
+  v = v & $FFFF
+  If r = 0
+    wasIe = DdCsr & $40
+    If v & $80                           ; FRAME: write 1 to clear
+      DdCsr = DdCsr & ~$80
+      IntReq = IntReq & ~#INT_DEMO
+    EndIf
+    DdCsr = (DdCsr & $80) | (v & $41)
+    If (DdCsr & $40) = 0
+      IntReq = IntReq & ~#INT_DEMO
+    ElseIf wasIe = 0 And (DdCsr & $80) <> 0
+      IntReq = IntReq | #INT_DEMO
+      IntCheck()
+    EndIf
+  ElseIf r = 2
+    DdBase = v
+  ElseIf r = 4
+    DdScroll = v % #DEMO_H
+  ElseIf r >= $20 And r <= $3E
+    DdPal((r - $20) >> 1) = v & $FFF
+    DdPalSeq = DdPalSeq + 1
+  ElseIf r >= $40 And r <= $5E
+    If (r & 7) = 0
+      DdFreq((r - $40) >> 3) = v
+    ElseIf (r & 7) = 2
+      DdVol((r - $40) >> 3) = v & 15
+    ElseIf (r & 7) = 4
+      DdWave((r - $40) >> 3) = v & 3
+    EndIf
+  ElseIf r = $60
+    DdMaster = v & 15
+  ElseIf r = $62
+    DdSndCsr = v & 1
+  EndIf
+EndProcedure
+
+; A byte write is a write of that byte into the register, the other byte kept.
+ProcedureRAM DdWriteByte(a.i, v.i)
+  Define w.i
+  w = DdRead(a & $FFFE)
+  If a & 1
+    DdWrite(a & $FFFE, (w & $FF) | ((v & $FF) << 8))
+  Else
+    DdWrite(a, (w & $FF00) | (v & $FF))
+  EndIf
+EndProcedure
+
+; Core 0, from DevService: FRAME at a new vertical blank, the request while
+; enabled, and the interrupt taken when it is the only one asked for (with
+; others, DevService's own chain takes theirs first: BR4 and above).
+ProcedureRAM DdPoll()
+  If DdSeq <> DdSeen
+    DdSeen = DdSeq
+    DdFrames = DdFrames + 1
+    DdCsr = DdCsr | $80
+    If DdCsr & $40
+      IntReq = IntReq | #INT_DEMO
+    EndIf
+  EndIf
+  If IntReq = #INT_DEMO
+    If (PswHigh & $E0) < $80
+      Waiting = 0
+      IntReq = 0
+      TakeTrap(#VEC_DEMO)
+      TakeStackTrap()
+    EndIf
+  EndIf
+EndProcedure
+
+; ---- the panel (core 1) ------------------------------------------------------
+; The LAFVIN ST7796 kit on SPI0, as Ms. Pac-Man and the NES drive it: SCK GP2,
+; MOSI GP3, CS GP5, DC GP6, RST GP7; portrait, 320 x 480. The 320 x 200
+; picture is shown 1:1 in rows 140-339.
+#DV_Y0 = 140
+#DV_STRIP_ROWS = 8
+#DV_STRIPS = 25                          ; 200 / 8
+#DV_STRIP_PAIRS = 1280                   ; 320 x 8 pixels as pixel pairs (longs)
+#DV_SPI_DR = $40080008
+#DV_SPI_DMACR = $40080024
+#DV_SPI_SR = $4008000C
+
+Global Dim DvStrip.i(2560)               ; two strips; pixel pairs, the first pixel in the low half
+Global Dim DvPair.i(256)                 ; a framebuffer byte -> its two pixels as RGB565
+Global DvPalSeq.i = -1                   ; the palette DvPair was made from
+Global DvStripNo.i = -1                  ; the strip in flight, -1 none (no frame being sent)
+Global DvSeqShown.i                      ; the vertical blank the last frame started at
+Global DvShown.i, DvError.i, DvOn.i
+
+Procedure DvBegin()                      ; core 0, in Main, before core 1 starts
+  SpiPeriFromSys(ClockSysKhz())         ; clk_sys as measured (#CLOCK_KHZ is set after this file is included)
+  SpiBegin(0, 2, 3, -1, 100000)
+  Tft796Begin(0, 5, 6, 7)
+  Tft796Rotate(0)
+  Tft796Fill(0)
+  DvOn = 1
+EndProcedure
+
+ProcedureRAM.i DvRgb565(c.i)
+  Define r.i
+  Define g.i
+  Define b.i
+  r = (c >> 8) & 15
+  g = (c >> 4) & 15
+  b = c & 15
+  ProcedureReturn (((r << 1) | (r >> 3)) << 11) | (((g << 2) | (g >> 2)) << 5) | ((b << 1) | (b >> 3))
+EndProcedure
+
+Global Dim DvCol.i(16)                   ; the palette as RGB565 (DvPairs)
+
+ProcedureRAM DvPairs()
+  Define i.i
+  For i = 0 To 15
+    DvCol(i) = DvRgb565(DdPal(i))
+  Next
+  For i = 0 To 255
+    DvPair(i) = DvCol(i & 15) | (DvCol(i >> 4) << 16)
+  Next
+EndProcedure
+
+; Strip s (rows 8s to 8s+7 of the picture) into buffer buf, from the PDP-11's
+; memory as DPBASE and DPSCRY say; black while ENABLE is off or where the
+; framebuffer is not in the memory.
+ProcedureRAM DvRender(s.i, buf.i)
+  Define r.i
+  Define x.i
+  Define row.i
+  Define src.i
+  Define dst.i
+  Define base.i
+  base = (DdBase << 6) & $3FFFFF
+  dst = buf
+  For r = 0 To #DV_STRIP_ROWS - 1
+    row = (s * #DV_STRIP_ROWS + r + DdScroll) % #DEMO_H
+    src = base + row * #DEMO_ROW
+    If (DdCsr & 1) = 0 Or src + #DEMO_ROW > #RAM_BYTES
+      For x = 0 To #DEMO_ROW - 1
+        PokeL(dst, 0) : dst = dst + 4
+      Next
+    Else
+      src = @Mem(0) + src
+      For x = 0 To #DEMO_ROW - 1
+        PokeL(dst, DvPair(PeekA(src + x))) : dst = dst + 4
+      Next
+    EndIf
+  Next
+EndProcedure
+
+ProcedureRAM DvDmaStart(buf.i)
+  PokeL(#SPI_DMA_CH0_READ, buf)
+  PokeL(#SPI_DMA_CH0_WRITE, #DV_SPI_DR)
+  PokeL(#SPI_DMA_CH0_COUNT, #DV_STRIP_PAIRS * 2)
+  PokeL(#SPI_DMA_CH0_CTRL, #SPI_DMA_EN | #SPI_DMA_SIZE_HALF | #SPI_DMA_INCR_READ | (#SPI_DMA_TREQ_SPI0_TX << #SPI_DMA_TREQ_SHIFT))
+EndProcedure
+
+Declare DdSound(n.i)
+Declare AudioPoll()
+
+; Core 1, every pass of its loop: the 60 Hz, and the frame - started at a new
+; vertical blank, then one strip each time the last has gone, the next drawn
+; while one goes. Never waits for the panel.
+ProcedureRAM DvStep()
+  Define now.i
+  Define buf.i
+  now = Micros()
+  If now - DdNext >= 0                   ; DdTick: the vertical blank
+    DdNext = DdNext + #DEMO_FRAME_US
+    If now - DdNext >= 0
+      DdNext = now + #DEMO_FRAME_US
+    EndIf
+    DdSeq = DdSeq + 1
+    If AudioRunning
+      DdSound(#DD_FRAME_SAMPLES)         ; a frame of the four voices into the ring
+    EndIf
+  EndIf
+  AudioPoll()
+  If DvOn = 0
+    ProcedureReturn
+  EndIf
+  If DvStripNo < 0
+    If DdSeq = DvSeqShown
+      ProcedureReturn
+    EndIf
+    DvSeqShown = DdSeq                   ; a new frame
+    If DvPalSeq <> DdPalSeq
+      DvPalSeq = DdPalSeq
+      DvPairs()
+    EndIf
+    Tft796Window(0, #DV_Y0, #DEMO_W - 1, #DV_Y0 + #DEMO_H - 1)
+    SpiDmaInit()
+    SpiSetBits(0, 16)
+    Tft796PinSet(tft796_dc, 1)
+    Tft796PinSet(tft796_cs, 0)
+    PokeL(#DV_SPI_DMACR, PeekL(#DV_SPI_DMACR) | #SPI_SSPDMACR_TXDMAE)
+    DvRender(0, @DvStrip(0))
+    DvDmaStart(@DvStrip(0))
+    DvRender(1, @DvStrip(#DV_STRIP_PAIRS))
+    DvStripNo = 0
+    ProcedureReturn
+  EndIf
+  If PeekL(#SPI_DMA_CH0_CTRL) & #SPI_DMA_BUSY
+    ProcedureReturn                      ; the strip is still going
+  EndIf
+  DvStripNo = DvStripNo + 1
+  If DvStripNo >= #DV_STRIPS             ; the frame is out
+    While PeekL(#DV_SPI_SR) & #SPI_SR_BSY
+    Wend
+    SpiDmaRestore(0)
+    Tft796PinSet(tft796_cs, 1)
+    DvStripNo = -1
+    DvShown = DvShown + 1
+    ProcedureReturn
+  EndIf
+  buf = @DvStrip(0) + (DvStripNo & 1) * #DV_STRIP_PAIRS * 4
+  DvDmaStart(buf)                        ; drawn in the last pass
+  If DvStripNo + 1 < #DV_STRIPS
+    DvRender(DvStripNo + 1, @DvStrip(0) + ((DvStripNo + 1) & 1) * #DV_STRIP_PAIRS * 4)
+  EndIf
+EndProcedure
+
+; ---- the sound (core 1 makes it, the radio plays it) --------------------------
+; The four voices into a 48 kHz ring, a frame's worth (800 samples) at each
+; vertical blank (DvStep), read by PureMetal's Shared/Bluetooth/bt_audio.pmi and
+; sent to a Bluetooth speaker (A2DP), as Ms. Pac-Man's audio_bt does. With
+; #DEMO_AUDIO = 0 (no speaker address given to tools/demo_build.py) the
+; radio's libraries are not built in and the demo plays silent.
+Global Dim Pcm.w(#PCM_RING)
+Global PcmCount.l                        ; samples ever written (BtAudioSource reads it)
+Global Dim DdPhase.i(4)
+Global DdNoise.i = $ACE1
+
+; n samples of the four voices as the registers stand. Core 1.
+ProcedureRAM DdSound(n.i)
+  Define i.i
+  Define v.i
+  Define s.i
+  Define t.i
+  Define val.i
+  Define at.i
+  Define on.i
+  at = PcmCount
+  on = DdSndCsr & 1
+  For i = 0 To n - 1
+    s = 0
+    If on
+      For v = 0 To 3
+        If DdFreq(v) > 0 And DdVol(v) > 0
+          t = DdPhase(v) + DdFreq(v) * #DD_STEP_PER_HZ
+          If DdWave(v) = 3 And ((t ! DdPhase(v)) & $80000000) <> 0 And (t & $80000000) = 0
+            DdNoise = ((DdNoise >> 1) | ((((DdNoise ! (DdNoise >> 2) ! (DdNoise >> 3) ! (DdNoise >> 5)) & 1)) << 15)) & $FFFF
+          EndIf
+          DdPhase(v) = t
+          t = (t >> 16) & $FFFF          ; where in the period, 0-65535
+          If DdWave(v) = 0               ; square
+            If t < 32768
+              val = 32767
+            Else
+              val = -32767
+            EndIf
+          ElseIf DdWave(v) = 1           ; triangle
+            If t < 32768
+              val = t * 2 - 32767
+            Else
+              val = (65535 - t) * 2 - 32767
+            EndIf
+          ElseIf DdWave(v) = 2           ; sawtooth
+            val = t - 32768
+          Else                           ; noise: a new value each period
+            If DdNoise & 1
+              val = 32767
+            Else
+              val = -32767
+            EndIf
+          EndIf
+          s = s + val * DdVol(v)
+        EndIf
+      Next
+      s = (s * DdMaster) >> 11           ; four voices at 15, master 15: about +-14,000
+      If s > 32767
+        s = 32767
+      ElseIf s < -32768
+        s = -32768
+      EndIf
+    EndIf
+    PokeW(@Pcm(0) + ((at + i) & (#PCM_RING - 1)) * 2, s)
+  Next
+  SmpBarrier()                           ; the samples, then the count the radio reads
+  PcmCount = at + n
+EndProcedure
+
+CompilerIf #DEMO_AUDIO = 1
+; The speaker's link key in the flash's last sector, as Ms. Pac-Man and the NES
+; keep it ("BTK1" and the record), so it pairs once.
+#BTKEY_SECTOR = $3FF000
+#BT_LEAD_US = 65000                      ; start 65 ms behind the ring's writer: the ring (85 ms) is the cushion
+Global AudioLastPoll.i, AudioGap.i = 700
+Global Dim BtKeyPage.a(256)
+
+Procedure.i AudioSaveKey()               ; core 0, before core 1 starts: nothing else runs from flash
+  Define i.i
+  Define ok.i
+  For i = 0 To 255
+    BtKeyPage(i) = 255
+  Next
+  BtKeyPage(0) = 66 : BtKeyPage(1) = 84 : BtKeyPage(2) = 75 : BtKeyPage(3) = 49
+  If BtAudioKey(@BtKeyPage(4)) = 0
+    ProcedureReturn 0
+  EndIf
+  ok = 0
+  If FlashRangeErase(#BTKEY_SECTOR, 4096)
+    ok = FlashRangeProgram(#BTKEY_SECTOR, @BtKeyPage(0), 256)
+  EndIf
+  ProcedureReturn ok
+EndProcedure
+
+; Core 0, in Main, before core 1 starts: connect to the speaker whose address the
+; build was given (?DdSpeaker, 6 bytes as a phone shows it).
+Procedure DdAudioBegin()
+  Define key.i
+  Define speaker.i
+  speaker = ?DdSpeaker
+  key = $10000000 + #BTKEY_SECTOR
+  If PeekA(key) = 66 And PeekA(key + 1) = 84 And PeekA(key + 2) = 75 And PeekA(key + 3) = 49
+    BtAudioSetKey(key + 4)
+  EndIf
+  BtAudioStereo(1)
+  AudioRc = BtAudioBegin(speaker)
+  If AudioRc <> 0
+    ProcedureReturn                      ; no speaker: the demo plays silent (the banner's sound line says so)
+  EndIf
+  If BtAudioKeyNew()
+    AudioSaveKey()
+  EndIf
+  BtAudioSource(@Pcm(0), #PCM_RING, @PcmCount)
+  BtAudioLead(#BT_LEAD_US)
+  BtAudioPumps(0)                        ; from here core 1 drives the radio
+  AudioRunning = 1
+EndProcedure
+
+; Core 1, every pass: the library wants a call about every 0.15 ms while a
+; frame is part-way encoded and every 0.7 ms otherwise.
+ProcedureRAM AudioPoll()
+  Define start.i
+  If AudioRunning = 0
+    ProcedureReturn
+  EndIf
+  start = Micros()
+  If start - AudioLastPoll < AudioGap
+    ProcedureReturn
+  EndIf
+  AudioLastPoll = start
+  BtAudioPoll()
+  If BtAudioBusy()
+    AudioGap = 150
+  Else
+    AudioGap = 700
+  EndIf
+EndProcedure
+CompilerElse
+Procedure DdAudioBegin()
+EndProcedure
+ProcedureRAM AudioPoll()
+EndProcedure
+CompilerEndIf
+
+DataSection
+  DdEgaPal:
+  Data.u $000, $00A, $0A0, $0AA, $A00, $A0A, $A50, $AAA, $555, $55F, $5F5, $5FF, $F55, $F5F, $FF5, $FFF
+EndDataSection

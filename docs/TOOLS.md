@@ -261,6 +261,15 @@ python tools/pack_install.py --board feather|picoplus2 --image combined.uf2 (--h
 
 For a board with no boot drive at hand. With `--compiler` it builds and uploads the installer (`pico2/packinstall.pico2`); then it sends each pack region of the image a sector at a time, every sector answered with a checksum, the header sector last, and the whole region read back and compared at the end. `--probe` tests one sector first; `--status` only asks what the flash holds (`PACK`, `UNFINISHED`, `BLANK`, `OTHER`); `--sums` prints the image's region checksums, the ones the firmware prints at start-up. The installer refuses a region inside the first 256 KB, past the flash size it measured, or past the size it was built for. It runs on Windows (the hub port from the device's location path) and reads the same from sysfs on Linux, where it has not been run.
 
+## `demo_build.py` - the demo's firmware for a Pico 2 W in the LAFVIN kit
+
+```
+python tools/demo_build.py [--compiler EXE] [--lda demo/demo.lda] [--out DIR] [--port COMnn]
+                           [--speaker AA:BB:CC:DD:EE:FF] [--keep]
+```
+
+The emulator's firmware with the demo's display and tone generator in it (`pico2/demo_dev.pico2`: the registers at 164000, the frame interrupt at 320, the picture on the kit's ST7796 panel by DMA from core 1) and the demo built in as its tape (`tape2pico.py`), so the board starts the demo at power-up. Like `psram_build.py` it writes copies beside `diag.pico2` (`#DEMO_DEV = 1`, 64 KB of PDP-11 memory, the panel's libraries, CpuRun from SRAM) and removes them; the source's `#DEMO_DEV = 0` keeps the devices out of every Unix build, whose firmware is byte for byte what it was. `--speaker` adds the radio and Bluetooth libraries (A2DP, as the Ms. Pac-Man emulator uses them) and the speaker's address, in the copy only; the board needs the radio's firmware installed once (`PureMetalForge.exe --radio-firmware`). `--keep` leaves the copies, so a failed build can be compiled by hand to read the compiler's message.
+
 ## `uf2_firmware.py` - new firmware into an image, the packs left alone
 
 ```

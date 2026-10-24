@@ -7,6 +7,7 @@ EnableExplicit
 #PSRAM = 0                ; no PSRAM chip (and so no RP11 storage in flash: machine_disk.pbi)
 #SRAM_MEM_KB = 248        ; Mem(): all an 18-bit machine reaches below its I/O page (cpu.pico2)
 #DESK_MEM = 1             ; the memory past it, as a board with PSRAM has it (desktop_gen.py)
+#DEMO_DEV = 0             ; the board's demo-device hooks (pico2/demo_dev.pico2) stay out: the desktop has its own (machine_demo.pbi)
 #DESK_MEM_TOP = $3B9000   ; 3812 KB, the Pico Plus 2's (psram_pdp11.pico2, #PS_MEM_TOP)
 Global PsMem.i = AllocateMemory(#DESK_MEM_TOP)   ; physical byte pa >= #RAM_BYTES is at PsMem + pa
 #PSRAM_SRAM_KB = 224
