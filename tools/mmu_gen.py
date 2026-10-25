@@ -1840,13 +1840,141 @@ OPS = ["JSR_004", "RTS_00020", "DIV_071", "CMP_02", "TST_0057", "INC_0052", "DEC
        "CMPB_12", "BITB_13", "CLR_0050", "CLRB_1050", "TSTB_1057"]
 
 
-def handler(text, name):
-    """The plain handler's lines after its label, up to and including its NextSyncedM()."""
+# THE BRANCHES IN ASSEMBLY (2026-10-25): a branch is a test of FlagNZ (r4),
+# FlagV (r5) or FlagC and, when taken, PC + 2 * the signed low byte - a few
+# instructions, where the plain handler's Basic built each condition through
+# literals. The same tests as the plain ones (held to them by asm_check, ASMCHECK
+# ops): Z is FlagNZ's low 16 bits all clear, N its bit 15 or 16, V FlagV's bit
+# 15, C FlagC's bit 16. The native tail follows, as in the plain handler.
+BR_Z = "    lsls r0, r4, #16\n"
+BR_N = "    tst.w r4, #0x18000\n"
+BR_NV = "    orr.w r0, r4, r4, lsr #1\n    eor.w r0, r0, r5\n    tst.w r0, #0x8000\n"
+BR_V = "    tst.w r5, #0x8000\n"
+BR_C = "    ldr r1, =global_flagc\n    ldr r1, [r1]\n    tst.w r1, #0x10000\n"
+BRANCHES = {             # the label part: [(test, branch to "nt" (not taken) or "tk" (taken)), ...]
+    "BR_0004": [], "BNE_0010": [(BR_Z, "beq nt")], "BEQ_0014": [(BR_Z, "bne nt")],
+    "BGE_0020": [(BR_NV, "bne nt")], "BLT_0024": [(BR_NV, "beq nt")],
+    "BGT_0030": [(BR_Z, "beq nt"), (BR_NV, "bne nt")], "BLE_0034": [(BR_Z, "beq tk"), (BR_NV, "beq nt")],
+    "BPL_1000": [(BR_N, "bne nt")], "BMI_1004": [(BR_N, "beq nt")],
+    "BHI_1010": [(BR_C, "bne nt"), (BR_Z, "beq nt")], "BLOS_1014": [(BR_C, "bne tk"), (BR_Z, "bne nt")],
+    "BVC_1020": [(BR_V, "bne nt")], "BVS_1024": [(BR_V, "beq nt")],
+    "BCC_1030": [(BR_C, "bne nt")], "BCS_1034": [(BR_C, "beq nt")]}
+
+
+def branch_asm(name):
+    l = "__br_" + name.split("_")[0].lower()
+    body = "".join(t + "    %s %s_%s\n" % (b.split()[0], l, b.split()[1]) for t, b in BRANCHES[name])
+    body += ("%s_tk:\n    mov r0, r8\n    lsls r0, r0, #24\n    asrs r0, r0, #23\n    mov r1, r9\n    adds r0, r0, r1\n"
+             "    uxth r0, r0\n    mov r9, r0\n%s_nt:\n" % (l, l))
+    uses = ["PC", "Op"] + (["FlagNZ"] if re.search(r"\br4\b", body) else []) \
+        + (["FlagV"] if re.search(r"\br5\b", body) else [])
+    return "  ASM Uses " + ", ".join(uses) + "\n" + body + "  EndASM\n  NextNativeM()\n"
+
+
+# THE REGISTER FAST PATHS IN ASSEMBLY (2026-10-25): MOV/CMP/ADD/SUB Rs,Rd,
+# CLR/INC/DEC/TST Rd, MOV/CMP/BIT/ADD/SUB #n,Rd and SOB. Each makes the plain
+# one's tests before it changes anything - the destination not the PC, an
+# immediate in its fast window (CurI's row) and even - and goes on to the plain
+# body (the reference, asm_check.pico2) when one fails; the condition codes are
+# the plain one's expressions, word for word. V lands straight in r5 (FlagV).
+def _ref(name):
+    return "__ul_cpurunm_instruction%srefm" % name.lower()
+
+
+def _uses(body):
+    return ", ".join(n for r, n in (("r8", "Op"), ("r9", "PC"), ("r10", "Res"), ("r4", "FlagNZ"), ("r5", "FlagV"))
+                     if re.search(r"\b%s\b" % r, body))
+
+
+def _dst(name):                          # r1 = &Reg(d), r2 = the register base; the PC goes to the plain body
+    return ("    and.w r1, r8, #7\n    cmp r1, #7\n    beq %s\n    ldr r2, =global_reg\n    lsls r1, r1, #2\n"
+            "    adds r1, r1, r2\n" % _ref(name))
+
+
+_SRC = "    ubfx r0, r8, #6, #3\n    lsls r0, r0, #2\n    ldr r0, [r2, r0]\n"
+
+
+def _imm(name):                          # r0 = the word at PC through CurI's fast window, PC += 2
+    return ("    mov r0, r9\n    ldr r3, =global_curi\n    ldr r3, [r3]\n    add.w r3, r3, r0, lsr #13\n"
+            "    lsls r3, r3, #5\n    ldr r2, =global_mapf\n    adds r3, r3, r2\n    ldr r2, [r3, #0]\n"
+            "    cmp r0, r2\n    blt %(r)s\n    ldr r2, [r3, #4]\n    cmp r0, r2\n    bge %(r)s\n"
+            "    lsls r2, r0, #31\n    bne %(r)s\n    ldr r2, [r3, #16]\n    ldrh r0, [r2, r0]\n    mov r2, r9\n"
+            "    adds r2, r2, #2\n    uxth r2, r2\n    mov r9, r2\n" % {"r": _ref(name)})
+
+
+_STSRC = "    ldr r3, =global_src\n    str r0, [r3]\n"
+_C_R3 = "    ldr r2, =global_flagc\n    str r3, [r2]\n"          # FlagC = r3
+_C0 = "    movs r2, #0\n    ldr r3, =global_flagc\n    str r2, [r3]\n"
+_ADDV = ("    eor.w r1, r0, r3\n    subs r2, r3, r0\n    eor.w r2, r2, r3\n    and.w r5, r1, r2\n")
+_SUBV = ("    adds r2, r3, r0\n    eor.w r1, r0, r2\n    eor.w r2, r2, r3\n    and.w r5, r1, r2\n")
+_CMPV = ("    subs r2, r0, r3\n    eor.w r2, r2, r0\n    eor.w r1, r0, r3\n    and.w r5, r1, r2\n")
+_WR = "    str r3, [r1]\n"
+
+
+def _two(kind):                          # r0 = Src, r1 = &Reg(d)
+    if kind == "mov":
+        return _STSRC + "    str r0, [r1]\n    mov.w r4, r0\n    mov.w r5, #0\n"
+    if kind == "cmp":
+        return (_STSRC + "    ldr r3, [r1]\n    subs r3, r0, r3\n    mov r10, r3\n" + _C_R3
+                + "    uxth r4, r3\n" + _CMPV)
+    if kind == "add":
+        return (_STSRC + "    ldr r3, [r1]\n    adds r3, r0, r3\n" + _C_R3 + "    uxth r3, r3\n" + _WR
+                + "    mov r10, r3\n    mov.w r4, r3\n" + _ADDV)
+    if kind == "sub":
+        return (_STSRC + "    ldr r3, [r1]\n    subs r3, r3, r0\n" + _C_R3 + "    uxth r3, r3\n" + _WR
+                + "    mov r10, r3\n    mov.w r4, r3\n" + _SUBV)
+    if kind == "bit":
+        return _STSRC + "    ldr r3, [r1]\n    and.w r4, r0, r3\n    mov.w r5, #0\n"
+
+
+def _one(kind):                          # r1 = &Reg(d)
+    if kind == "clr":
+        return "    movs r3, #0\n" + _WR + "    movs r4, #0\n    mov.w r5, #0\n" + _C0
+    if kind == "tst":
+        return "    ldr r4, [r1]\n    mov.w r5, #0\n" + _C0
+    op, edge = ("adds", "0x7fff") if kind == "inc" else ("subs", "0x8000")
+    return ("    ldr r0, [r1]\n    %s r3, r0, #1\n    uxth r3, r3\n" % op + _WR
+            + "    mov r10, r3\n    mov.w r5, #0\n    movw r2, #%s\n    cmp r0, r2\n    bne __rf_%s_nov\n"
+            "    mov.w r5, #0x8000\n__rf_%s_nov:\n    mov.w r4, r3\n" % (edge, kind, kind))
+
+
+FAST = {                                 # name: (assembly body, the plain one's tail)
+    "MOV_01_RR": (lambda n: _dst(n) + _SRC + _two("mov"), "  NextNativeM()\n"),
+    "CMP_02_RR": (lambda n: _dst(n) + _SRC + _two("cmp"), "  NextNativeM()\n"),
+    "ADD_06_RR": (lambda n: _dst(n) + _SRC + _two("add"), "  NextNativeM()\n"),
+    "SUB_16_RR": (lambda n: _dst(n) + _SRC + _two("sub"), "  NextNativeM()\n"),
+    "CLR_0050_R": (lambda n: _dst(n) + _one("clr"), "  NextNativeM()\n"),
+    "INC_0052_R": (lambda n: _dst(n) + _one("inc"), "  NextNativeM()\n"),
+    "DEC_0053_R": (lambda n: _dst(n) + _one("dec"), "  NextNativeM()\n"),
+    "TST_0057_R": (lambda n: _dst(n) + _one("tst"), "  NextNativeM()\n"),
+    "MOV_01_IR": (lambda n: _dst(n) + _imm(n) + _two("mov"), "  NextNativeTrapM()\n"),
+    "CMP_02_IR": (lambda n: _dst(n) + _imm(n) + _two("cmp"), "  NextNativeTrapM()\n"),
+    "BIT_03_IR": (lambda n: _dst(n) + _imm(n) + _two("bit"), "  NextNativeTrapM()\n"),
+    "ADD_06_IR": (lambda n: _dst(n) + _imm(n) + _two("add"), "  NextNativeTrapM()\n"),
+    "SUB_16_IR": (lambda n: _dst(n) + _imm(n) + _two("sub"), "  NextNativeTrapM()\n"),
+    "SOB_077": (lambda n: "    ldr r2, =global_reg\n    ubfx r1, r8, #6, #3\n    lsls r1, r1, #2\n    adds r1, r1, r2\n"
+                "    ldr r3, [r1]\n    subs r3, r3, #1\n    uxth r3, r3\n    str r3, [r1]\n    mov r10, r3\n"
+                "    cbz_sob\n    and.w r0, r8, #0x3f\n    lsls r0, r0, #1\n    mov r2, r9\n    subs r2, r2, r0\n"
+                "    uxth r2, r2\n    mov r9, r2\n__rf_sob_z:\n", "  NextNativeM()\n")}
+
+
+def fast_asm(name):
+    body, tail = FAST[name]
+    b = body(name)                       # the destination test first, then any immediate (r1 kept)
+    b = b.replace("    cbz_sob\n", "    cmp r3, #0\n    beq __rf_sob_z\n")
+    tag = "__rf_" + name.lower()
+    b = b.replace("__rf_inc_nov", tag + "_nov").replace("__rf_dec_nov", tag + "_nov") \
+         .replace("__rf_sob_z", tag + "_z")
+    return "  ASM Uses " + _uses(b) + "\n" + b + "  EndASM\n" + tail
+
+
+def handler(text, name, tail="  NextSyncedM()\n"):
+    """The plain handler's lines after its label, up to and including its tail."""
     lab = "\nInstruction%sM:" % name
     if text.count(lab) != 1:
         fail("pico2_ops: Instruction%sM is not there once; teach tools/mmu_gen.py." % name)
     i = text.index("\n", text.index(lab) + 1) + 1
-    j = text.index("  NextSyncedM()\n", i) + len("  NextSyncedM()\n")
+    j = text.index(tail, i) + len(tail)
     return i, j
 
 
@@ -1908,15 +2036,25 @@ def pico2_ops(text):
     if text.count(jmp) != 1:
         fail("pico2_ops: JMP's EaWordM line moved; teach tools/mmu_gen.py.")
     text = text.replace(jmp, JMP_ASM + jmp + "CompilerEndIf\n")
+    for name in list(BRANCHES) + list(FAST):
+        if name in BRANCHES:
+            fast, tail = branch_asm(name), "  NextNativeM()\n"
+        else:
+            fast, tail = fast_asm(name), FAST[name][1]
+        i, j = handler(text, name, tail)
+        plain = text[i:j]
+        text = (text[:i] + "CompilerIf #ASM_OPS = 1\n" + fast + "CompilerEndIf\n"
+                + "Instruction%sRefM:         ; the plain version: the reference (asm_check.pico2)\n" % name
+                + plain + text[j:])
     fill = "".join("  OpAsmM(%d) = ?Instruction%sM\n  OpRefM(%d) = ?Instruction%sRefM\n" % (k, n, k, n)
-                   for k, n in enumerate(OPS))
+                   for k, n in enumerate(OPS + list(BRANCHES) + list(FAST)))
     if text.count("  OpTableReadyM = 1\n") != 1:
         fail("pico2_ops: the table's end moved; teach tools/mmu_gen.py.")
     text = text.replace("  OpTableReadyM = 1\n", fill + "  OpTableReadyM = 1\n")
     decl = "Global Dim OpTableM.Label(8192)\n"
     return text.replace(decl, decl + "Global Dim OpAsmM.Label(%d)                 ; JSR, RTS, DIV: the assembly "
                         "entry ...\nGlobal Dim OpRefM.Label(%d)                 ; ... and the plain one "
-                        "(tools/mmu_gen.py, pico2_ops)\n" % (len(OPS), len(OPS)))
+                        "(tools/mmu_gen.py, pico2_ops)\n" % ((len(OPS) + len(BRANCHES) + len(FAST),) * 2))
 
 
 def specialise(text):

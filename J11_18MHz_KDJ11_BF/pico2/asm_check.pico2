@@ -83,7 +83,7 @@ Global Dim SPdr.i(64)
 Global Dim SAlt.i(6)
 Global Dim SBank.i(4)
 Global GK.i, GS.i, GD.i, GN.i, GI.i, GK2.i, GN2.i
-Global Osm.i, Odm.i, Oi.i, Ow.i, Ofield.i, Mr.i, Mt0.i
+Global Osm.i, Odm.i, Oi.i, Oj.i, Ow.i, Ofield.i, Mr.i, Mt0.i
 Global SNZ.i, SV.i, SC.i, SMmr0.i, SMmr1.i, SMmr3.i, SPcRec.i
 Global OpPsw.i = $00E0                ; the PSW a check starts from: kernel; MFPI/MTPI vary the previous mode
 
@@ -784,8 +784,11 @@ EndProcedure
 ; the dividend and divisor often at the edges (0, -1, 077777, 100000, a quotient
 ; just out of range). The same fields and the same memory as the MOV check.
 Global OpChecks.i, OpFailures.i, OpFirst.i, OpKind.i, OpR.i
-Global Dim OpCount.i(22)
+Global Dim OpCount.i(51)
 Global Dim EdgeW.i(8)
+Global Dim OpsFast.i(14)                ; the register fast paths (tools/mmu_gen.py, FAST): the opcode ...
+Global Dim OpsFastK.i(14)               ; ... and its form: 1 Rs,Rd, 2 Rd or #n,Rd, 3 SOB
+Global Dim OpsBr.i(15)                  ; BR, BNE ... BCS (tools/mmu_gen.py, BRANCHES): the opcode, offset 0
 Global Dim OpsTwo.i(8)                  ; ADD SUB BIT BIC BIS MOVB CMPB BITB: the opcode with no operands
 
 Procedure.i RndEdge()
@@ -804,7 +807,7 @@ Procedure OpsOne()
   If TPc < 0
     ProcedureReturn
   EndIf
-  OpKind = RndN(22)
+  OpKind = RndN(51)
   OpR = RndN(8)
   If OpKind = 8 Or OpKind = 9           ; MFPI/MTPI: kernel, the previous mode kernel, supervisor or user
     Oi = RndN(3)
@@ -839,6 +842,17 @@ Procedure OpsOne()
     TOp = $1000 | RndN(4096)
   ElseIf OpKind >= 11 And OpKind <= 18 ; ADD SUB BIT BIC BIS MOVB CMPB BITB ss, dd: every mode pair
     TOp = OpsTwo(OpKind - 11) | RndN(4096)
+  ElseIf OpKind >= 37                   ; a register fast path
+    Oi = OpsFastK(OpKind - 37)
+    If Oi = 1
+      TOp = OpsFast(OpKind - 37) | (RndN(8) << 6) | RndN(8)
+    ElseIf Oi = 2
+      TOp = OpsFast(OpKind - 37) | RndN(8)
+    Else
+      TOp = OpsFast(OpKind - 37) | RndN(512)
+    EndIf
+  ElseIf OpKind >= 22                   ; a branch, any offset
+    TOp = OpsBr(OpKind - 22) | RndN(256)
   ElseIf OpKind = 19                    ; CLR dd
     TOp = $0A00 | RndN(64)
   ElseIf OpKind = 20                    ; CLRB dd
@@ -897,6 +911,10 @@ Procedure OpsOne()
   NzWrite(Rnd()) : FlagV = Rnd() : FlagC = Rnd()
   If RndN(2)
     NzWrite(RndN(2) * $8000)          ; N set or clear plainly (SXT)
+  EndIf
+  If OpKind >= 22 And RndN(3) = 0       ; a branch: Z set (with N in bit 16, or not), or N alone
+    Oi = RndN(4)
+    If Oi = 0 : NzWrite(0) : ElseIf Oi = 1 : NzWrite($10000) : ElseIf Oi = 2 : NzWrite($8000) : Else : NzWrite(1) : EndIf
   EndIf
   Mmr0 = 1 | (RndN(8) << 1)
   If RndN(8) = 0
@@ -989,6 +1007,16 @@ Procedure Main()
   EdgeW(4) = 1 : EdgeW(5) = 2 : EdgeW(6) = $FFFE : EdgeW(7) = $8001
   OpsTwo(0) = $6000 : OpsTwo(1) = $E000 : OpsTwo(2) = $3000 : OpsTwo(3) = $4000
   OpsTwo(4) = $5000 : OpsTwo(5) = $9000 : OpsTwo(6) = $A000 : OpsTwo(7) = $B000
+  OpsBr(0) = $0100 : OpsBr(1) = $0200 : OpsBr(2) = $0300 : OpsBr(3) = $0400 : OpsBr(4) = $0500
+  OpsBr(5) = $0600 : OpsBr(6) = $0700 : OpsBr(7) = $8000 : OpsBr(8) = $8100 : OpsBr(9) = $8200
+  OpsBr(10) = $8300 : OpsBr(11) = $8400 : OpsBr(12) = $8500 : OpsBr(13) = $8600 : OpsBr(14) = $8700
+  OpsFast(0) = $1000 : OpsFast(1) = $2000 : OpsFast(2) = $6000 : OpsFast(3) = $E000
+  OpsFast(4) = $0A00 : OpsFast(5) = $0A80 : OpsFast(6) = $0AC0 : OpsFast(7) = $0BC0
+  OpsFast(8) = $15C0 : OpsFast(9) = $25C0 : OpsFast(10) = $35C0 : OpsFast(11) = $65C0
+  OpsFast(12) = $E5C0 : OpsFast(13) = $7E00
+  For Oi = 0 To 3 : OpsFastK(Oi) = 1 : Next
+  For Oi = 4 To 12 : OpsFastK(Oi) = 2 : Next
+  OpsFastK(13) = 3
   FpInit()
   Say("ASMCHECK start: the mapped loop's MOV handlers and __eaw, assembly against plain") : Eol()
   Repeat
@@ -1080,7 +1108,13 @@ Procedure Main()
     Say(" add=") : Num(OpCount(11)) : Say(" sub=") : Num(OpCount(12)) : Say(" bit=") : Num(OpCount(13))
     Say(" bic=") : Num(OpCount(14)) : Say(" bis=") : Num(OpCount(15)) : Say(" movb=") : Num(OpCount(16))
     Say(" cmpb=") : Num(OpCount(17)) : Say(" bitb=") : Num(OpCount(18)) : Say(" clr=") : Num(OpCount(19))
-    Say(" clrb=") : Num(OpCount(20)) : Say(" tstb=") : Num(OpCount(21)) : Say(" failures=") : Num(OpFailures)
+    Say(" clrb=") : Num(OpCount(20)) : Say(" tstb=") : Num(OpCount(21))
+    Oi = 0
+    For Oj = 22 To 36 : Oi = Oi + OpCount(Oj) : Next
+    Say(" branches=") : Num(Oi)
+    Oi = 0
+    For Oj = 37 To 50 : Oi = Oi + OpCount(Oj) : Next
+    Say(" fastpaths=") : Num(Oi) : Say(" failures=") : Num(OpFailures)
     If OpFailures = 0
       Say(" PASS")
     Else
