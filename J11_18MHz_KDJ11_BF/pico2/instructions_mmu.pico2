@@ -1019,8 +1019,9 @@ CompilerEndIf
 InstructionCMP_02M:            ; 02SSDD   entries $0400-$05FF
 CompilerIf #ASM_OPS = 1
   PcOutM()
-  MMSrcWord()
   ASM Uses Op, Res, FlagNZ, FlagV
+    ubfx r0, r8, #6, #6
+    bl __srcwm
     and.w r0, r8, #0x38
     cmp r0, #0
     bne __cmpm_mem

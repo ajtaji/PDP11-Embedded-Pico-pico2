@@ -369,9 +369,23 @@ def tail_fetch_t2(odd):
             "    ldr r1, =global_optablem\n    ldr pc, [r1, r2, lsl #2]\n")
 
 
+# THE FETCH WINDOW IN ONE LOAD (2026-10-25, Thumb-2 forms: compiler 341fd5aca or later):
+# Fw(0), Fw(1) and Fw(2) - the window's low and high limits and its host base - by one
+# ldm into r1, r2 and r12, and the next opcode by ldrh.w through r12: three loads become
+# one in every tail. Chosen by T2_LDM (MMU_GEN_T2LDM=1).
+T2_LDM = os.environ.get("MMU_GEN_T2LDM") == "1"
+
+
 def tail_fetch(n, odd):
     if T2_TAILS:
         return tail_fetch_t2(odd)
+    if T2_LDM:
+        return ((("    lsls r1, r0, #31\n    bne __tm%d_s\n" % n) if odd else "")
+                + "    ldr r3, =global_fw\n    ldm r3, {r1, r2, r12}\n    cmp r0, r1\n    blt __tm%d_s\n"
+                "    cmp r0, r2\n    bge __tm%d_s\n    str r0, [r3, #12]\n    ldrh.w r2, [r12, r0]\n    mov r8, r2\n"
+                "    adds.w r9, r9, #2\n    lsrs r2, r2, #3\n    lsls r2, r2, #2\n    ldr r1, =global_optablem\n"
+                "    ldr r1, [r1, r2]\n    bx r1\n__tm%d_e:\n    b __ul_cpurunm_runendm\n"
+                "__tm%d_s:\n    b __ul_cpurunm_slowfetchm\n" % (n, n, n, n))
     return ((("    lsls r1, r0, #31\n    bne __tm%d_s\n" % n) if odd else "")
             + "    ldr r3, =global_fw\n    ldr r1, [r3, #0]\n    cmp r0, r1\n    blt __tm%d_s\n"
             "    ldr r1, [r3, #4]\n    cmp r0, r1\n    bge __tm%d_s\n    str r0, [r3, #12]\n    ldr r1, [r3, #8]\n"
@@ -1390,11 +1404,12 @@ __wrw_slow:
     b mmuwriteword
 """
 
-# CMP after MMSrcWord(): Dst from a register or through __eaw and __rdw;
-# Res = Src - Dst, C = Res, V = (Src ^ Dst) & (Src ^ Res), NZ = Res & $FFFF
+# CMP: Src through __srcwm (MMSrcWord's assembly, 2026-10-25), Dst from a register or
+# through __eaw and __rdw; Res = Src - Dst, C = Res, V = (Src ^ Dst) & (Src ^ Res), NZ = Res & $FFFF
 CMP_ASM = """  PcOutM()
-  MMSrcWord()
   ASM Uses Op, Res, FlagNZ
+    ubfx r0, r8, #6, #6
+    bl __srcwm
     and.w r0, r8, #0x38
     cmp r0, #0
     bne __cmpm_mem
