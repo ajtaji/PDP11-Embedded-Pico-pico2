@@ -345,6 +345,49 @@ def pico2_tails(text):
     return text
 
 
+# EVERY TAIL ITS OWN EXITS (2026-10-24). The release assembler has no 32-bit
+# conditional branch and no long unconditional one: a "beq" to RunEndM or
+# SlowFetchM, out of a short branch's reach, becomes a branch round a five-
+# instruction long jump, so the macro tails above took THREE branches on the
+# common path of every instruction (each 2-3 cycles on the M33, about a tenth
+# of an instruction's time). Here each tail in the handlers is written out
+# with its own labels and its rare exits after its "bx": the common path
+# falls straight through, and only a window's end, a slow fetch or a trap
+# branches (short, to that tail's long jump). The macros stay for #ASM_TAILS = 0.
+def tail_fetch(n, odd):
+    return ((("    lsls r1, r0, #31\n    bne __tm%d_s\n" % n) if odd else "")
+            + "    ldr r3, =global_fw\n    ldr r1, [r3, #0]\n    cmp r0, r1\n    blt __tm%d_s\n"
+            "    ldr r1, [r3, #4]\n    cmp r0, r1\n    bge __tm%d_s\n    str r0, [r3, #12]\n    ldr r1, [r3, #8]\n"
+            "    ldrh r2, [r1, r0]\n    mov r8, r2\n    adds.w r9, r9, #2\n    lsrs r2, r2, #3\n    lsls r2, r2, #2\n"
+            "    ldr r1, =global_optablem\n    ldr r1, [r1, r2]\n    bx r1\n__tm%d_e:\n    b __ul_cpurunm_runendm\n"
+            "__tm%d_s:\n    b __ul_cpurunm_slowfetchm\n" % (n, n, n, n))
+
+
+def own_tails(text):
+    out, n = [], 0
+    for line in text.split("\n"):
+        s = line.strip()
+        if line.startswith("  ") and s in ("NextNativeM()", "NextSyncedM()", "NextNativeTrapM()") \
+                and not line.startswith("   "):
+            n += 1
+            if s == "NextSyncedM()":
+                asm = ("  ASM Uses PC, RunLeft, Op\n    ldr r1, =global_reg\n    ldr r0, [r1, #28]\n    mov r9, r0\n"
+                       "    ldr r1, =global_trapvector\n    ldr r1, [r1]\n    cmp r1, #0\n    bne __tm%d_t\n"
+                       "    subs.w r11, r11, #1\n    beq __tm%d_e\n" % (n, n) + tail_fetch(n, True)
+                       + "__tm%d_t:\n    b __ul_cpurunm_slowtailm\n  EndASM" % n)
+            else:
+                asm = ("  ASM Uses PC, RunLeft, Op\n    subs.w r11, r11, #1\n    beq __tm%d_e\n    mov r0, r9\n" % n
+                       + tail_fetch(n, False) + "  EndASM")
+                if s == "NextNativeTrapM()":
+                    asm = "  If TrapVector\n    Goto SlowTailM\n  EndIf\n" + asm
+            out.append("CompilerIf #ASM_TAILS = 1\n" + asm + "\nCompilerElse\n" + line + "\nCompilerEndIf")
+        else:
+            out.append(line)
+    if n < 150:
+        fail("own_tails: only %d tails in the handlers; teach tools/mmu_gen.py." % n)
+    return "\n".join(out)
+
+
 # ----------------------------------------------------------------------
 #  THE MOV HANDLERS IN ASSEMBLY (#ASM_MOV = 1, cpu.pico2). Each MOV_PAIRS
 #  handler gets a Cortex-M33 fast path in front of its Basic body. The fast
@@ -1504,8 +1547,193 @@ __movm_done:
   EndASM
   NextSyncedM()
 """
+# ----------------------------------------------------------------------
+#  MORE OF THE MAPPED LOOP IN ASSEMBLY (2026-10-24). With the MMU on (V6,
+#  V7) the BYTE Sieve spent 11% in ADD, 5% in MOVB, 4% in CLRB, 2% in TSTB
+#  and od as much again in CLR, BIT, BIS - all plain handlers around __eaw.
+#  These are CMP's shape: the source through __srcwm / __srcbm (MMSrcWord /
+#  MMSrcByte: a register, or __eaw / __eab and __rdw / __rdb), the
+#  destination in a register or through __eaw / __eab and __rdw / __wrw,
+#  __rdb / __wrb, and the condition codes set last, after the write (a
+#  write that aborts saves the PSW as it was; MOV_ASM's lesson). Src, Dst,
+#  Ea and Res are left as the plain handler leaves them. asm_check.pico2
+#  holds each to its plain handler (ASMCHECK ops).
+# ----------------------------------------------------------------------
+ASM_RW2 = """__srcwm:
+    tst.w r0, #0x38
+    bne __srcwm_mem
+    and.w r0, r0, #7
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+    ldr r1, =global_src
+    str r0, [r1]
+    bx lr
+__srcwm_mem:
+    push {r3, lr}
+    bl __eaw
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __rdw
+    ldr r1, =global_src
+    str r0, [r1]
+    pop {r3, pc}
+__srcbm:
+    tst.w r0, #0x38
+    bne __srcbm_mem
+    and.w r0, r0, #7
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+    uxtb r0, r0
+    ldr r1, =global_src
+    str r0, [r1]
+    bx lr
+__srcbm_mem:
+    push {r3, lr}
+    bl __eab
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __rdb
+    ldr r1, =global_src
+    str r0, [r1]
+    pop {r3, pc}
+__rdb:
+    ldr r2, =global_eabase
+    ldr r2, [r2]
+    add.w r2, r2, r0, lsr #13
+    lsls r2, r2, #2
+    ldr r3, =global_maprlo
+    ldr r3, [r3, r2]
+    cmp r0, r3
+    blt __rdb_slow
+    ldr r3, =global_maprhi
+    ldr r3, [r3, r2]
+    cmp r0, r3
+    bge __rdb_slow
+    ldr r3, =global_maphost
+    ldr r3, [r3, r2]
+    ldrb r0, [r3, r0]
+    bx lr
+__rdb_slow:
+    lsrs r1, r2, #2
+    b mmureadbyte
+__wrb:
+    ldr r2, =global_eabase
+    ldr r2, [r2]
+    add.w r2, r2, r0, lsr #13
+    lsls r2, r2, #2
+    ldr r3, =global_mapwlo
+    ldr r3, [r3, r2]
+    cmp r0, r3
+    blt __wrb_slow
+    ldr r3, =global_mapwhi
+    ldr r3, [r3, r2]
+    cmp r0, r3
+    bge __wrb_slow
+    ldr r3, =global_maphost
+    ldr r3, [r3, r2]
+    strb r1, [r3, r0]
+    bx lr
+__wrb_slow:
+    mov r12, r1
+    lsrs r1, r2, #2
+    mov r2, r12
+    b mmuwritebyte
+"""
+
+
+def two_word(l, kind):
+    """ADD, SUB, BIT, BIC, BIS: Src through __srcwm, then the destination."""
+    reg = {"add": "    ldr r3, =global_dst\n    str r1, [r3]\n    adds r3, r0, r1\n    mov r10, r3\n"
+                  "    uxth r3, r3\n    str r3, [r2]\n",
+           "sub": "    ldr r3, =global_dst\n    str r1, [r3]\n    subs r3, r1, r0\n    mov r10, r3\n"
+                  "    uxth r3, r3\n    str r3, [r2]\n",
+           "bit": "    ldr r3, =global_dst\n    str r1, [r3]\n",
+           "bic": "    bic.w r3, r1, r0\n    uxth r3, r3\n    mov r10, r3\n    str r3, [r2]\n",
+           "bis": "    orr.w r3, r1, r0\n    mov r10, r3\n    str r3, [r2]\n"}[kind]
+    write = "    mov r10, r3\n    ldr r0, =global_ea\n    ldr r0, [r0]\n    mov r1, r10\n    bl __wrw\n"
+    mem = {"add": "    ldr r3, =global_dst\n    str r0, [r3]\n    ldr r1, =global_src\n    ldr r1, [r1]\n"
+                  "    adds r3, r1, r0\n" + write,
+           "sub": "    ldr r3, =global_dst\n    str r0, [r3]\n    ldr r1, =global_src\n    ldr r1, [r1]\n"
+                  "    subs r3, r0, r1\n" + write,
+           "bit": "    ldr r3, =global_dst\n    str r0, [r3]\n",
+           "bic": "    ldr r1, =global_src\n    ldr r1, [r1]\n    bic.w r3, r0, r1\n    uxth r3, r3\n" + write,
+           "bis": "    ldr r1, =global_src\n    ldr r1, [r1]\n    orr.w r3, r0, r1\n" + write}[kind]
+    vee0 = "    movs r0, #0\n    ldr r1, =global_flagv\n    str r0, [r1]\n"
+    flags = {"add": "    mov r2, r10\n    ldr r3, =global_flagc\n    str r2, [r3]\n    ldr r0, =global_src\n"
+                    "    ldr r0, [r0]\n    ldr r1, =global_dst\n    ldr r1, [r1]\n    eor.w r3, r0, r1\n"
+                    "    eor.w r12, r0, r2\n    bic.w r3, r12, r3\n    ldr r0, =global_flagv\n    str r3, [r0]\n"
+                    "    uxth r4, r2\n",
+             "sub": "    mov r2, r10\n    ldr r3, =global_flagc\n    str r2, [r3]\n    ldr r0, =global_src\n"
+                    "    ldr r0, [r0]\n    ldr r1, =global_dst\n    ldr r1, [r1]\n    eor.w r3, r0, r1\n"
+                    "    eor.w r12, r1, r2\n    and.w r3, r3, r12\n    ldr r0, =global_flagv\n    str r3, [r0]\n"
+                    "    uxth r4, r2\n",
+             "bit": "    ldr r0, =global_src\n    ldr r0, [r0]\n    ldr r1, =global_dst\n    ldr r1, [r1]\n"
+                    "    and.w r4, r0, r1\n" + vee0,
+             "bic": "    mov r4, r10\n" + vee0,
+             "bis": "    mov r4, r10\n" + vee0}[kind]
+    uses = "Op, FlagNZ" if kind == "bit" else "Op, Res, FlagNZ"
+    return ("  PcOutM()\n  ASM Uses " + uses + "\n    ubfx r0, r8, #6, #6\n    bl __srcwm\n    and.w r1, r8, #0x38\n    cmp r1, #0\n"
+            "    bne __%(l)sm_mem\n    and.w r1, r8, #7\n    lsls r1, r1, #2\n    ldr r2, =global_reg\n"
+            "    adds r2, r2, r1\n    ldr r1, [r2]\n" % {"l": l} + reg
+            + "    b __%(l)sm_flags\n__%(l)sm_mem:\n    and.w r0, r8, #0x3f\n    bl __eaw\n    ldr r1, =global_ea\n"
+            "    str r0, [r1]\n    bl __rdw\n" % {"l": l} + mem
+            + "__%(l)sm_flags:\n" % {"l": l} + flags + "  EndASM\n  NextSyncedM()\n")
+
+
+def byte_src(l, kind):
+    """MOVB, CMPB, BITB: Src through __srcbm, then the destination byte."""
+    head = ("  PcOutM()\n  ASM Uses " + ("Op, Res, FlagNZ" if kind == "cmpb" else "Op, FlagNZ") + "\n    ubfx r0, r8, #6, #6\n    bl __srcbm\n    and.w r1, r8, #0x38\n    cmp r1, #0\n"
+            "    bne __%(l)sm_mem\n" % {"l": l})
+    vee0 = "    movs r0, #0\n    ldr r1, =global_flagv\n    str r0, [r1]\n"
+    if kind == "movb":
+        return (head + "    sxtb r0, r0\n    uxth r0, r0\n    and.w r1, r8, #7\n    lsls r1, r1, #2\n"
+                "    ldr r2, =global_reg\n    str r0, [r2, r1]\n    b __movbm_flags\n__movbm_mem:\n"
+                "    and.w r0, r8, #0x3f\n    bl __eab\n    ldr r1, =global_ea\n    str r0, [r1]\n"
+                "    ldr r1, =global_src\n    ldr r1, [r1]\n    bl __wrb\n__movbm_flags:\n    ldr r1, =global_src\n"
+                "    ldr r0, [r1]\n    lsls r4, r0, #8\n" + vee0 + "  EndASM\n  NextSyncedM()\n")
+    have = ("    and.w r1, r8, #7\n    lsls r1, r1, #2\n    ldr r2, =global_reg\n    ldr r0, [r2, r1]\n"
+            "    uxtb r0, r0\n    b __%(l)sm_have\n__%(l)sm_mem:\n    and.w r0, r8, #0x3f\n    bl __eab\n"
+            "    ldr r1, =global_ea\n    str r0, [r1]\n    bl __rdb\n__%(l)sm_have:\n    ldr r2, =global_dst\n"
+            "    str r0, [r2]\n    ldr r1, =global_src\n    ldr r1, [r1]\n" % {"l": l})
+    if kind == "cmpb":
+        return (head + have + "    subs r2, r1, r0\n    mov r10, r2\n    eor.w r0, r0, r1\n    eor.w r3, r1, r2\n"
+                "    and.w r0, r0, r3\n    lsls r0, r0, #8\n    ldr r3, =global_flagv\n    str r0, [r3]\n"
+                "    lsls r0, r2, #8\n    ldr r3, =global_flagc\n    str r0, [r3]\n    uxtb r4, r2\n    lsls r4, r4, #8\n"
+                "  EndASM\n  NextSyncedM()\n")
+    return head + have + "    and.w r0, r0, r1\n    lsls r4, r0, #8\n" + vee0 + "  EndASM\n  NextSyncedM()\n"
+
+
+def one_op(l, kind):
+    """CLR, CLRB, TSTB: one operand, no source."""
+    vc0 = ("    movs r0, #0\n    ldr r1, =global_flagv\n    str r0, [r1]\n    ldr r1, =global_flagc\n"
+           "    str r0, [r1]\n")
+    ea = {"clr": "__eaw", "clrb": "__eab", "tstb": "__eab"}[kind]
+    reg = {"clr": "    movs r2, #0\n    str r2, [r1, r0]\n",
+           "clrb": "    ldr r2, [r1, r0]\n    and.w r2, r2, #0xff00\n    str r2, [r1, r0]\n",
+           "tstb": "    ldr r2, [r1, r0]\n    uxtb r2, r2\n    lsls r4, r2, #8\n"}[kind]
+    mem = {"clr": "    movs r1, #0\n    bl __wrw\n",
+           "clrb": "    movs r1, #0\n    bl __wrb\n",
+           "tstb": "    bl __rdb\n    lsls r4, r0, #8\n"}[kind]
+    nz = "" if kind == "tstb" else "    movs r4, #0\n"
+    return ("  PcOutM()\n  ASM Uses Op, FlagNZ\n    and.w r0, r8, #0x38\n    cmp r0, #0\n    bne __%(l)sm_mem\n"
+            "    and.w r0, r8, #7\n    lsls r0, r0, #2\n    ldr r1, =global_reg\n" % {"l": l} + reg
+            + "    b __%(l)sm_flags\n__%(l)sm_mem:\n    and.w r0, r8, #0x3f\n    bl %(ea)s\n    ldr r1, =global_ea\n"
+            "    str r0, [r1]\n" % {"l": l, "ea": ea} + mem + "__%(l)sm_flags:\n" % {"l": l} + nz + vc0
+            + "  EndASM\n  NextSyncedM()\n")
+
+
+MORE_OPS = {"ADD_06": two_word("add", "add"), "SUB_16": two_word("sub", "sub"), "BIT_03": two_word("bit", "bit"),
+            "BIC_04": two_word("bic", "bic"), "BIS_05": two_word("bis", "bis"),
+            "MOVB_11": byte_src("movb", "movb"), "CMPB_12": byte_src("cmpb", "cmpb"),
+            "BITB_13": byte_src("bitb", "bitb"),
+            "CLR_0050": one_op("clr", "clr"), "CLRB_1050": one_op("clrb", "clrb"),
+            "TSTB_1057": one_op("tstb", "tstb")}
+
 OPS = ["JSR_004", "RTS_00020", "DIV_071", "CMP_02", "TST_0057", "INC_0052", "DEC_0053", "SXT_0067",
-       "MFPI_0065", "MTPI_0066", "MOV_01"]
+       "MFPI_0065", "MTPI_0066", "MOV_01", "ADD_06", "SUB_16", "BIT_03", "BIC_04", "BIS_05", "MOVB_11",
+       "CMPB_12", "BITB_13", "CLR_0050", "CLRB_1050", "TSTB_1057"]
 
 
 def handler(text, name):
@@ -1524,9 +1752,9 @@ def pico2_ops(text):
     if text.count(at) != 1:
         fail("pico2_ops: __eaw's end moved; teach tools/mmu_gen.py.")
     no_scaled_index(ASM_STACK + JSR_ASM + RTS_ASM + DIV_ASM + ASM_RW + CMP_ASM + TST_ASM + INCDEC_ASM + SXT_ASM
-                    + MFPI_ASM + MTPI_ASM + MOV_ASM, "ASM_STACK")
+                    + MFPI_ASM + MTPI_ASM + MOV_ASM + ASM_RW2 + "".join(MORE_OPS.values()), "ASM_STACK")
     no_scaled_index(ASM_EAB, "__eab")
-    text = text.replace(at, at + "CompilerIf #ASM_OPS = 1\n  ASM\n" + ASM_STACK + ASM_RW + "  EndASM\nCompilerEndIf\n"
+    text = text.replace(at, at + "CompilerIf #ASM_OPS = 1\n  ASM\n" + ASM_STACK + ASM_RW + ASM_RW2 + "  EndASM\nCompilerEndIf\n"
                         + "CompilerIf #ASM_EA = 1\n  ASM\n" + ASM_EAB + "  EndASM\nCompilerEndIf\n")
     out, n = [], 0
     for line in text.split("\n"):
@@ -1543,7 +1771,9 @@ def pico2_ops(text):
     for name in OPS:
         i, j = handler(text, name)
         plain = text[i:j]
-        if name.startswith("DIV"):
+        if name in MORE_OPS:                 # first: CMPB and TSTB would match "CMP" and "TST" below
+            fast = MORE_OPS[name]
+        elif name.startswith("DIV"):
             a = plain.index("  Src = Src - ((Src & $8000) << 1)\n")
             b = plain.index("  ; ClockCycles")
             fast = plain[:a] + DIV_ASM + plain[b:]
@@ -1641,6 +1871,7 @@ def main():
             text = pico2_tails(text)
             text = pico2_eaw(text)
             text = pico2_ops(text)
+            text = own_tails(text)        # last: the assembly handlers' tails too
         else:                                # the Pico: its SRAM holds CpuRun (Mini-Unix); CpuRunM stays in flash
             text = text.replace("\nProcedureRAM.i CpuRunM(n.i)", "\nProcedure.i CpuRunM(n.i)", 1)
         if "--check" in sys.argv:

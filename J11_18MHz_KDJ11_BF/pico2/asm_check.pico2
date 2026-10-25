@@ -788,8 +788,9 @@ EndProcedure
 ; the dividend and divisor often at the edges (0, -1, 077777, 100000, a quotient
 ; just out of range). The same fields and the same memory as the MOV check.
 Global OpChecks.i, OpFailures.i, OpFirst.i, OpKind.i, OpR.i
-Global Dim OpCount.i(11)
+Global Dim OpCount.i(22)
 Global Dim EdgeW.i(8)
+Global Dim OpsTwo.i(8)                  ; ADD SUB BIT BIC BIS MOVB CMPB BITB: the opcode with no operands
 
 Procedure.i RndEdge()
   If RndN(2)
@@ -807,7 +808,7 @@ Procedure OpsOne()
   If TPc < 0
     ProcedureReturn
   EndIf
-  OpKind = RndN(11)
+  OpKind = RndN(22)
   OpR = RndN(8)
   If OpKind = 8 Or OpKind = 9           ; MFPI/MTPI: kernel, the previous mode kernel, supervisor or user
     Oi = RndN(3)
@@ -840,6 +841,14 @@ Procedure OpsOne()
     TOp = $0D80 | RndN(64) | (RndN(2) << 15)
   ElseIf OpKind = 10                    ; MOV ss, dd: every mode pair
     TOp = $1000 | RndN(4096)
+  ElseIf OpKind >= 11 And OpKind <= 18 ; ADD SUB BIT BIC BIS MOVB CMPB BITB ss, dd: every mode pair
+    TOp = OpsTwo(OpKind - 11) | RndN(4096)
+  ElseIf OpKind = 19                    ; CLR dd
+    TOp = $0A00 | RndN(64)
+  ElseIf OpKind = 20                    ; CLRB dd
+    TOp = $8A00 | RndN(64)
+  ElseIf OpKind = 21                    ; TSTB dd
+    TOp = $8BC0 | RndN(64)
   Else                                  ; DIV R, ss
     TOp = $7200 | (OpR << 6) | RndN(64)
     If RndN(3) = 0
@@ -982,6 +991,8 @@ Procedure Main()
   OpFirst = -1
   EdgeW(0) = 0 : EdgeW(1) = $FFFF : EdgeW(2) = $7FFF : EdgeW(3) = $8000
   EdgeW(4) = 1 : EdgeW(5) = 2 : EdgeW(6) = $FFFE : EdgeW(7) = $8001
+  OpsTwo(0) = $6000 : OpsTwo(1) = $E000 : OpsTwo(2) = $3000 : OpsTwo(3) = $4000
+  OpsTwo(4) = $5000 : OpsTwo(5) = $9000 : OpsTwo(6) = $A000 : OpsTwo(7) = $B000
   FpInit()
   Say("ASMCHECK start: the mapped loop's MOV handlers and __eaw, assembly against plain") : Eol()
   Repeat
@@ -1069,7 +1080,11 @@ Procedure Main()
     Say("ASMCHECK ops checks=") : Num(OpChecks) : Say(" jsr=") : Num(OpCount(0)) : Say(" rts=") : Num(OpCount(1))
     Say(" div=") : Num(OpCount(2)) : Say(" cmp=") : Num(OpCount(3)) : Say(" tst=") : Num(OpCount(4))
     Say(" inc=") : Num(OpCount(5)) : Say(" dec=") : Num(OpCount(6)) : Say(" sxt=") : Num(OpCount(7))
-    Say(" mfpi=") : Num(OpCount(8)) : Say(" mtpi=") : Num(OpCount(9)) : Say(" mov=") : Num(OpCount(10)) : Say(" failures=") : Num(OpFailures)
+    Say(" mfpi=") : Num(OpCount(8)) : Say(" mtpi=") : Num(OpCount(9)) : Say(" mov=") : Num(OpCount(10))
+    Say(" add=") : Num(OpCount(11)) : Say(" sub=") : Num(OpCount(12)) : Say(" bit=") : Num(OpCount(13))
+    Say(" bic=") : Num(OpCount(14)) : Say(" bis=") : Num(OpCount(15)) : Say(" movb=") : Num(OpCount(16))
+    Say(" cmpb=") : Num(OpCount(17)) : Say(" bitb=") : Num(OpCount(18)) : Say(" clr=") : Num(OpCount(19))
+    Say(" clrb=") : Num(OpCount(20)) : Say(" tstb=") : Num(OpCount(21)) : Say(" failures=") : Num(OpFailures)
     If OpFailures = 0
       Say(" PASS")
     Else

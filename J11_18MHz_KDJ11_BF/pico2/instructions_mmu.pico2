@@ -11,8 +11,8 @@
 ;  Include it after cpu and before instructions.
 ; ======================================================================
 Global Dim OpTableM.Label(8192)
-Global Dim OpAsmM.Label(11)                 ; JSR, RTS, DIV: the assembly entry ...
-Global Dim OpRefM.Label(11)                 ; ... and the plain one (tools/mmu_gen.py, pico2_ops)
+Global Dim OpAsmM.Label(22)                 ; JSR, RTS, DIV: the assembly entry ...
+Global Dim OpRefM.Label(22)                 ; ... and the plain one (tools/mmu_gen.py, pico2_ops)
 Global Dim MovAsmM.Label(7)                ; the MOV handlers by mode: the assembly entry ...
 Global Dim MovRefM.Label(7)                ; ... and the plain one (tools/mmu_gen.py, asm_mov)
 Global OpTableReadyM.i                    ; 0 until the first CpuRun fills OpTable
@@ -158,7 +158,36 @@ Macro NextNativeTrapM()
   If TrapVector
     Goto SlowTailM
   EndIf
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm1_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm1_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm1_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm1_e:
+    b __ul_cpurunm_runendm
+__tm1_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 EndMacro
 
 ; A branch taken: the low byte of the instruction, signed, in words.
@@ -555,6 +584,87 @@ __wrw_slow:
     lsrs r1, r2, #2
     mov r2, r12
     b mmuwriteword
+__srcwm:
+    tst.w r0, #0x38
+    bne __srcwm_mem
+    and.w r0, r0, #7
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+    ldr r1, =global_src
+    str r0, [r1]
+    bx lr
+__srcwm_mem:
+    push {r3, lr}
+    bl __eaw
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __rdw
+    ldr r1, =global_src
+    str r0, [r1]
+    pop {r3, pc}
+__srcbm:
+    tst.w r0, #0x38
+    bne __srcbm_mem
+    and.w r0, r0, #7
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+    uxtb r0, r0
+    ldr r1, =global_src
+    str r0, [r1]
+    bx lr
+__srcbm_mem:
+    push {r3, lr}
+    bl __eab
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __rdb
+    ldr r1, =global_src
+    str r0, [r1]
+    pop {r3, pc}
+__rdb:
+    ldr r2, =global_eabase
+    ldr r2, [r2]
+    add.w r2, r2, r0, lsr #13
+    lsls r2, r2, #2
+    ldr r3, =global_maprlo
+    ldr r3, [r3, r2]
+    cmp r0, r3
+    blt __rdb_slow
+    ldr r3, =global_maprhi
+    ldr r3, [r3, r2]
+    cmp r0, r3
+    bge __rdb_slow
+    ldr r3, =global_maphost
+    ldr r3, [r3, r2]
+    ldrb r0, [r3, r0]
+    bx lr
+__rdb_slow:
+    lsrs r1, r2, #2
+    b mmureadbyte
+__wrb:
+    ldr r2, =global_eabase
+    ldr r2, [r2]
+    add.w r2, r2, r0, lsr #13
+    lsls r2, r2, #2
+    ldr r3, =global_mapwlo
+    ldr r3, [r3, r2]
+    cmp r0, r3
+    blt __wrb_slow
+    ldr r3, =global_mapwhi
+    ldr r3, [r3, r2]
+    cmp r0, r3
+    bge __wrb_slow
+    ldr r3, =global_maphost
+    ldr r3, [r3, r2]
+    strb r1, [r3, r0]
+    bx lr
+__wrb_slow:
+    mov r12, r1
+    lsrs r1, r2, #2
+    mov r2, r12
+    b mmuwritebyte
   EndASM
 CompilerEndIf
 CompilerIf #ASM_EA = 1
@@ -686,7 +796,46 @@ __movm_done:
     ldr r1, =global_flagv
     str r0, [r1]
   EndASM
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm2_t
+    subs.w r11, r11, #1
+    beq __tm2_e
+    lsls r1, r0, #31
+    bne __tm2_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm2_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm2_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm2_e:
+    b __ul_cpurunm_runendm
+__tm2_s:
+    b __ul_cpurunm_slowfetchm
+__tm2_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionMOV_01RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -712,9 +861,121 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("MOV " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm3_t
+    subs.w r11, r11, #1
+    beq __tm3_e
+    lsls r1, r0, #31
+    bne __tm3_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm3_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm3_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm3_e:
+    b __ul_cpurunm_runendm
+__tm3_s:
+    b __ul_cpurunm_slowfetchm
+__tm3_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMOVB_11M:           ; 11SSDD   entries $1200-$13FF
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+  ASM Uses Op, FlagNZ
+    ubfx r0, r8, #6, #6
+    bl __srcbm
+    and.w r1, r8, #0x38
+    cmp r1, #0
+    bne __movbm_mem
+    sxtb r0, r0
+    uxth r0, r0
+    and.w r1, r8, #7
+    lsls r1, r1, #2
+    ldr r2, =global_reg
+    str r0, [r2, r1]
+    b __movbm_flags
+__movbm_mem:
+    and.w r0, r8, #0x3f
+    bl __eab
+    ldr r1, =global_ea
+    str r0, [r1]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    bl __wrb
+__movbm_flags:
+    ldr r1, =global_src
+    ldr r0, [r1]
+    lsls r4, r0, #8
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+  EndASM
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm4_t
+    subs.w r11, r11, #1
+    beq __tm4_e
+    lsls r1, r0, #31
+    bne __tm4_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm4_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm4_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm4_e:
+    b __ul_cpurunm_runendm
+__tm4_s:
+    b __ul_cpurunm_slowfetchm
+__tm4_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionMOVB_11RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "MOVB"
   MMSrcByte()
@@ -738,7 +999,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("MOVB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm5_t
+    subs.w r11, r11, #1
+    beq __tm5_e
+    lsls r1, r0, #31
+    bne __tm5_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm5_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm5_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm5_e:
+    b __ul_cpurunm_runendm
+__tm5_s:
+    b __ul_cpurunm_slowfetchm
+__tm5_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-CMP-------------------------------------------------------------------
 InstructionCMP_02M:            ; 02SSDD   entries $0400-$05FF
@@ -776,7 +1076,46 @@ __cmpm_have:
     str r0, [r3]
     uxth r4, r2
   EndASM
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm6_t
+    subs.w r11, r11, #1
+    beq __tm6_e
+    lsls r1, r0, #31
+    bne __tm6_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm6_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm6_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm6_e:
+    b __ul_cpurunm_runendm
+__tm6_s:
+    b __ul_cpurunm_slowfetchm
+__tm6_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionCMP_02RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -804,9 +1143,129 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("CMP " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm7_t
+    subs.w r11, r11, #1
+    beq __tm7_e
+    lsls r1, r0, #31
+    bne __tm7_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm7_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm7_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm7_e:
+    b __ul_cpurunm_runendm
+__tm7_s:
+    b __ul_cpurunm_slowfetchm
+__tm7_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionCMPB_12M:           ; 12SSDD   entries $1400-$15FF
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+  ASM Uses Op, Res, FlagNZ
+    ubfx r0, r8, #6, #6
+    bl __srcbm
+    and.w r1, r8, #0x38
+    cmp r1, #0
+    bne __cmpbm_mem
+    and.w r1, r8, #7
+    lsls r1, r1, #2
+    ldr r2, =global_reg
+    ldr r0, [r2, r1]
+    uxtb r0, r0
+    b __cmpbm_have
+__cmpbm_mem:
+    and.w r0, r8, #0x3f
+    bl __eab
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __rdb
+__cmpbm_have:
+    ldr r2, =global_dst
+    str r0, [r2]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    subs r2, r1, r0
+    mov r10, r2
+    eor.w r0, r0, r1
+    eor.w r3, r1, r2
+    and.w r0, r0, r3
+    lsls r0, r0, #8
+    ldr r3, =global_flagv
+    str r0, [r3]
+    lsls r0, r2, #8
+    ldr r3, =global_flagc
+    str r0, [r3]
+    uxtb r4, r2
+    lsls r4, r4, #8
+  EndASM
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm8_t
+    subs.w r11, r11, #1
+    beq __tm8_e
+    lsls r1, r0, #31
+    bne __tm8_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm8_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm8_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm8_e:
+    b __ul_cpurunm_runendm
+__tm8_s:
+    b __ul_cpurunm_slowfetchm
+__tm8_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionCMPB_12RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "CMPB"
   MMSrcByte()
@@ -832,10 +1291,125 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("CMPB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm9_t
+    subs.w r11, r11, #1
+    beq __tm9_e
+    lsls r1, r0, #31
+    bne __tm9_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm9_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm9_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm9_e:
+    b __ul_cpurunm_runendm
+__tm9_s:
+    b __ul_cpurunm_slowfetchm
+__tm9_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-BIT-------------------------------------------------------------------
 InstructionBIT_03M:            ; 03SSDD   entries $0600-$07FF
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+  ASM Uses Op, FlagNZ
+    ubfx r0, r8, #6, #6
+    bl __srcwm
+    and.w r1, r8, #0x38
+    cmp r1, #0
+    bne __bitm_mem
+    and.w r1, r8, #7
+    lsls r1, r1, #2
+    ldr r2, =global_reg
+    adds r2, r2, r1
+    ldr r1, [r2]
+    ldr r3, =global_dst
+    str r1, [r3]
+    b __bitm_flags
+__bitm_mem:
+    and.w r0, r8, #0x3f
+    bl __eaw
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __rdw
+    ldr r3, =global_dst
+    str r0, [r3]
+__bitm_flags:
+    ldr r0, =global_src
+    ldr r0, [r0]
+    ldr r1, =global_dst
+    ldr r1, [r1]
+    and.w r4, r0, r1
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+  EndASM
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm10_t
+    subs.w r11, r11, #1
+    beq __tm10_e
+    lsls r1, r0, #31
+    bne __tm10_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm10_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm10_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm10_e:
+    b __ul_cpurunm_runendm
+__tm10_s:
+    b __ul_cpurunm_slowfetchm
+__tm10_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionBIT_03RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "BIT"
   MMSrcWord()
@@ -859,9 +1433,121 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIT " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm11_t
+    subs.w r11, r11, #1
+    beq __tm11_e
+    lsls r1, r0, #31
+    bne __tm11_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm11_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm11_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm11_e:
+    b __ul_cpurunm_runendm
+__tm11_s:
+    b __ul_cpurunm_slowfetchm
+__tm11_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBITB_13M:           ; 13SSDD   entries $1600-$17FF
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+  ASM Uses Op, FlagNZ
+    ubfx r0, r8, #6, #6
+    bl __srcbm
+    and.w r1, r8, #0x38
+    cmp r1, #0
+    bne __bitbm_mem
+    and.w r1, r8, #7
+    lsls r1, r1, #2
+    ldr r2, =global_reg
+    ldr r0, [r2, r1]
+    uxtb r0, r0
+    b __bitbm_have
+__bitbm_mem:
+    and.w r0, r8, #0x3f
+    bl __eab
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __rdb
+__bitbm_have:
+    ldr r2, =global_dst
+    str r0, [r2]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    and.w r0, r0, r1
+    lsls r4, r0, #8
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+  EndASM
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm12_t
+    subs.w r11, r11, #1
+    beq __tm12_e
+    lsls r1, r0, #31
+    bne __tm12_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm12_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm12_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm12_e:
+    b __ul_cpurunm_runendm
+__tm12_s:
+    b __ul_cpurunm_slowfetchm
+__tm12_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionBITB_13RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "BITB"
   MMSrcByte()
@@ -885,10 +1571,130 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BITB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm13_t
+    subs.w r11, r11, #1
+    beq __tm13_e
+    lsls r1, r0, #31
+    bne __tm13_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm13_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm13_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm13_e:
+    b __ul_cpurunm_runendm
+__tm13_s:
+    b __ul_cpurunm_slowfetchm
+__tm13_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-BIC-------------------------------------------------------------------
 InstructionBIC_04M:            ; 04SSDD   entries $0800-$09FF
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+  ASM Uses Op, Res, FlagNZ
+    ubfx r0, r8, #6, #6
+    bl __srcwm
+    and.w r1, r8, #0x38
+    cmp r1, #0
+    bne __bicm_mem
+    and.w r1, r8, #7
+    lsls r1, r1, #2
+    ldr r2, =global_reg
+    adds r2, r2, r1
+    ldr r1, [r2]
+    bic.w r3, r1, r0
+    uxth r3, r3
+    mov r10, r3
+    str r3, [r2]
+    b __bicm_flags
+__bicm_mem:
+    and.w r0, r8, #0x3f
+    bl __eaw
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __rdw
+    ldr r1, =global_src
+    ldr r1, [r1]
+    bic.w r3, r0, r1
+    uxth r3, r3
+    mov r10, r3
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __wrw
+__bicm_flags:
+    mov r4, r10
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+  EndASM
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm14_t
+    subs.w r11, r11, #1
+    beq __tm14_e
+    lsls r1, r0, #31
+    bne __tm14_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm14_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm14_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm14_e:
+    b __ul_cpurunm_runendm
+__tm14_s:
+    b __ul_cpurunm_slowfetchm
+__tm14_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionBIC_04RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "BIC"
   MMSrcWord()
@@ -915,7 +1721,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm15_t
+    subs.w r11, r11, #1
+    beq __tm15_e
+    lsls r1, r0, #31
+    bne __tm15_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm15_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm15_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm15_e:
+    b __ul_cpurunm_runendm
+__tm15_s:
+    b __ul_cpurunm_slowfetchm
+__tm15_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBICB_14M:           ; 14SSDD   entries $1800-$19FF
   PcOutM()
@@ -944,10 +1789,128 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BICB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm16_t
+    subs.w r11, r11, #1
+    beq __tm16_e
+    lsls r1, r0, #31
+    bne __tm16_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm16_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm16_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm16_e:
+    b __ul_cpurunm_runendm
+__tm16_s:
+    b __ul_cpurunm_slowfetchm
+__tm16_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-BIS-------------------------------------------------------------------
 InstructionBIS_05M:            ; 05SSDD   entries $0A00-$0BFF
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+  ASM Uses Op, Res, FlagNZ
+    ubfx r0, r8, #6, #6
+    bl __srcwm
+    and.w r1, r8, #0x38
+    cmp r1, #0
+    bne __bism_mem
+    and.w r1, r8, #7
+    lsls r1, r1, #2
+    ldr r2, =global_reg
+    adds r2, r2, r1
+    ldr r1, [r2]
+    orr.w r3, r1, r0
+    mov r10, r3
+    str r3, [r2]
+    b __bism_flags
+__bism_mem:
+    and.w r0, r8, #0x3f
+    bl __eaw
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __rdw
+    ldr r1, =global_src
+    ldr r1, [r1]
+    orr.w r3, r0, r1
+    mov r10, r3
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __wrw
+__bism_flags:
+    mov r4, r10
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+  EndASM
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm17_t
+    subs.w r11, r11, #1
+    beq __tm17_e
+    lsls r1, r0, #31
+    bne __tm17_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm17_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm17_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm17_e:
+    b __ul_cpurunm_runendm
+__tm17_s:
+    b __ul_cpurunm_slowfetchm
+__tm17_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionBIS_05RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "BIS"
   MMSrcWord()
@@ -974,7 +1937,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIS " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm18_t
+    subs.w r11, r11, #1
+    beq __tm18_e
+    lsls r1, r0, #31
+    bne __tm18_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm18_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm18_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm18_e:
+    b __ul_cpurunm_runendm
+__tm18_s:
+    b __ul_cpurunm_slowfetchm
+__tm18_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBISB_15M:           ; 15SSDD   entries $1A00-$1BFF
   PcOutM()
@@ -1003,10 +2005,142 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BISB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm19_t
+    subs.w r11, r11, #1
+    beq __tm19_e
+    lsls r1, r0, #31
+    bne __tm19_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm19_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm19_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm19_e:
+    b __ul_cpurunm_runendm
+__tm19_s:
+    b __ul_cpurunm_slowfetchm
+__tm19_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-ADD-------------------------------------------------------------------
 InstructionADD_06M:            ; 06SSDD   entries $0C00-$0DFF
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+  ASM Uses Op, Res, FlagNZ
+    ubfx r0, r8, #6, #6
+    bl __srcwm
+    and.w r1, r8, #0x38
+    cmp r1, #0
+    bne __addm_mem
+    and.w r1, r8, #7
+    lsls r1, r1, #2
+    ldr r2, =global_reg
+    adds r2, r2, r1
+    ldr r1, [r2]
+    ldr r3, =global_dst
+    str r1, [r3]
+    adds r3, r0, r1
+    mov r10, r3
+    uxth r3, r3
+    str r3, [r2]
+    b __addm_flags
+__addm_mem:
+    and.w r0, r8, #0x3f
+    bl __eaw
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __rdw
+    ldr r3, =global_dst
+    str r0, [r3]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    adds r3, r1, r0
+    mov r10, r3
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __wrw
+__addm_flags:
+    mov r2, r10
+    ldr r3, =global_flagc
+    str r2, [r3]
+    ldr r0, =global_src
+    ldr r0, [r0]
+    ldr r1, =global_dst
+    ldr r1, [r1]
+    eor.w r3, r0, r1
+    eor.w r12, r0, r2
+    bic.w r3, r12, r3
+    ldr r0, =global_flagv
+    str r3, [r0]
+    uxth r4, r2
+  EndASM
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm20_t
+    subs.w r11, r11, #1
+    beq __tm20_e
+    lsls r1, r0, #31
+    bne __tm20_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm20_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm20_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm20_e:
+    b __ul_cpurunm_runendm
+__tm20_s:
+    b __ul_cpurunm_slowfetchm
+__tm20_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionADD_06RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "ADD"
   MMSrcWord()
@@ -1035,10 +2169,142 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("ADD " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm21_t
+    subs.w r11, r11, #1
+    beq __tm21_e
+    lsls r1, r0, #31
+    bne __tm21_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm21_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm21_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm21_e:
+    b __ul_cpurunm_runendm
+__tm21_s:
+    b __ul_cpurunm_slowfetchm
+__tm21_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-SUB-------------------------------------------------------------------
 InstructionSUB_16M:            ; 16SSDD   entries $1C00-$1DFF
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+  ASM Uses Op, Res, FlagNZ
+    ubfx r0, r8, #6, #6
+    bl __srcwm
+    and.w r1, r8, #0x38
+    cmp r1, #0
+    bne __subm_mem
+    and.w r1, r8, #7
+    lsls r1, r1, #2
+    ldr r2, =global_reg
+    adds r2, r2, r1
+    ldr r1, [r2]
+    ldr r3, =global_dst
+    str r1, [r3]
+    subs r3, r1, r0
+    mov r10, r3
+    uxth r3, r3
+    str r3, [r2]
+    b __subm_flags
+__subm_mem:
+    and.w r0, r8, #0x3f
+    bl __eaw
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __rdw
+    ldr r3, =global_dst
+    str r0, [r3]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    subs r3, r0, r1
+    mov r10, r3
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __wrw
+__subm_flags:
+    mov r2, r10
+    ldr r3, =global_flagc
+    str r2, [r3]
+    ldr r0, =global_src
+    ldr r0, [r0]
+    ldr r1, =global_dst
+    ldr r1, [r1]
+    eor.w r3, r0, r1
+    eor.w r12, r1, r2
+    and.w r3, r3, r12
+    ldr r0, =global_flagv
+    str r3, [r0]
+    uxth r4, r2
+  EndASM
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm22_t
+    subs.w r11, r11, #1
+    beq __tm22_e
+    lsls r1, r0, #31
+    bne __tm22_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm22_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm22_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm22_e:
+    b __ul_cpurunm_runendm
+__tm22_s:
+    b __ul_cpurunm_slowfetchm
+__tm22_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionSUB_16RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "SUB"
   MMSrcWord()
@@ -1067,7 +2333,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("SUB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm23_t
+    subs.w r11, r11, #1
+    beq __tm23_e
+    lsls r1, r0, #31
+    bne __tm23_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm23_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm23_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm23_e:
+    b __ul_cpurunm_runendm
+__tm23_s:
+    b __ul_cpurunm_slowfetchm
+__tm23_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ; ======================================================================
 ;  SINGLE-OPERAND. The destination is fetched at the top and stored at
@@ -1076,6 +2381,75 @@ CompilerEndIf
 
 ;-CLR-------------------------------------------------------------------
 InstructionCLR_0050M:          ; 0050DD   entries $0140-$0147
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+  ASM Uses Op, FlagNZ
+    and.w r0, r8, #0x38
+    cmp r0, #0
+    bne __clrm_mem
+    and.w r0, r8, #7
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    movs r2, #0
+    str r2, [r1, r0]
+    b __clrm_flags
+__clrm_mem:
+    and.w r0, r8, #0x3f
+    bl __eaw
+    ldr r1, =global_ea
+    str r0, [r1]
+    movs r1, #0
+    bl __wrw
+__clrm_flags:
+    movs r4, #0
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+    ldr r1, =global_flagc
+    str r0, [r1]
+  EndASM
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm24_t
+    subs.w r11, r11, #1
+    beq __tm24_e
+    lsls r1, r0, #31
+    bne __tm24_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm24_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm24_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm24_e:
+    b __ul_cpurunm_runendm
+__tm24_s:
+    b __ul_cpurunm_slowfetchm
+__tm24_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionCLR_0050RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "CLR"
   If (Op & $38) = 0
@@ -1099,9 +2473,118 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm25_t
+    subs.w r11, r11, #1
+    beq __tm25_e
+    lsls r1, r0, #31
+    bne __tm25_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm25_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm25_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm25_e:
+    b __ul_cpurunm_runendm
+__tm25_s:
+    b __ul_cpurunm_slowfetchm
+__tm25_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionCLRB_1050M:         ; 1050DD   entries $1140-$1147
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+  ASM Uses Op, FlagNZ
+    and.w r0, r8, #0x38
+    cmp r0, #0
+    bne __clrbm_mem
+    and.w r0, r8, #7
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r2, [r1, r0]
+    and.w r2, r2, #0xff00
+    str r2, [r1, r0]
+    b __clrbm_flags
+__clrbm_mem:
+    and.w r0, r8, #0x3f
+    bl __eab
+    ldr r1, =global_ea
+    str r0, [r1]
+    movs r1, #0
+    bl __wrb
+__clrbm_flags:
+    movs r4, #0
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+    ldr r1, =global_flagc
+    str r0, [r1]
+  EndASM
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm26_t
+    subs.w r11, r11, #1
+    beq __tm26_e
+    lsls r1, r0, #31
+    bne __tm26_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm26_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm26_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm26_e:
+    b __ul_cpurunm_runendm
+__tm26_s:
+    b __ul_cpurunm_slowfetchm
+__tm26_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionCLRB_1050RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "CLRB"
   If (Op & $38) = 0
@@ -1125,7 +2608,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLRB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm27_t
+    subs.w r11, r11, #1
+    beq __tm27_e
+    lsls r1, r0, #31
+    bne __tm27_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm27_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm27_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm27_e:
+    b __ul_cpurunm_runendm
+__tm27_s:
+    b __ul_cpurunm_slowfetchm
+__tm27_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-COM-------------------------------------------------------------------
 InstructionCOM_0051M:          ; 0051DD   entries $0148-$014F
@@ -1155,7 +2677,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("COM " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm28_t
+    subs.w r11, r11, #1
+    beq __tm28_e
+    lsls r1, r0, #31
+    bne __tm28_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm28_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm28_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm28_e:
+    b __ul_cpurunm_runendm
+__tm28_s:
+    b __ul_cpurunm_slowfetchm
+__tm28_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionCOMB_1051M:         ; 1051DD   entries $1148-$114F
   PcOutM()
@@ -1184,7 +2745,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("COMB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm29_t
+    subs.w r11, r11, #1
+    beq __tm29_e
+    lsls r1, r0, #31
+    bne __tm29_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm29_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm29_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm29_e:
+    b __ul_cpurunm_runendm
+__tm29_s:
+    b __ul_cpurunm_slowfetchm
+__tm29_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-INC-------------------------------------------------------------------
 InstructionINC_0052M:          ; 0052DD   entries $0150-$0157   C unaffected
@@ -1235,7 +2835,46 @@ __incm_nov:
     ldr r3, =global_flagv
     str r1, [r3]
   EndASM
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm30_t
+    subs.w r11, r11, #1
+    beq __tm30_e
+    lsls r1, r0, #31
+    bne __tm30_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm30_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm30_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm30_e:
+    b __ul_cpurunm_runendm
+__tm30_s:
+    b __ul_cpurunm_slowfetchm
+__tm30_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionINC_0052RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -1267,7 +2906,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("INC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm31_t
+    subs.w r11, r11, #1
+    beq __tm31_e
+    lsls r1, r0, #31
+    bne __tm31_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm31_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm31_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm31_e:
+    b __ul_cpurunm_runendm
+__tm31_s:
+    b __ul_cpurunm_slowfetchm
+__tm31_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionINCB_1052M:         ; 1052DD   entries $1150-$1157
   PcOutM()
@@ -1299,7 +2977,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("INCB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm32_t
+    subs.w r11, r11, #1
+    beq __tm32_e
+    lsls r1, r0, #31
+    bne __tm32_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm32_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm32_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm32_e:
+    b __ul_cpurunm_runendm
+__tm32_s:
+    b __ul_cpurunm_slowfetchm
+__tm32_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-DEC-------------------------------------------------------------------
 InstructionDEC_0053M:          ; 0053DD   entries $0158-$015F   C unaffected
@@ -1350,7 +3067,46 @@ __decm_nov:
     ldr r3, =global_flagv
     str r1, [r3]
   EndASM
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm33_t
+    subs.w r11, r11, #1
+    beq __tm33_e
+    lsls r1, r0, #31
+    bne __tm33_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm33_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm33_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm33_e:
+    b __ul_cpurunm_runendm
+__tm33_s:
+    b __ul_cpurunm_slowfetchm
+__tm33_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionDEC_0053RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -1382,7 +3138,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("DEC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm34_t
+    subs.w r11, r11, #1
+    beq __tm34_e
+    lsls r1, r0, #31
+    bne __tm34_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm34_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm34_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm34_e:
+    b __ul_cpurunm_runendm
+__tm34_s:
+    b __ul_cpurunm_slowfetchm
+__tm34_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionDECB_1053M:         ; 1053DD   entries $1158-$115F
   PcOutM()
@@ -1414,7 +3209,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("DECB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm35_t
+    subs.w r11, r11, #1
+    beq __tm35_e
+    lsls r1, r0, #31
+    bne __tm35_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm35_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm35_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm35_e:
+    b __ul_cpurunm_runendm
+__tm35_s:
+    b __ul_cpurunm_slowfetchm
+__tm35_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-NEG-------------------------------------------------------------------
 InstructionNEG_0054M:          ; 0054DD   entries $0160-$0167
@@ -1450,7 +3284,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("NEG " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm36_t
+    subs.w r11, r11, #1
+    beq __tm36_e
+    lsls r1, r0, #31
+    bne __tm36_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm36_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm36_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm36_e:
+    b __ul_cpurunm_runendm
+__tm36_s:
+    b __ul_cpurunm_slowfetchm
+__tm36_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionNEGB_1054M:         ; 1054DD   entries $1160-$1167
   PcOutM()
@@ -1485,7 +3358,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("NEGB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm37_t
+    subs.w r11, r11, #1
+    beq __tm37_e
+    lsls r1, r0, #31
+    bne __tm37_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm37_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm37_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm37_e:
+    b __ul_cpurunm_runendm
+__tm37_s:
+    b __ul_cpurunm_slowfetchm
+__tm37_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-ADC-------------------------------------------------------------------
 InstructionADC_0055M:          ; 0055DD   entries $0168-$016F
@@ -1521,7 +3433,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ADC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm38_t
+    subs.w r11, r11, #1
+    beq __tm38_e
+    lsls r1, r0, #31
+    bne __tm38_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm38_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm38_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm38_e:
+    b __ul_cpurunm_runendm
+__tm38_s:
+    b __ul_cpurunm_slowfetchm
+__tm38_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionADCB_1055M:         ; 1055DD   entries $1168-$116F
   PcOutM()
@@ -1556,7 +3507,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ADCB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm39_t
+    subs.w r11, r11, #1
+    beq __tm39_e
+    lsls r1, r0, #31
+    bne __tm39_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm39_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm39_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm39_e:
+    b __ul_cpurunm_runendm
+__tm39_s:
+    b __ul_cpurunm_slowfetchm
+__tm39_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-SBC-------------------------------------------------------------------
 ; C: set if the destination was 0 and C was 1, cleared otherwise (the
@@ -1595,7 +3585,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SBC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm40_t
+    subs.w r11, r11, #1
+    beq __tm40_e
+    lsls r1, r0, #31
+    bne __tm40_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm40_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm40_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm40_e:
+    b __ul_cpurunm_runendm
+__tm40_s:
+    b __ul_cpurunm_slowfetchm
+__tm40_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionSBCB_1056M:         ; 1056DD   entries $1170-$1177
   PcOutM()
@@ -1630,7 +3659,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SBCB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm41_t
+    subs.w r11, r11, #1
+    beq __tm41_e
+    lsls r1, r0, #31
+    bne __tm41_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm41_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm41_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm41_e:
+    b __ul_cpurunm_runendm
+__tm41_s:
+    b __ul_cpurunm_slowfetchm
+__tm41_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-TST-------------------------------------------------------------------
 InstructionTST_0057M:          ; 0057DD   entries $0178-$017F
@@ -1659,7 +3727,46 @@ __tstm_flags:
     ldr r1, =global_flagc
     str r0, [r1]
   EndASM
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm42_t
+    subs.w r11, r11, #1
+    beq __tm42_e
+    lsls r1, r0, #31
+    bne __tm42_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm42_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm42_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm42_e:
+    b __ul_cpurunm_runendm
+__tm42_s:
+    b __ul_cpurunm_slowfetchm
+__tm42_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionTST_0057RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -1684,9 +3791,117 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TST " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm43_t
+    subs.w r11, r11, #1
+    beq __tm43_e
+    lsls r1, r0, #31
+    bne __tm43_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm43_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm43_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm43_e:
+    b __ul_cpurunm_runendm
+__tm43_s:
+    b __ul_cpurunm_slowfetchm
+__tm43_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionTSTB_1057M:         ; 1057DD   entries $1178-$117F
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+  ASM Uses Op, FlagNZ
+    and.w r0, r8, #0x38
+    cmp r0, #0
+    bne __tstbm_mem
+    and.w r0, r8, #7
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r2, [r1, r0]
+    uxtb r2, r2
+    lsls r4, r2, #8
+    b __tstbm_flags
+__tstbm_mem:
+    and.w r0, r8, #0x3f
+    bl __eab
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __rdb
+    lsls r4, r0, #8
+__tstbm_flags:
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+    ldr r1, =global_flagc
+    str r0, [r1]
+  EndASM
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm44_t
+    subs.w r11, r11, #1
+    beq __tm44_e
+    lsls r1, r0, #31
+    bne __tm44_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm44_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm44_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm44_e:
+    b __ul_cpurunm_runendm
+__tm44_s:
+    b __ul_cpurunm_slowfetchm
+__tm44_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionTSTB_1057RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "TSTB"
   If (Op & $38) = 0
@@ -1710,7 +3925,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TSTB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm45_t
+    subs.w r11, r11, #1
+    beq __tm45_e
+    lsls r1, r0, #31
+    bne __tm45_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm45_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm45_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm45_e:
+    b __ul_cpurunm_runendm
+__tm45_s:
+    b __ul_cpurunm_slowfetchm
+__tm45_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ; ======================================================================
 ;  SHIFTS AND ROTATES. V is N xor C after the operation.
@@ -1745,7 +3999,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm46_t
+    subs.w r11, r11, #1
+    beq __tm46_e
+    lsls r1, r0, #31
+    bne __tm46_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm46_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm46_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm46_e:
+    b __ul_cpurunm_runendm
+__tm46_s:
+    b __ul_cpurunm_slowfetchm
+__tm46_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionRORB_1060M:         ; 1060DD   entries $1180-$1187
   PcOutM()
@@ -1775,7 +4068,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("RORB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm47_t
+    subs.w r11, r11, #1
+    beq __tm47_e
+    lsls r1, r0, #31
+    bne __tm47_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm47_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm47_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm47_e:
+    b __ul_cpurunm_runendm
+__tm47_s:
+    b __ul_cpurunm_slowfetchm
+__tm47_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-ROL-------------------------------------------------------------------
 InstructionROL_0061M:          ; 0061DD   entries $0188-$018F
@@ -1806,7 +4138,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROL " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm48_t
+    subs.w r11, r11, #1
+    beq __tm48_e
+    lsls r1, r0, #31
+    bne __tm48_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm48_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm48_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm48_e:
+    b __ul_cpurunm_runendm
+__tm48_s:
+    b __ul_cpurunm_slowfetchm
+__tm48_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionROLB_1061M:         ; 1061DD   entries $1188-$118F
   PcOutM()
@@ -1836,7 +4207,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROLB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm49_t
+    subs.w r11, r11, #1
+    beq __tm49_e
+    lsls r1, r0, #31
+    bne __tm49_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm49_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm49_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm49_e:
+    b __ul_cpurunm_runendm
+__tm49_s:
+    b __ul_cpurunm_slowfetchm
+__tm49_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-ASR-------------------------------------------------------------------
 InstructionASR_0062M:          ; 0062DD   entries $0190-$0197
@@ -1867,7 +4277,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm50_t
+    subs.w r11, r11, #1
+    beq __tm50_e
+    lsls r1, r0, #31
+    bne __tm50_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm50_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm50_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm50_e:
+    b __ul_cpurunm_runendm
+__tm50_s:
+    b __ul_cpurunm_slowfetchm
+__tm50_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionASRB_1062M:         ; 1062DD   entries $1190-$1197
   PcOutM()
@@ -1897,7 +4346,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASRB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm51_t
+    subs.w r11, r11, #1
+    beq __tm51_e
+    lsls r1, r0, #31
+    bne __tm51_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm51_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm51_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm51_e:
+    b __ul_cpurunm_runendm
+__tm51_s:
+    b __ul_cpurunm_slowfetchm
+__tm51_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-ASL-------------------------------------------------------------------
 InstructionASL_0063M:          ; 0063DD   entries $0198-$019F
@@ -1928,7 +4416,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASL " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm52_t
+    subs.w r11, r11, #1
+    beq __tm52_e
+    lsls r1, r0, #31
+    bne __tm52_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm52_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm52_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm52_e:
+    b __ul_cpurunm_runendm
+__tm52_s:
+    b __ul_cpurunm_slowfetchm
+__tm52_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionASLB_1063M:         ; 1063DD   entries $1198-$119F
   PcOutM()
@@ -1958,7 +4485,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASLB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm53_t
+    subs.w r11, r11, #1
+    beq __tm53_e
+    lsls r1, r0, #31
+    bne __tm53_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm53_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm53_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm53_e:
+    b __ul_cpurunm_runendm
+__tm53_s:
+    b __ul_cpurunm_slowfetchm
+__tm53_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-SWAB------------------------------------------------------------------
 InstructionSWAB_0003M:         ; 0003DD   entries $0018-$001F
@@ -1989,7 +4555,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SWAB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm54_t
+    subs.w r11, r11, #1
+    beq __tm54_e
+    lsls r1, r0, #31
+    bne __tm54_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm54_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm54_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm54_e:
+    b __ul_cpurunm_runendm
+__tm54_s:
+    b __ul_cpurunm_slowfetchm
+__tm54_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-SXT-------------------------------------------------------------------
 InstructionSXT_0067M:          ; 0067DD   entries $01B8-$01BF   N unaffected
@@ -2029,7 +4634,46 @@ __sxtm_nz:
     ldr r1, =global_flagv
     str r0, [r1]
   EndASM
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm55_t
+    subs.w r11, r11, #1
+    beq __tm55_e
+    lsls r1, r0, #31
+    bne __tm55_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm55_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm55_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm55_e:
+    b __ul_cpurunm_runendm
+__tm55_s:
+    b __ul_cpurunm_slowfetchm
+__tm55_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionSXT_0067RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -2058,7 +4702,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SXT " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm56_t
+    subs.w r11, r11, #1
+    beq __tm56_e
+    lsls r1, r0, #31
+    bne __tm56_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm56_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm56_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm56_e:
+    b __ul_cpurunm_runendm
+__tm56_s:
+    b __ul_cpurunm_slowfetchm
+__tm56_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-MFPS / MTPS ----------------------------------------------------------
 InstructionMFPS_1067M:         ; 1067DD   entries $11B8-$11BF
@@ -2085,7 +4768,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MFPS " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm57_t
+    subs.w r11, r11, #1
+    beq __tm57_e
+    lsls r1, r0, #31
+    bne __tm57_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm57_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm57_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm57_e:
+    b __ul_cpurunm_runendm
+__tm57_s:
+    b __ul_cpurunm_slowfetchm
+__tm57_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMTPS_1064M:         ; 1064SS   entries $11A0-$11A7   the T bit is not written
   PcOutM()
@@ -2113,7 +4835,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MTPS " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm58_t
+    subs.w r11, r11, #1
+    beq __tm58_e
+    lsls r1, r0, #31
+    bne __tm58_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm58_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm58_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm58_e:
+    b __ul_cpurunm_runendm
+__tm58_s:
+    b __ul_cpurunm_slowfetchm
+__tm58_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-MFPI / MTPI / MFPD / MTPD -------------------------------------------
 ; One address space until the memory management unit is modelled, so the
@@ -2152,7 +4913,46 @@ __mfpim_nopush:
   EndIf
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm59_t
+    subs.w r11, r11, #1
+    beq __tm59_e
+    lsls r1, r0, #31
+    bne __tm59_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm59_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm59_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm59_e:
+    b __ul_cpurunm_runendm
+__tm59_s:
+    b __ul_cpurunm_slowfetchm
+__tm59_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionMFPI_0065RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -2183,7 +4983,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MFPI " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm60_t
+    subs.w r11, r11, #1
+    beq __tm60_e
+    lsls r1, r0, #31
+    bne __tm60_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm60_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm60_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm60_e:
+    b __ul_cpurunm_runendm
+__tm60_s:
+    b __ul_cpurunm_slowfetchm
+__tm60_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMTPI_0066M:         ; 0066DD   entries $01B0-$01B7
 CompilerIf #ASM_OPS = 1
@@ -2218,7 +5057,46 @@ CompilerIf #ASM_OPS = 1
   EndIf
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm61_t
+    subs.w r11, r11, #1
+    beq __tm61_e
+    lsls r1, r0, #31
+    bne __tm61_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm61_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm61_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm61_e:
+    b __ul_cpurunm_runendm
+__tm61_s:
+    b __ul_cpurunm_slowfetchm
+__tm61_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionMTPI_0066RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -2248,7 +5126,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MTPI " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm62_t
+    subs.w r11, r11, #1
+    beq __tm62_e
+    lsls r1, r0, #31
+    bne __tm62_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm62_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm62_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm62_e:
+    b __ul_cpurunm_runendm
+__tm62_s:
+    b __ul_cpurunm_slowfetchm
+__tm62_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMFPD_1065M:         ; 1065SS   entries $11A8-$11AF
   ;name = "MFPD"
@@ -2274,7 +5191,36 @@ InstructionBR_0004M:           ; 000400   entries $0020-$003F
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BR " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm63_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm63_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm63_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm63_e:
+    b __ul_cpurunm_runendm
+__tm63_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBNE_0010M:          ; 001000   entries $0040-$005F   Z = 0
   ;name = "BNE"
@@ -2284,7 +5230,36 @@ InstructionBNE_0010M:          ; 001000   entries $0040-$005F   Z = 0
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BNE " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm64_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm64_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm64_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm64_e:
+    b __ul_cpurunm_runendm
+__tm64_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBEQ_0014M:          ; 001400   entries $0060-$007F   Z = 1
   ;name = "BEQ"
@@ -2294,7 +5269,36 @@ InstructionBEQ_0014M:          ; 001400   entries $0060-$007F   Z = 1
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BEQ " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm65_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm65_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm65_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm65_e:
+    b __ul_cpurunm_runendm
+__tm65_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBGE_0020M:          ; 002000   entries $0080-$009F   N xor V = 0
   ;name = "BGE"
@@ -2304,7 +5308,36 @@ InstructionBGE_0020M:          ; 002000   entries $0080-$009F   N xor V = 0
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BGE " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm66_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm66_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm66_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm66_e:
+    b __ul_cpurunm_runendm
+__tm66_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBLT_0024M:          ; 002400   entries $00A0-$00BF   N xor V = 1
   ;name = "BLT"
@@ -2314,7 +5347,36 @@ InstructionBLT_0024M:          ; 002400   entries $00A0-$00BF   N xor V = 1
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BLT " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm67_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm67_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm67_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm67_e:
+    b __ul_cpurunm_runendm
+__tm67_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBGT_0030M:          ; 003000   entries $00C0-$00DF   Z or (N xor V) = 0
   ;name = "BGT"
@@ -2326,7 +5388,36 @@ InstructionBGT_0030M:          ; 003000   entries $00C0-$00DF   Z or (N xor V) =
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BGT " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm68_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm68_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm68_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm68_e:
+    b __ul_cpurunm_runendm
+__tm68_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBLE_0034M:          ; 003400   entries $00E0-$00FF   Z or (N xor V) = 1
   ;name = "BLE"
@@ -2338,7 +5429,36 @@ InstructionBLE_0034M:          ; 003400   entries $00E0-$00FF   Z or (N xor V) =
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BLE " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm69_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm69_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm69_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm69_e:
+    b __ul_cpurunm_runendm
+__tm69_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBPL_1000M:          ; 100000   entries $1000-$101F   N = 0
   ;name = "BPL"
@@ -2348,7 +5468,36 @@ InstructionBPL_1000M:          ; 100000   entries $1000-$101F   N = 0
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BPL " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm70_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm70_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm70_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm70_e:
+    b __ul_cpurunm_runendm
+__tm70_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBMI_1004M:          ; 100400   entries $1020-$103F   N = 1
   ;name = "BMI"
@@ -2358,7 +5507,36 @@ InstructionBMI_1004M:          ; 100400   entries $1020-$103F   N = 1
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BMI " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm71_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm71_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm71_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm71_e:
+    b __ul_cpurunm_runendm
+__tm71_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBHI_1010M:          ; 101000   entries $1040-$105F   C = 0 and Z = 0
   ;name = "BHI"
@@ -2370,7 +5548,36 @@ InstructionBHI_1010M:          ; 101000   entries $1040-$105F   C = 0 and Z = 0
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BHI " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm72_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm72_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm72_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm72_e:
+    b __ul_cpurunm_runendm
+__tm72_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBLOS_1014M:         ; 101400   entries $1060-$107F   C = 1 or Z = 1
   ;name = "BLOS"
@@ -2382,7 +5589,36 @@ InstructionBLOS_1014M:         ; 101400   entries $1060-$107F   C = 1 or Z = 1
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BLOS " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm73_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm73_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm73_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm73_e:
+    b __ul_cpurunm_runendm
+__tm73_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBVC_1020M:          ; 102000   entries $1080-$109F   V = 0
   ;name = "BVC"
@@ -2392,7 +5628,36 @@ InstructionBVC_1020M:          ; 102000   entries $1080-$109F   V = 0
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BVC " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm74_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm74_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm74_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm74_e:
+    b __ul_cpurunm_runendm
+__tm74_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBVS_1024M:          ; 102400   entries $10A0-$10BF   V = 1
   ;name = "BVS"
@@ -2402,7 +5667,36 @@ InstructionBVS_1024M:          ; 102400   entries $10A0-$10BF   V = 1
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BVS " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm75_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm75_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm75_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm75_e:
+    b __ul_cpurunm_runendm
+__tm75_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBCC_1030M:          ; 103000   entries $10C0-$10DF   C = 0 (also BHIS)
   ;name = "BCC"
@@ -2412,7 +5706,36 @@ InstructionBCC_1030M:          ; 103000   entries $10C0-$10DF   C = 0 (also BHIS
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BCC " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm76_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm76_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm76_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm76_e:
+    b __ul_cpurunm_runendm
+__tm76_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBCS_1034M:          ; 103400   entries $10E0-$10FF   C = 1 (also BLO)
   ;name = "BCS"
@@ -2422,7 +5745,36 @@ InstructionBCS_1034M:          ; 103400   entries $10E0-$10FF   C = 1 (also BLO)
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BCS " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm77_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm77_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm77_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm77_e:
+    b __ul_cpurunm_runendm
+__tm77_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 ; ======================================================================
 ;  JUMPS AND SUBROUTINES
@@ -2449,7 +5801,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("JMP " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm78_t
+    subs.w r11, r11, #1
+    beq __tm78_e
+    lsls r1, r0, #31
+    bne __tm78_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm78_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm78_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm78_e:
+    b __ul_cpurunm_runendm
+__tm78_s:
+    b __ul_cpurunm_slowfetchm
+__tm78_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-JSR-------------------------------------------------------------------
 InstructionJSR_004M:           ; 004RDD   entries $0100-$013F
@@ -2478,7 +5869,46 @@ CompilerIf #ASM_OPS = 1
       str r2, [r1, #28]
     EndASM
   EndIf
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm79_t
+    subs.w r11, r11, #1
+    beq __tm79_e
+    lsls r1, r0, #31
+    bne __tm79_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm79_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm79_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm79_e:
+    b __ul_cpurunm_runendm
+__tm79_s:
+    b __ul_cpurunm_slowfetchm
+__tm79_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionJSR_004RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -2503,7 +5933,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("JSR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm80_t
+    subs.w r11, r11, #1
+    beq __tm80_e
+    lsls r1, r0, #31
+    bne __tm80_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm80_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm80_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm80_e:
+    b __ul_cpurunm_runendm
+__tm80_s:
+    b __ul_cpurunm_slowfetchm
+__tm80_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-RTS-------------------------------------------------------------------
 InstructionRTS_00020M:         ; 00020R   entry $0010
@@ -2521,7 +5990,46 @@ CompilerIf #ASM_OPS = 1
     ldr r2, =global_reg
     str r0, [r2, r1]
   EndASM
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm81_t
+    subs.w r11, r11, #1
+    beq __tm81_e
+    lsls r1, r0, #31
+    bne __tm81_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm81_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm81_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm81_e:
+    b __ul_cpurunm_runendm
+__tm81_s:
+    b __ul_cpurunm_slowfetchm
+__tm81_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionRTS_00020RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -2531,7 +6039,46 @@ InstructionRTS_00020RefM:         ; the plain version: the reference (asm_check.
   ; ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("RTS " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm82_t
+    subs.w r11, r11, #1
+    beq __tm82_e
+    lsls r1, r0, #31
+    bne __tm82_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm82_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm82_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm82_e:
+    b __ul_cpurunm_runendm
+__tm82_s:
+    b __ul_cpurunm_slowfetchm
+__tm82_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-MARK------------------------------------------------------------------
 InstructionMARK_0064M:         ; 0064NN   entries $01A0-$01A7
@@ -2543,7 +6090,46 @@ InstructionMARK_0064M:         ; 0064NN   entries $01A0-$01A7
   ; ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("MARK " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm83_t
+    subs.w r11, r11, #1
+    beq __tm83_e
+    lsls r1, r0, #31
+    bne __tm83_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm83_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm83_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm83_e:
+    b __ul_cpurunm_runendm
+__tm83_s:
+    b __ul_cpurunm_slowfetchm
+__tm83_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-SOB-------------------------------------------------------------------
 InstructionSOB_077M:           ; 077RNN   entries $0FC0-$0FFF
@@ -2556,7 +6142,36 @@ InstructionSOB_077M:           ; 077RNN   entries $0FC0-$0FFF
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("SOB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm84_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm84_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm84_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm84_e:
+    b __ul_cpurunm_runendm
+__tm84_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionSOB_077_PCM:        ; 0777NN   SOB R7 - legal, if strange: it counts the PC down
   PcOutM()
@@ -2565,7 +6180,46 @@ InstructionSOB_077_PCM:        ; 0777NN   SOB R7 - legal, if strange: it counts 
     Reg(7) = (Reg(7) - ((Op & $3F) << 1)) & $FFFF
   EndIf
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm85_t
+    subs.w r11, r11, #1
+    beq __tm85_e
+    lsls r1, r0, #31
+    bne __tm85_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm85_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm85_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm85_e:
+    b __ul_cpurunm_runendm
+__tm85_s:
+    b __ul_cpurunm_slowfetchm
+__tm85_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ; ======================================================================
 ;  EIS - MUL, DIV, ASH, ASHC, XOR. Register in bits 8-6, operand in 5-0.
@@ -2609,7 +6263,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("MUL " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm86_t
+    subs.w r11, r11, #1
+    beq __tm86_e
+    lsls r1, r0, #31
+    bne __tm86_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm86_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm86_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm86_e:
+    b __ul_cpurunm_runendm
+__tm86_s:
+    b __ul_cpurunm_slowfetchm
+__tm86_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-DIV-------------------------------------------------------------------
 InstructionDIV_071M:           ; 071RSS   entries $0E40-$0E7F
@@ -2688,7 +6381,46 @@ __divm_flags:
   ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("DIV " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm87_t
+    subs.w r11, r11, #1
+    beq __tm87_e
+    lsls r1, r0, #31
+    bne __tm87_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm87_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm87_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm87_e:
+    b __ul_cpurunm_runendm
+__tm87_s:
+    b __ul_cpurunm_slowfetchm
+__tm87_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionDIV_071RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -2732,7 +6464,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("DIV " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm88_t
+    subs.w r11, r11, #1
+    beq __tm88_e
+    lsls r1, r0, #31
+    bne __tm88_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm88_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm88_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm88_e:
+    b __ul_cpurunm_runendm
+__tm88_s:
+    b __ul_cpurunm_slowfetchm
+__tm88_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-ASH-------------------------------------------------------------------
 ; Shift count is the low six bits of the source, signed: positive shifts
@@ -2781,7 +6552,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("ASH " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm89_t
+    subs.w r11, r11, #1
+    beq __tm89_e
+    lsls r1, r0, #31
+    bne __tm89_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm89_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm89_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm89_e:
+    b __ul_cpurunm_runendm
+__tm89_s:
+    b __ul_cpurunm_slowfetchm
+__tm89_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-ASHC------------------------------------------------------------------
 InstructionASHC_073M:          ; 073RSS   entries $0EC0-$0EFF
@@ -2829,7 +6639,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("ASHC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm90_t
+    subs.w r11, r11, #1
+    beq __tm90_e
+    lsls r1, r0, #31
+    bne __tm90_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm90_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm90_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm90_e:
+    b __ul_cpurunm_runendm
+__tm90_s:
+    b __ul_cpurunm_slowfetchm
+__tm90_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-XOR-------------------------------------------------------------------
 InstructionXOR_074M:           ; 074RDD   entries $0F00-$0F3F
@@ -2858,7 +6707,46 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("XOR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm91_t
+    subs.w r11, r11, #1
+    beq __tm91_e
+    lsls r1, r0, #31
+    bne __tm91_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm91_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm91_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm91_e:
+    b __ul_cpurunm_runendm
+__tm91_s:
+    b __ul_cpurunm_slowfetchm
+__tm91_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ; ======================================================================
 ;  TRAPS AND MACHINE CONTROL
@@ -2870,7 +6758,46 @@ InstructionEMT_104M:           ; 104000-104377   entries $1100-$111F
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("EMT " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm92_t
+    subs.w r11, r11, #1
+    beq __tm92_e
+    lsls r1, r0, #31
+    bne __tm92_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm92_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm92_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm92_e:
+    b __ul_cpurunm_runendm
+__tm92_s:
+    b __ul_cpurunm_slowfetchm
+__tm92_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionTRAP_1044M:         ; 104400-104777   entries $1120-$113F
   PcOutM()
@@ -2879,7 +6806,46 @@ InstructionTRAP_1044M:         ; 104400-104777   entries $1120-$113F
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("TRAP " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm93_t
+    subs.w r11, r11, #1
+    beq __tm93_e
+    lsls r1, r0, #31
+    bne __tm93_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm93_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm93_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm93_e:
+    b __ul_cpurunm_runendm
+__tm93_s:
+    b __ul_cpurunm_slowfetchm
+__tm93_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionHALT_000000M:       ; entry $0000, sub-decoded
   PcOutM()
@@ -2903,7 +6869,36 @@ InstructionWAIT_000001M:       ; entry $0000, sub-decoded
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("WAIT")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm94_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm94_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm94_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm94_e:
+    b __ul_cpurunm_runendm
+__tm94_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionRTI_000002M:        ; entry $0000, sub-decoded
   PcOutM()
@@ -2920,7 +6915,46 @@ InstructionRTI_000002M:        ; entry $0000, sub-decoded
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("RTI")
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm95_t
+    subs.w r11, r11, #1
+    beq __tm95_e
+    lsls r1, r0, #31
+    bne __tm95_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm95_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm95_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm95_e:
+    b __ul_cpurunm_runendm
+__tm95_s:
+    b __ul_cpurunm_slowfetchm
+__tm95_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBPT_000003M:        ; entry $0000, sub-decoded
   PcOutM()
@@ -2929,7 +6963,46 @@ InstructionBPT_000003M:        ; entry $0000, sub-decoded
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("BPT")
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm96_t
+    subs.w r11, r11, #1
+    beq __tm96_e
+    lsls r1, r0, #31
+    bne __tm96_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm96_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm96_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm96_e:
+    b __ul_cpurunm_runendm
+__tm96_s:
+    b __ul_cpurunm_slowfetchm
+__tm96_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionIOT_000004M:        ; entry $0000, sub-decoded
   PcOutM()
@@ -2938,7 +7011,46 @@ InstructionIOT_000004M:        ; entry $0000, sub-decoded
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("IOT")
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm97_t
+    subs.w r11, r11, #1
+    beq __tm97_e
+    lsls r1, r0, #31
+    bne __tm97_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm97_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm97_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm97_e:
+    b __ul_cpurunm_runendm
+__tm97_s:
+    b __ul_cpurunm_slowfetchm
+__tm97_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionRESET_000005M:      ; entry $0000, sub-decoded
   ;name = "RESET"
@@ -2946,7 +7058,36 @@ InstructionRESET_000005M:      ; entry $0000, sub-decoded
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("RESET")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm98_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm98_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm98_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm98_e:
+    b __ul_cpurunm_runendm
+__tm98_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionRTT_000006M:        ; entry $0000, sub-decoded (the T bit: StartWindow in cpu)
   PcOutM()
@@ -2960,7 +7101,46 @@ InstructionRTT_000006M:        ; entry $0000, sub-decoded (the T bit: StartWindo
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("RTT")
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm99_t
+    subs.w r11, r11, #1
+    beq __tm99_e
+    lsls r1, r0, #31
+    bne __tm99_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm99_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm99_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm99_e:
+    b __ul_cpurunm_runendm
+__tm99_s:
+    b __ul_cpurunm_slowfetchm
+__tm99_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMFPT_000007M:       ; entry $0000, sub-decoded
   ;name = "MFPT"
@@ -2968,7 +7148,36 @@ InstructionMFPT_000007M:       ; entry $0000, sub-decoded
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("MFPT")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm100_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm100_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm100_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm100_e:
+    b __ul_cpurunm_runendm
+__tm100_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionSPL_00023M:         ; 00023N   entry $0013
   ;name = "SPL"
@@ -2979,7 +7188,36 @@ InstructionSPL_00023M:         ; 00023N   entry $0013
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("SPL")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm101_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm101_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm101_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm101_e:
+    b __ul_cpurunm_runendm
+__tm101_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 ; 000240-000277: bit 4 = set (1) or clear (0), bits 3-0 = N Z V C.
 ; 000240 is NOP, 000257 CCC, 000277 SCC.
@@ -3024,13 +7262,81 @@ InstructionCC_00024M:          ; 00024x-00027x   entries $0014-$0017
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("CC")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm102_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm102_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm102_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm102_e:
+    b __ul_cpurunm_runendm
+__tm102_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 CompilerIf #FP11 = 1
 InstructionFPM:                ; 17xxxx: the FPJ11 (pico2/fp11.pico2, FpExec; #FP11 is 0 on the Pico)
   PcOutM()
   FpExec()
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm103_t
+    subs.w r11, r11, #1
+    beq __tm103_e
+    lsls r1, r0, #31
+    bne __tm103_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm103_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm103_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm103_e:
+    b __ul_cpurunm_runendm
+__tm103_s:
+    b __ul_cpurunm_slowfetchm
+__tm103_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 
 InstructionReservedM:          ; every opcode this model does not execute
@@ -3040,7 +7346,46 @@ InstructionReservedM:          ; every opcode this model does not execute
   ; ClockCycles = ClockCycles + #J11_T_TRAP
   ;disassembly(".WORD")
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm104_t
+    subs.w r11, r11, #1
+    beq __tm104_e
+    lsls r1, r0, #31
+    bne __tm104_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm104_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm104_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm104_e:
+    b __ul_cpurunm_runendm
+__tm104_s:
+    b __ul_cpurunm_slowfetchm
+__tm104_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ; ======================================================================
 ;  000000-000007 - the one entry that still holds several instructions.
@@ -3093,7 +7438,36 @@ InstructionMOV_01_RRM:               ; 01SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("MOV " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm105_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm105_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm105_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm105_e:
+    b __ul_cpurunm_runendm
+__tm105_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionCMP_02_RRM:               ; 02SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3108,7 +7482,36 @@ InstructionCMP_02_RRM:               ; 02SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("CMP " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm106_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm106_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm106_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm106_e:
+    b __ul_cpurunm_runendm
+__tm106_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBIT_03_RRM:               ; 03SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3120,7 +7523,36 @@ InstructionBIT_03_RRM:               ; 03SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIT " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm107_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm107_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm107_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm107_e:
+    b __ul_cpurunm_runendm
+__tm107_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBIC_04_RRM:               ; 04SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3134,7 +7566,36 @@ InstructionBIC_04_RRM:               ; 04SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIC " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm108_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm108_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm108_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm108_e:
+    b __ul_cpurunm_runendm
+__tm108_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBIS_05_RRM:               ; 05SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3148,7 +7609,36 @@ InstructionBIS_05_RRM:               ; 05SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIS " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm109_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm109_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm109_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm109_e:
+    b __ul_cpurunm_runendm
+__tm109_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionADD_06_RRM:               ; 06SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3165,7 +7655,36 @@ InstructionADD_06_RRM:               ; 06SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("ADD " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm110_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm110_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm110_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm110_e:
+    b __ul_cpurunm_runendm
+__tm110_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionMOVB_11_RRM:              ; 11SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3179,7 +7698,36 @@ InstructionMOVB_11_RRM:              ; 11SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("MOVB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm111_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm111_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm111_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm111_e:
+    b __ul_cpurunm_runendm
+__tm111_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionCMPB_12_RRM:              ; 12SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3195,7 +7743,36 @@ InstructionCMPB_12_RRM:              ; 12SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("CMPB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm112_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm112_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm112_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm112_e:
+    b __ul_cpurunm_runendm
+__tm112_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBITB_13_RRM:              ; 13SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3207,7 +7784,36 @@ InstructionBITB_13_RRM:              ; 13SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BITB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm113_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm113_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm113_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm113_e:
+    b __ul_cpurunm_runendm
+__tm113_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBICB_14_RRM:              ; 14SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3221,7 +7827,36 @@ InstructionBICB_14_RRM:              ; 14SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BICB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm114_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm114_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm114_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm114_e:
+    b __ul_cpurunm_runendm
+__tm114_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBISB_15_RRM:              ; 15SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3235,7 +7870,36 @@ InstructionBISB_15_RRM:              ; 15SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BISB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm115_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm115_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm115_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm115_e:
+    b __ul_cpurunm_runendm
+__tm115_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionSUB_16_RRM:               ; 16SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3252,7 +7916,36 @@ InstructionSUB_16_RRM:               ; 16SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("SUB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm116_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm116_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm116_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm116_e:
+    b __ul_cpurunm_runendm
+__tm116_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionCLR_0050_RM:              ; 0050R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3266,7 +7959,36 @@ InstructionCLR_0050_RM:              ; 0050R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLR " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm117_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm117_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm117_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm117_e:
+    b __ul_cpurunm_runendm
+__tm117_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionCOM_0051_RM:              ; 0051R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3281,7 +8003,36 @@ InstructionCOM_0051_RM:              ; 0051R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("COM " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm118_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm118_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm118_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm118_e:
+    b __ul_cpurunm_runendm
+__tm118_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionINC_0052_RM:              ; 0052R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3299,7 +8050,36 @@ InstructionINC_0052_RM:              ; 0052R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("INC " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm119_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm119_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm119_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm119_e:
+    b __ul_cpurunm_runendm
+__tm119_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionDEC_0053_RM:              ; 0053R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3317,7 +8097,36 @@ InstructionDEC_0053_RM:              ; 0053R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("DEC " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm120_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm120_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm120_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm120_e:
+    b __ul_cpurunm_runendm
+__tm120_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionNEG_0054_RM:              ; 0054R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3338,7 +8147,36 @@ InstructionNEG_0054_RM:              ; 0054R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("NEG " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm121_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm121_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm121_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm121_e:
+    b __ul_cpurunm_runendm
+__tm121_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionTST_0057_RM:              ; 0057R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3351,7 +8189,36 @@ InstructionTST_0057_RM:              ; 0057R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TST " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm122_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm122_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm122_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm122_e:
+    b __ul_cpurunm_runendm
+__tm122_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionROR_0060_RM:              ; 0060R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3367,7 +8234,36 @@ InstructionROR_0060_RM:              ; 0060R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROR " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm123_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm123_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm123_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm123_e:
+    b __ul_cpurunm_runendm
+__tm123_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionROL_0061_RM:              ; 0061R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3383,7 +8279,36 @@ InstructionROL_0061_RM:              ; 0061R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROL " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm124_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm124_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm124_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm124_e:
+    b __ul_cpurunm_runendm
+__tm124_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionASR_0062_RM:              ; 0062R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3399,7 +8324,36 @@ InstructionASR_0062_RM:              ; 0062R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASR " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm125_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm125_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm125_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm125_e:
+    b __ul_cpurunm_runendm
+__tm125_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionASL_0063_RM:              ; 0063R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3415,7 +8369,36 @@ InstructionASL_0063_RM:              ; 0063R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASL " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm126_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm126_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm126_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm126_e:
+    b __ul_cpurunm_runendm
+__tm126_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionSWAB_0003_RM:             ; 0003R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3431,7 +8414,36 @@ InstructionSWAB_0003_RM:             ; 0003R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SWAB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm127_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm127_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm127_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm127_e:
+    b __ul_cpurunm_runendm
+__tm127_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionCLRB_1050_RM:             ; 1050R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3445,7 +8457,36 @@ InstructionCLRB_1050_RM:             ; 1050R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLRB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm128_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm128_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm128_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm128_e:
+    b __ul_cpurunm_runendm
+__tm128_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionINCB_1052_RM:             ; 1052R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3463,7 +8504,36 @@ InstructionINCB_1052_RM:             ; 1052R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("INCB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm129_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm129_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm129_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm129_e:
+    b __ul_cpurunm_runendm
+__tm129_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionDECB_1053_RM:             ; 1053R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3481,7 +8551,36 @@ InstructionDECB_1053_RM:             ; 1053R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("DECB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm130_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm130_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm130_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm130_e:
+    b __ul_cpurunm_runendm
+__tm130_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionTSTB_1057_RM:             ; 1057R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -3494,7 +8593,36 @@ InstructionTSTB_1057_RM:             ; 1057R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TSTB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm131_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm131_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm131_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm131_e:
+    b __ul_cpurunm_runendm
+__tm131_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 
 ; ======================================================================
@@ -3516,7 +8644,39 @@ InstructionMOV_01_IRM:            ; 0127DD  MOV #n,Rd, the source an immediate
   FlagNZ = Src
   FlagV = 0
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm132_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm132_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm132_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm132_e:
+    b __ul_cpurunm_runendm
+__tm132_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 InstructionCMP_02_IRM:            ; 0227DD  CMP #n,Rd, the source an immediate
   ;name = "CMP #n,Rd"
@@ -3530,7 +8690,39 @@ InstructionCMP_02_IRM:            ; 0227DD  CMP #n,Rd, the source an immediate
   FlagNZ = Res & $FFFF
   FlagV = (Src ! (Src - Res)) & (Src ! Res)   ; bit 15; Src - Res is Rd
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm133_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm133_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm133_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm133_e:
+    b __ul_cpurunm_runendm
+__tm133_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 InstructionBIT_03_IRM:            ; 0327DD  BIT #n,Rd, the source an immediate
   ;name = "BIT #n,Rd"
@@ -3542,7 +8734,39 @@ InstructionBIT_03_IRM:            ; 0327DD  BIT #n,Rd, the source an immediate
   FlagNZ = Src & Reg(Op & 7)
   FlagV = 0
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm134_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm134_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm134_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm134_e:
+    b __ul_cpurunm_runendm
+__tm134_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 InstructionBIC_04_IRM:            ; 0427DD  BIC #n,Rd, the source an immediate
   ;name = "BIC #n,Rd"
@@ -3556,7 +8780,39 @@ InstructionBIC_04_IRM:            ; 0427DD  BIC #n,Rd, the source an immediate
   FlagNZ = Res
   FlagV = 0
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm135_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm135_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm135_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm135_e:
+    b __ul_cpurunm_runendm
+__tm135_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 InstructionBIS_05_IRM:            ; 0527DD  BIS #n,Rd, the source an immediate
   ;name = "BIS #n,Rd"
@@ -3570,7 +8826,39 @@ InstructionBIS_05_IRM:            ; 0527DD  BIS #n,Rd, the source an immediate
   FlagNZ = Res
   FlagV = 0
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm136_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm136_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm136_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm136_e:
+    b __ul_cpurunm_runendm
+__tm136_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 InstructionADD_06_IRM:            ; 0627DD  ADD #n,Rd, the source an immediate
   ;name = "ADD #n,Rd"
@@ -3586,7 +8874,39 @@ InstructionADD_06_IRM:            ; 0627DD  ADD #n,Rd, the source an immediate
   FlagNZ = Res
   FlagV = (Src ! Res) & ((Res - Src) ! Res)   ; bit 15; Res - Src is the old Rd
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm137_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm137_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm137_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm137_e:
+    b __ul_cpurunm_runendm
+__tm137_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 InstructionSUB_16_IRM:            ; 1627DD  SUB #n,Rd, the source an immediate
   ;name = "SUB #n,Rd"
@@ -3602,7 +8922,39 @@ InstructionSUB_16_IRM:            ; 1627DD  SUB #n,Rd, the source an immediate
   FlagNZ = Res
   FlagV = (Src ! (Res + Src)) & ((Res + Src) ! Res)   ; bit 15; Res + Src is the old Rd
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm138_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm138_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm138_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm138_e:
+    b __ul_cpurunm_runendm
+__tm138_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 InstructionMOVB_11_IRM:           ; 1127DD  MOVB #n,Rd, the source an immediate
   ;name = "MOVB #n,Rd"
@@ -3615,7 +8967,39 @@ InstructionMOVB_11_IRM:           ; 1127DD  MOVB #n,Rd, the source an immediate
   FlagNZ = Src << 8
   FlagV = 0
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm139_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm139_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm139_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm139_e:
+    b __ul_cpurunm_runendm
+__tm139_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 InstructionCMPB_12_IRM:           ; 1227DD  CMPB #n,Rd, the source an immediate
   ;name = "CMPB #n,Rd"
@@ -3630,7 +9014,39 @@ InstructionCMPB_12_IRM:           ; 1227DD  CMPB #n,Rd, the source an immediate
   FlagV = ((Src ! Dst) & (Src ! Res)) << 8
   FlagNZ = (Res & $FF) << 8
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm140_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm140_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm140_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm140_e:
+    b __ul_cpurunm_runendm
+__tm140_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 InstructionBITB_13_IRM:           ; 1327DD  BITB #n,Rd, the source an immediate
   ;name = "BITB #n,Rd"
@@ -3642,7 +9058,39 @@ InstructionBITB_13_IRM:           ; 1327DD  BITB #n,Rd, the source an immediate
   FlagNZ = (Src & Reg(Op & 7) & $FF) << 8
   FlagV = 0
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+  ASM Uses PC, RunLeft, Op
+    subs.w r11, r11, #1
+    beq __tm141_e
+    mov r0, r9
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm141_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm141_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm141_e:
+    b __ul_cpurunm_runendm
+__tm141_s:
+    b __ul_cpurunm_slowfetchm
+  EndASM
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 ; ======================================================================
 ;  REGISTER SOURCE, MEMORY DESTINATION - OP Rs,(Rd)  OP Rs,(Rd)+  OP Rs,X(Rd)
@@ -3678,7 +9126,46 @@ CompilerEndIf
   MMWriteWord(Ea, Src)
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm142_t
+    subs.w r11, r11, #1
+    beq __tm142_e
+    lsls r1, r0, #31
+    bne __tm142_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm142_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm142_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm142_e:
+    b __ul_cpurunm_runendm
+__tm142_s:
+    b __ul_cpurunm_slowfetchm
+__tm142_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionCMP_02_RMM:            ; 020SDD  CMP Rs,memory
   PcOutM()
@@ -3698,7 +9185,46 @@ CompilerEndIf
   FlagC = Res
   FlagV = (Src ! Dst) & (Src ! Res)
   FlagNZ = Res & $FFFF
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm143_t
+    subs.w r11, r11, #1
+    beq __tm143_e
+    lsls r1, r0, #31
+    bne __tm143_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm143_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm143_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm143_e:
+    b __ul_cpurunm_runendm
+__tm143_s:
+    b __ul_cpurunm_slowfetchm
+__tm143_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBIT_03_RMM:            ; 030SDD  BIT Rs,memory
   PcOutM()
@@ -3716,7 +9242,46 @@ CompilerEndIf
   MMReadWord(Dst, Ea)
   FlagNZ = Src & Dst
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm144_t
+    subs.w r11, r11, #1
+    beq __tm144_e
+    lsls r1, r0, #31
+    bne __tm144_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm144_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm144_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm144_e:
+    b __ul_cpurunm_runendm
+__tm144_s:
+    b __ul_cpurunm_slowfetchm
+__tm144_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBIC_04_RMM:            ; 040SDD  BIC Rs,memory
   PcOutM()
@@ -3736,7 +9301,46 @@ CompilerEndIf
   MMWriteWord(Ea, Res)
   FlagNZ = Res
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm145_t
+    subs.w r11, r11, #1
+    beq __tm145_e
+    lsls r1, r0, #31
+    bne __tm145_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm145_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm145_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm145_e:
+    b __ul_cpurunm_runendm
+__tm145_s:
+    b __ul_cpurunm_slowfetchm
+__tm145_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBIS_05_RMM:            ; 050SDD  BIS Rs,memory
   PcOutM()
@@ -3756,7 +9360,46 @@ CompilerEndIf
   MMWriteWord(Ea, Res)
   FlagNZ = Res
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm146_t
+    subs.w r11, r11, #1
+    beq __tm146_e
+    lsls r1, r0, #31
+    bne __tm146_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm146_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm146_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm146_e:
+    b __ul_cpurunm_runendm
+__tm146_s:
+    b __ul_cpurunm_slowfetchm
+__tm146_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionADD_06_RMM:            ; 060SDD  ADD Rs,memory
   PcOutM()
@@ -3777,7 +9420,46 @@ CompilerEndIf
   FlagC = Res
   FlagV = ~(Src ! Dst) & (Src ! Res)
   FlagNZ = Res & $FFFF
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm147_t
+    subs.w r11, r11, #1
+    beq __tm147_e
+    lsls r1, r0, #31
+    bne __tm147_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm147_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm147_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm147_e:
+    b __ul_cpurunm_runendm
+__tm147_s:
+    b __ul_cpurunm_slowfetchm
+__tm147_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionSUB_16_RMM:            ; 160SDD  SUB Rs,memory
   PcOutM()
@@ -3798,7 +9480,46 @@ CompilerEndIf
   FlagC = Res                ; borrow
   FlagV = (Src ! Dst) & (Dst ! Res)
   FlagNZ = Res & $FFFF
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm148_t
+    subs.w r11, r11, #1
+    beq __tm148_e
+    lsls r1, r0, #31
+    bne __tm148_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm148_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm148_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm148_e:
+    b __ul_cpurunm_runendm
+__tm148_s:
+    b __ul_cpurunm_slowfetchm
+__tm148_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMOVB_11_RMM:           ; 110SDD  MOVB Rs,memory
   PcOutM()
@@ -3816,7 +9537,46 @@ CompilerEndIf
   MMWriteByte(Ea, Src)
   FlagNZ = Src << 8
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm149_t
+    subs.w r11, r11, #1
+    beq __tm149_e
+    lsls r1, r0, #31
+    bne __tm149_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm149_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm149_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm149_e:
+    b __ul_cpurunm_runendm
+__tm149_s:
+    b __ul_cpurunm_slowfetchm
+__tm149_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionCMPB_12_RMM:           ; 120SDD  CMPB Rs,memory
   PcOutM()
@@ -3836,7 +9596,46 @@ CompilerEndIf
   FlagC = Res << 8
   FlagV = ((Src ! Dst) & (Src ! Res)) << 8
   FlagNZ = (Res & $FF) << 8
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm150_t
+    subs.w r11, r11, #1
+    beq __tm150_e
+    lsls r1, r0, #31
+    bne __tm150_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm150_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm150_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm150_e:
+    b __ul_cpurunm_runendm
+__tm150_s:
+    b __ul_cpurunm_slowfetchm
+__tm150_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBITB_13_RMM:           ; 130SDD  BITB Rs,memory
   PcOutM()
@@ -3854,7 +9653,46 @@ CompilerEndIf
   MMReadByte(Dst, Ea)
   FlagNZ = (Src & Dst) << 8
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm151_t
+    subs.w r11, r11, #1
+    beq __tm151_e
+    lsls r1, r0, #31
+    bne __tm151_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm151_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm151_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm151_e:
+    b __ul_cpurunm_runendm
+__tm151_s:
+    b __ul_cpurunm_slowfetchm
+__tm151_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBICB_14_RMM:           ; 140SDD  BICB Rs,memory
   PcOutM()
@@ -3874,7 +9712,46 @@ CompilerEndIf
   MMWriteByte(Ea, Res)
   FlagNZ = Res << 8
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm152_t
+    subs.w r11, r11, #1
+    beq __tm152_e
+    lsls r1, r0, #31
+    bne __tm152_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm152_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm152_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm152_e:
+    b __ul_cpurunm_runendm
+__tm152_s:
+    b __ul_cpurunm_slowfetchm
+__tm152_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBISB_15_RMM:           ; 150SDD  BISB Rs,memory
   PcOutM()
@@ -3894,7 +9771,46 @@ CompilerEndIf
   MMWriteByte(Ea, Res)
   FlagNZ = Res << 8
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm153_t
+    subs.w r11, r11, #1
+    beq __tm153_e
+    lsls r1, r0, #31
+    bne __tm153_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm153_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm153_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm153_e:
+    b __ul_cpurunm_runendm
+__tm153_s:
+    b __ul_cpurunm_slowfetchm
+__tm153_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ; ======================================================================
 ;  THE SLOW WAY OUT OF AN INSTRUCTION - a trap to take, or a HALT. The
@@ -4101,7 +10017,46 @@ InstructionMOV_01_M04RefM:         ; the plain version: the fast path's slow pat
   MMWriteWordE(Ea, Src, CurD)
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm154_t
+    subs.w r11, r11, #1
+    beq __tm154_e
+    lsls r1, r0, #31
+    bne __tm154_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm154_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm154_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm154_e:
+    b __ul_cpurunm_runendm
+__tm154_s:
+    b __ul_cpurunm_slowfetchm
+__tm154_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMOV_01_M40M:            ; MOV, source mode 4, destination mode 0
 CompilerIf #ASM_MOV = 1
@@ -4214,7 +10169,46 @@ InstructionMOV_01_M40RefM:         ; the plain version: the fast path's slow pat
   Reg(Op & 7) = Src
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm155_t
+    subs.w r11, r11, #1
+    beq __tm155_e
+    lsls r1, r0, #31
+    bne __tm155_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm155_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm155_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm155_e:
+    b __ul_cpurunm_runendm
+__tm155_s:
+    b __ul_cpurunm_slowfetchm
+__tm155_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMOV_01_M60M:            ; MOV, source mode 6, destination mode 0
 CompilerIf #ASM_MOV = 1
@@ -4311,7 +10305,46 @@ InstructionMOV_01_M60RefM:         ; the plain version: the fast path's slow pat
   Reg(Op & 7) = Src
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm156_t
+    subs.w r11, r11, #1
+    beq __tm156_e
+    lsls r1, r0, #31
+    bne __tm156_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm156_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm156_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm156_e:
+    b __ul_cpurunm_runendm
+__tm156_s:
+    b __ul_cpurunm_slowfetchm
+__tm156_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMOV_01_M64M:            ; MOV, source mode 6, destination mode 4
 CompilerIf #ASM_MOV = 1
@@ -4471,7 +10504,46 @@ InstructionMOV_01_M64RefM:         ; the plain version: the fast path's slow pat
   MMWriteWordE(Ea, Src, CurD)
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm157_t
+    subs.w r11, r11, #1
+    beq __tm157_e
+    lsls r1, r0, #31
+    bne __tm157_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm157_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm157_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm157_e:
+    b __ul_cpurunm_runendm
+__tm157_s:
+    b __ul_cpurunm_slowfetchm
+__tm157_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMOV_01_M20M:            ; MOV, source mode 2, destination mode 0
 CompilerIf #ASM_MOV = 1
@@ -4574,7 +10646,46 @@ InstructionMOV_01_M20RefM:         ; the plain version: the fast path's slow pat
   Reg(Op & 7) = Src
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm158_t
+    subs.w r11, r11, #1
+    beq __tm158_e
+    lsls r1, r0, #31
+    bne __tm158_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm158_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm158_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm158_e:
+    b __ul_cpurunm_runendm
+__tm158_s:
+    b __ul_cpurunm_slowfetchm
+__tm158_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMOV_01_M61M:            ; MOV, source mode 6, destination mode 1
 CompilerIf #ASM_MOV = 1
@@ -4689,7 +10800,46 @@ InstructionMOV_01_M61RefM:         ; the plain version: the fast path's slow pat
   MMWriteWordE(Ea, Src, CurD)
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm159_t
+    subs.w r11, r11, #1
+    beq __tm159_e
+    lsls r1, r0, #31
+    bne __tm159_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm159_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm159_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm159_e:
+    b __ul_cpurunm_runendm
+__tm159_s:
+    b __ul_cpurunm_slowfetchm
+__tm159_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMOV_01_M06M:            ; MOV, source mode 0, destination mode 6
 CompilerIf #ASM_MOV = 1
@@ -4790,7 +10940,46 @@ InstructionMOV_01_M06RefM:         ; the plain version: the fast path's slow pat
   MMWriteWordE(Ea, Src, CurD)
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_reg
+    ldr r0, [r1, #28]
+    mov r9, r0
+    ldr r1, =global_trapvector
+    ldr r1, [r1]
+    cmp r1, #0
+    bne __tm160_t
+    subs.w r11, r11, #1
+    beq __tm160_e
+    lsls r1, r0, #31
+    bne __tm160_s
+    ldr r3, =global_fw
+    ldr r1, [r3, #0]
+    cmp r0, r1
+    blt __tm160_s
+    ldr r1, [r3, #4]
+    cmp r0, r1
+    bge __tm160_s
+    str r0, [r3, #12]
+    ldr r1, [r3, #8]
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds.w r9, r9, #2
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optablem
+    ldr r1, [r1, r2]
+    bx r1
+__tm160_e:
+    b __ul_cpurunm_runendm
+__tm160_s:
+    b __ul_cpurunm_slowfetchm
+__tm160_t:
+    b __ul_cpurunm_slowtailm
+  EndASM
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ; ======================================================================
 ;  THE TABLE - filled the first time CpuRun runs. A '.Label' is taken
@@ -5043,6 +11232,28 @@ BuildTableM:
   OpRefM(9) = ?InstructionMTPI_0066RefM
   OpAsmM(10) = ?InstructionMOV_01M
   OpRefM(10) = ?InstructionMOV_01RefM
+  OpAsmM(11) = ?InstructionADD_06M
+  OpRefM(11) = ?InstructionADD_06RefM
+  OpAsmM(12) = ?InstructionSUB_16M
+  OpRefM(12) = ?InstructionSUB_16RefM
+  OpAsmM(13) = ?InstructionBIT_03M
+  OpRefM(13) = ?InstructionBIT_03RefM
+  OpAsmM(14) = ?InstructionBIC_04M
+  OpRefM(14) = ?InstructionBIC_04RefM
+  OpAsmM(15) = ?InstructionBIS_05M
+  OpRefM(15) = ?InstructionBIS_05RefM
+  OpAsmM(16) = ?InstructionMOVB_11M
+  OpRefM(16) = ?InstructionMOVB_11RefM
+  OpAsmM(17) = ?InstructionCMPB_12M
+  OpRefM(17) = ?InstructionCMPB_12RefM
+  OpAsmM(18) = ?InstructionBITB_13M
+  OpRefM(18) = ?InstructionBITB_13RefM
+  OpAsmM(19) = ?InstructionCLR_0050M
+  OpRefM(19) = ?InstructionCLR_0050RefM
+  OpAsmM(20) = ?InstructionCLRB_1050M
+  OpRefM(20) = ?InstructionCLRB_1050RefM
+  OpAsmM(21) = ?InstructionTSTB_1057M
+  OpRefM(21) = ?InstructionTSTB_1057RefM
   OpTableReadyM = 1
   Goto RunStartM
 EndProcedure
