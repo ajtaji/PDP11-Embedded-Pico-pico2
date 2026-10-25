@@ -56,14 +56,15 @@
 #DISK_FLASH_MODEL = 0        ; 1 = the desk model of the flash chip (disk.pico2)
 #DESK_PROBE = 0            ; 1 = the desk measurement build (see DESK PROBE)
 #STAT_CHIP = 2350            ; for the stats block's title
-; THE BOARD. Choosing the Pimoroni Pico Plus 2 W in the IDE's Board menu (or building a .picoplus2w
-; copy) gives the board's 48 GPIOs, and with them its PSRAM build: CS on GPIO47, 16 MB of flash.
-; Every other board gets the Pico 2 W build below; tools/psram_build.py changes those three lines
-; for the Feather, and for the shipped Pico Plus image (built against the Pico 2's board file).
-CompilerIf #PM_GPIO_COUNT = 48
-#PSRAM = 1                   ; the Pimoroni Pico Plus 2 / 2 W: 8 MB APS6404L on QMI CS1
-#PSRAM_CS_PIN = 47
-#FLASH_CHIP = $1000000
+; THE BOARD. A board whose board file says it has a PSRAM ("PsramCs", #PM_PSRAM_CS) gets the PSRAM
+; build, with the chip select and the flash size its board file gives (#PM_FLASH_BYTES): choose the
+; Adafruit Feather RP2350 HSTX (CS on GPIO8, 8 MB of flash) or the Pimoroni Pico Plus 2 W (GPIO47,
+; 16 MB) in the IDE's Board menu. Every other board gets the Pico 2 W build below; tools/psram_build.py
+; changes those three lines for its builds (made against the default board, which has no PSRAM).
+CompilerIf #PM_PSRAM_CS >= 0
+#PSRAM = 1                   ; 8 MB APS6404L on QMI CS1 (the Feather RP2350 and the Pico Plus 2 W)
+#PSRAM_CS_PIN = #PM_PSRAM_CS
+#FLASH_CHIP = #PM_FLASH_BYTES
 CompilerElse
 #PSRAM = 0                   ; 1 = a board with QSPI PSRAM on QMI CS1 (psram_pdp11.pico2)
 #PSRAM_CS_PIN = 8            ; its chip select: GPIO8 on the Adafruit Feather RP2350, GPIO47 on the Pimoroni Pico Plus 2
@@ -92,7 +93,7 @@ XIncludeFile "rk11.pico2"
 XIncludeFile "RP2350/Lib/psram.pico2"
 XIncludeFile "RP2350/Lib/flashid.pico2"   ; Ctrl-] w on the PSRAM boards writes the packs' changes to flash
 XIncludeFile "RP2350/Lib/flash.pico2"     ; (psram_pdp11.pico2); an include cannot sit under #PSRAM, which the
-                                         ; Pico Plus 2 W's #PM_GPIO_COUNT branch decides
+                                         ; board's #PM_PSRAM_CS branch decides
 XIncludeFile "psram_pdp11.pico2"
 XIncludeFile "rp11.pico2"
 XIncludeFile "store.pico2"

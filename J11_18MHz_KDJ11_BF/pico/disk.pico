@@ -267,6 +267,11 @@ CompilerIf #DISK_BACKEND = 2
 #DK_MAX_SLICES = 4000            ; 1.2 s of slices on one operation: the flash has failed
 #FLASH_BYTES  = $200000          ; 2 MB: the Pico W's W25Q16JV
 #DISK_REGION  = $40000           ; 256 KB in: the firmware lives below
+#DK_PACK_BYTES = #FLASH_BYTES - #DISK_REGION
+; THE PACK, AS A NAMED REGION (FlashRegion): the PureMetal Forge IDE's Board Storage panel writes a
+; pack here and reads it back; the build refuses a firmware that grows into it. It emits nothing.
+; It covers the radio firmware's place ($100000 - $138FFF): this image gives up the radio.
+FlashRegion "RK0", #DISK_REGION, #DK_PACK_BYTES, "rk05"
 #DK_SECTOR    = 4096
 #DK_LINES     = 4                ; the write cache: 4 x 4 KB
 #DK_IDLE_US   = 2000000          ; a line untouched this long goes back to flash

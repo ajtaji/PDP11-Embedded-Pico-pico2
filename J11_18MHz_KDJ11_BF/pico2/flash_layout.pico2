@@ -35,7 +35,8 @@
 ;  touches #FL_RADIO_LO to #FL_RADIO_HI, on every board; tools/rk_image.py
 ;  and tools/pack_install.py refuse the same before anything is sent.
 ;
-;  Constants only: this file may be included by any program.
+;  Constants, and the regions below (FlashRegion: the IDE's Board Storage panel reads them;
+;  they emit nothing): this file may be included by any program for an RP2350 board.
 ; ======================================================================
 #FL_RADIO_LO = $200000       ; the radio firmware's region: first byte
 #FL_RADIO_HI = $240000       ; ... and the first byte after it
@@ -43,3 +44,19 @@
 #FL_RK0      = $240000       ; RK0's pack
 #FL_RK1      = $4C0000       ; RK1's pack (boards with 8 MB of flash or more)
 #FL_STORE_SIZE = $100000     ; the PSRAM boards' store of saved changes: the top 1 MB of the flash (store.pico2)
+
+; THE SAME LAYOUT, AS NAMED REGIONS (FlashRegion): the PureMetal Forge IDE's Board Storage panel
+; shows the flash map from these, writes a pack into its region and reads one back, and the
+; build refuses a firmware that grows into one. They emit nothing into the firmware. By the
+; board the program is built for (#PM_FLASH_BYTES, its board file's "FlashBytes").
+#FL_RADIO_SIZE = #FL_RADIO_HI - #FL_RADIO_LO
+FlashRegion "radio firmware", #FL_RADIO_LO, #FL_RADIO_SIZE, "reserved"
+CompilerIf #PM_FLASH_BYTES >= $800000
+#FL_STORE_AT = #PM_FLASH_BYTES - #FL_STORE_SIZE
+FlashRegion "RK0", #FL_RK0, $262000, "rk05"                          ; 4872 blocks dense, ends $4A1FFF
+FlashRegion "RK1", #FL_RK1, $1F5000, "rk05"                          ; 4000 blocks dense, ends $6B4FFF
+FlashRegion "store", #FL_STORE_AT, #FL_STORE_SIZE, "reserved"        ; saved changes (store.pico2)
+CompilerElse
+#FL_RK0_SIZE = #PM_FLASH_BYTES - #FL_RK0
+FlashRegion "RK0", #FL_RK0, #FL_RK0_SIZE, "rk05"                     ; 1.75 MB: a pack is stored mapped
+CompilerEndIf
