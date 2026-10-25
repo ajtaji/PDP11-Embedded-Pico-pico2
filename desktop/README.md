@@ -34,15 +34,23 @@ There is one terminal, the console at 177560, as on the board. The second
 DL11 at 176500 (`docs/TERMINALS.md`) is a plan for the firmware. When it is in
 the core it will be here too, with its own pane.
 
-## Building (PowerShell, x64)
+## Building the desktop version
+
+The window is drawn with the [Neon Arcade Display Engine](https://github.com/ajtaji/Neon-Arcade-Dispay-Engine),
+cloned beside this repository. With PureBasic 6.41 (x64, the C back end, `pbcompilerc.exe`), from PowerShell:
 
 ```
-.\build_cli.ps1       # pdp11_cli.exe
-.\build_desktop.ps1   # PDP11Desktop.exe; -Engine <folder/> if the engine is elsewhere
+git clone https://github.com/ajtaji/PDP11-Embedded-Pico-pico2.git
+git clone https://github.com/ajtaji/Neon-Arcade-Dispay-Engine.git
+cd PDP11-Embedded-Pico-pico2\desktop
+& "C:\Program Files\PureBasic\Compilers\pbcompilerc.exe" PDP11Desktop.pb /EXE PDP11Desktop.exe /THREAD /DPIAWARE /OPTIMIZER
+& "C:\Program Files\PureBasic\Compilers\pbcompilerc.exe" pdp11_cli.pb /CONSOLE /OPTIMIZER /EXE pdp11_cli.exe
+.\PDP11Desktop.exe
 ```
 
-The window is drawn with the Neon Arcade Display Engine, found by default at
-`C:/Users/ajtaj/Desktop/Neon-Arcade-Dispay-Engine/`.
+`build_desktop.ps1` and `build_cli.ps1` run the same lines. An engine elsewhere: add
+`/CONSTANT GL_ENGINE_DIR$=<folder>/` (the trailing slash matters), or `.\build_desktop.ps1 -Engine <folder>/`.
+`pdp11_cli.exe` needs no engine.
 
 ## The window
 

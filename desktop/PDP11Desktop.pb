@@ -15,10 +15,11 @@
 ;
 ; Build (PowerShell, x64):  .\build_desktop.ps1
 ;   pbcompilerc PDP11Desktop.pb /EXE PDP11Desktop.exe /THREAD /DPIAWARE /OPTIMIZER
-;      /CONSTANT GL_ENGINE_DIR$=C:/Users/ajtaj/Desktop/Neon-Arcade-Dispay-Engine/
+; The engine (https://github.com/ajtaji/Neon-Arcade-Dispay-Engine) is found cloned beside this
+; repository, unless /CONSTANT GL_ENGINE_DIR$=<path>/ says otherwise (the trailing slash matters).
 
 CompilerIf Not Defined(GL_ENGINE_DIR$, #PB_Constant)
-  #GL_ENGINE_DIR$ = "C:/Users/ajtaj/Desktop/Neon-Arcade-Dispay-Engine/"
+  #GL_ENGINE_DIR$ = #PB_Compiler_FilePath + "../../Neon-Arcade-Dispay-Engine/"   ; cloned beside this repository
 CompilerEndIf
 XIncludeFile #GL_ENGINE_DIR$ + "GlTypes.pbi"
 XIncludeFile #GL_ENGINE_DIR$ + "GlUtilities.pbi"
