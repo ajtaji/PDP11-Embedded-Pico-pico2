@@ -363,6 +363,55 @@ def tail_fetch(n, odd):
             "__tm%d_s:\n    b __ul_cpurunm_slowfetchm\n" % (n, n, n, n))
 
 
+# V IN A REGISTER (2026-10-24): cpu.pico2 reserves FlagV in r5 beside FlagNZ in
+# r4, so the assembly stores and loads it as a register: a load or a store of
+# global_flagv through a literal becomes one mov, and every block that then
+# names r5 gets FlagV on its "ASM Uses" line (the compiler refuses a block that
+# names it otherwise). FlagC stays in memory: with r5 and r6 both reserved the
+# compiler's allocator has too few registers left to spill into (it says so).
+def reserve_vc(text):
+    reg = {"v": "r5"}
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        m = re.match(r"( +)ldr (r\d), =global_flag(v)$", line)
+        if not m:
+            continue
+        a = m.group(2)                   # the address register: followed to its one use
+        for j in range(i + 1, min(i + 8, len(lines))):
+            u = re.match(r" +(str|ldr) (r\d), \[%s\]$" % a, lines[j])
+            if u:
+                # mov.w: the release assembler wants movs between two low registers, and
+                # movs would change the condition flags a later branch may still test
+                lines[j] = (m.group(1) + ("mov.w %s, %s" % (reg[m.group(3)], u.group(2)) if u.group(1) == "str"
+                                          else "mov.w %s, %s" % (u.group(2), reg[m.group(3)])))
+                lines[i] = None
+                break
+            if re.search(r"\b%s\b" % a, lines[j]) or lines[j].strip().endswith(":"):
+                break                    # the register is used otherwise, or a label: leave it (fail below)
+    text = "\n".join(l for l in lines if l is not None)
+    m = re.search(r"global_flagv", text)
+    if m:
+        fail("reserve_vc: a use of global_flagv it does not know (%r); teach tools/mmu_gen.py."
+             % text[text.rfind("\n", 0, m.start() - 20):m.end() + 40])
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        st = lines[i].strip()
+        if st == "ASM" or st.startswith("ASM Uses"):
+            j = i + 1
+            while lines[j].strip() != "EndASM":
+                j += 1
+            body = "\n".join(lines[i + 1:j])
+            need = ["FlagV"] if re.search(r"\br5\b", body) else []
+            if need:
+                ind = lines[i][:len(lines[i]) - len(lines[i].lstrip())]
+                have = [] if st == "ASM" else [x.strip() for x in st[len("ASM Uses"):].split(",")]
+                lines[i] = ind + "ASM Uses " + ", ".join(have + [n for n in need if n not in have])
+            i = j
+        i += 1
+    return "\n".join(lines)
+
+
 def own_tails(text):
     out, n = [], 0
     for line in text.split("\n"):
@@ -823,8 +872,7 @@ __eaw_m7p:
 __eaw_m7a:
     adds r0, r0, r2
     uxth r0, r0
-    push {r5}
-    movs r5, r3
+    mov r12, r3
     lsls r3, r0, #31
     bne __eaw_m7x
     ldr r2, =global_curd
@@ -847,11 +895,11 @@ __eaw_m7a:
     ldr r3, =global_tmp
     str r0, [r3]
     ldr r3, =global_reg
-    str r5, [r3, #28]
-    pop {r5}
+    mov r1, r12
+    str r1, [r3, #28]
     b __eaw_out
 __eaw_m7x:
-    pop {r5}
+    orr r12, r1, #0x38
     b __eaw_slow
 __eaw_rec:
     ldr r2, =global_mmr0
@@ -1148,58 +1196,58 @@ RTS_ASM = """  PcOutM()
 # after the operand is in Src: the quotient to R, the remainder to R|1 (in that
 # order: for an odd R the remainder is what stays), N and Z as SetNZ leaves them
 DIV_ASM = """  ASM Uses Op, FlagNZ
-    push {r5, r6}
     ldr r0, =global_src
     ldr r0, [r0]
     sxth r0, r0
     ldr r2, =global_reg
     ubfx r1, r8, #6, #3
     lsls r1, r1, #2
-    orr.w r3, r1, #4
-    adds r3, r3, r2
+    adds r3, r1, r2
+    ldr r2, [r3]
+    lsls r2, r2, #16
+    mov r12, r2
+    orr.w r1, r1, #4
+    ldr r2, =global_reg
     adds r1, r1, r2
     ldr r2, [r1]
-    ldr r5, [r3]
-    orr.w r2, r5, r2, lsl #16
+    orr.w r2, r2, r12
     cmp r0, #0
     beq __divm_zero
-    adds r5, r0, #1
+    cmp.w r0, #0xffffffff
     bne __divm_go
     cmp.w r2, #0x80000000
     beq __divm_over
 __divm_go:
-    sdiv r5, r2, r0
-    sxth r6, r5
-    cmp r6, r5
+    sdiv r12, r2, r0
+    mls r2, r12, r0, r2
+    mov r0, r12
+    sxth r0, r0
+    cmp r0, r12
     bne __divm_over
-    mls r6, r5, r0, r2
-    uxth r0, r5
-    str r0, [r1]
-    uxth r6, r6
-    str r6, [r3]
     movs r4, #1
-    cmp r5, #0
+    cmp r0, #0
     bgt __divm_nz
     mov.w r4, #0x8000
     blt __divm_nz
     movs r4, #0
 __divm_nz:
+    uxth r0, r0
+    str r0, [r3]
+    uxth r2, r2
+    str r2, [r1]
     movs r5, #0
-    movs r6, #0
-    b __divm_flags
+    movs r0, #0
+    b __divm_done
 __divm_zero:
     mov.w r5, #0x8000
-    mov.w r6, #0x10000
-    b __divm_flags
+    mov.w r0, #0x10000
+    b __divm_done
 __divm_over:
     mov.w r5, #0x8000
-    movs r6, #0
-__divm_flags:
-    ldr r0, =global_flagv
-    str r5, [r0]
-    ldr r0, =global_flagc
-    str r6, [r0]
-    pop {r5, r6}
+    movs r0, #0
+__divm_done:
+    ldr r1, =global_flagc
+    str r0, [r1]
   EndASM
 """
 JMP_ASM = """CompilerIf #ASM_EA = 1
@@ -1872,6 +1920,7 @@ def main():
             text = pico2_eaw(text)
             text = pico2_ops(text)
             text = own_tails(text)        # last: the assembly handlers' tails too
+            text = reserve_vc(text)
         else:                                # the Pico: its SRAM holds CpuRun (Mini-Unix); CpuRunM stays in flash
             text = text.replace("\nProcedureRAM.i CpuRunM(n.i)", "\nProcedure.i CpuRunM(n.i)", 1)
         if "--check" in sys.argv:

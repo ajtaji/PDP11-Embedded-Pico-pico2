@@ -408,8 +408,9 @@ EndProcedure
 
 ; ---- THE ASSEMBLY --------------------------------------------------------
 ; The pairs are reached at fixed offsets: PH(n) and PL(n) are words, #P_FF = 3
-; (byte 12), #P_SF = 4 (16), #P_Q = 5 (20). Free here: r0-r3, r12, and r5 r6
-; saved (r4 is FlagNZ, r7 the frame, r8-r11 the reserved registers).
+; (byte 12), #P_SF = 4 (16), #P_Q = 5 (20). Free here: r0-r3, r12, and r6
+; saved (r4 and r5 are FlagNZ and FlagV, r7 the frame, r8-r11 the other
+; reserved registers).
 ;
 ; The multiply: a = ff (56 bits, its hidden bit at 55), b = sf << 3 (59 bits);
 ; the product's bits 56-119 are the result. Schoolbook on 32-bit halves, the
@@ -418,31 +419,31 @@ EndProcedure
 ; p3:p2 += ah*bh. 24 x 24 (both low words 0) needs nothing different.
 ProcedureRAM FpFracMulAsm()
   ASM
-    push {r5, r6}
-    ldr r6, =global_pl
-    ldr r0, [r6, #12]
-    ldr r2, [r6, #16]
-    ldr r6, =global_ph
-    ldr r1, [r6, #12]
-    ldr r3, [r6, #16]
+    push {r3, r6}
+    ldr r3, =global_pl
+    ldr r0, [r3, #12]
+    ldr r2, [r3, #16]
+    ldr r3, =global_ph
+    ldr r1, [r3, #12]
+    ldr r3, [r3, #16]
     lsls r3, r3, #3
     orr.w r3, r3, r2, lsr #29
     lsls r2, r2, #3
-    umull r12, r5, r0, r2
+    umull r6, r12, r0, r2
     movs r6, #0
-    umaal r5, r6, r0, r3
+    umaal r12, r6, r0, r3
     movs r0, #0
-    umaal r5, r0, r1, r2
+    umaal r12, r0, r1, r2
     umaal r6, r0, r1, r3
     lsls r1, r0, #8
     orr.w r1, r1, r6, lsr #24
     lsls r2, r6, #8
-    orr.w r2, r2, r5, lsr #24
+    orr.w r2, r2, r12, lsr #24
     ldr r3, =global_ph
     str r1, [r3, #12]
     ldr r3, =global_pl
     str r2, [r3, #12]
-    pop {r5, r6}
+    pop {r3, r6}
   EndASM
 EndProcedure
 

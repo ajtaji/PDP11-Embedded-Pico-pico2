@@ -395,7 +395,7 @@ EndProcedure
 #RESERVE_MORE = 1
 CompilerIf #RESERVE_REGISTERS = 1
   CompilerIf #RESERVE_MORE = 1
-    ReserveRegister Op = r8, PC = r9, Res = r10, RunLeft = r11, FlagNZ = r4   ; Src stays out of r12: see below
+    ReserveRegister Op = r8, PC = r9, Res = r10, RunLeft = r11, FlagNZ = r4, FlagV = r5   ; Src stays out of r12: see below
   CompilerElse
     ReserveRegister Op = r8, PC = r9, Res = r10, RunLeft = r11
   CompilerEndIf

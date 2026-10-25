@@ -425,33 +425,31 @@ ProcedureRAM.i EaWordMRef(spec.i)
 EndProcedure
 
 ; __eaw as the handlers reach it: bl, spec in r0, the address back in r0.
-; (lr is kept in r5 across the bl: __eaw keeps r4-r11.)
+; (lr is kept on the stack across the bl.)
 Procedure EaAsm()
   ASM
-    push {r5}
-    mov r5, lr
+    push {r3, lr}
     ldr r0, =global_espec
     ldr r0, [r0]
     bl __eaw
     ldr r1, =global_er
     str r0, [r1]
-    mov lr, r5
-    pop {r5}
+    pop {r2, r3}
+    mov lr, r3
   EndASM
 EndProcedure
 
 ; __eab, the byte form, the same way (EaByteMode = 1): its reference is EaByteM itself.
 Procedure EabAsm()
   ASM
-    push {r5}
-    mov r5, lr
+    push {r3, lr}
     ldr r0, =global_espec
     ldr r0, [r0]
     bl __eab
     ldr r1, =global_er
     str r0, [r1]
-    mov lr, r5
-    pop {r5}
+    pop {r2, r3}
+    mov lr, r3
   EndASM
 EndProcedure
 Global EaByteMode.i, EbI.i
@@ -581,29 +579,27 @@ EndProcedure
 ; or either side of the stack limit), random specs, the same state for both.
 Procedure EauAsm()
   ASM
-    push {r5}
-    mov r5, lr
+    push {r3, lr}
     ldr r0, =global_espec
     ldr r0, [r0]
     bl __eau
     ldr r1, =global_er
     str r0, [r1]
-    mov lr, r5
-    pop {r5}
+    pop {r2, r3}
+    mov lr, r3
   EndASM
 EndProcedure
 
 Procedure EaubAsm()
   ASM
-    push {r5}
-    mov r5, lr
+    push {r3, lr}
     ldr r0, =global_espec
     ldr r0, [r0]
     bl __eaub
     ldr r1, =global_er
     str r0, [r1]
-    mov lr, r5
-    pop {r5}
+    pop {r2, r3}
+    mov lr, r3
   EndASM
 EndProcedure
 
