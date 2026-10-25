@@ -464,10 +464,10 @@ Procedure EaSnap(*s.i)
   GS = *s
   PokeL(GS, ER)
   For GI = 0 To 7 : PokeL(GS + 4 + GI * 4, Reg(GI)) : Next
-  PokeL(GS + 36, EaReg)
-  PokeL(GS + 40, EaBase)
-  PokeL(GS + 44, Tmp)
-  PokeL(GS + 48, Adr)
+  PokeL(GS + 36, 0)                     ; EaReg, Tmp and Adr: EaWordM's own working words, which
+  PokeL(GS + 40, EaBase)                ; nothing reads after the address is formed - __eaw no
+  PokeL(GS + 44, 0)                     ; longer stores them (2026-10-25); EaBase the access that
+  PokeL(GS + 48, 0)                     ; follows uses, so it is held to the plain one
   PokeL(GS + 52, Mmr0)
   PokeL(GS + 56, Mmr1)
   PokeL(GS + 60, Mmr2)

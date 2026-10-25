@@ -412,6 +412,82 @@ def reserve_vc(text):
     return "\n".join(lines)
 
 
+# ONE MAP ROW PER ENTRY (2026-10-25): cpu.pico2 keeps an entry's fast windows as
+# MapF(e * 8 + 0-4) - MapRLo, MapRHi, MapWLo, MapWHi, MapHost - so where the
+# assembly forms an entry's index (add.w rI, base, va, lsr #13; lsls rI, rI,
+# #2) it now forms the row's address instead (lsls #5 and MapF's base added,
+# through the register the next lookup loads anyway), and each lookup that
+# took a literal and an indexed load becomes one load at the field's offset.
+# A slow path that turns the index back into the entry (lsrs rX, rI, #2, for
+# the procedures' e) gets the entry from the row's address. Any other reading
+# of a row register stops the generation.
+MAP_FIELD = {"rlo": 0, "rhi": 4, "wlo": 8, "whi": 12, "host": 16}
+
+
+def map_rows(text):
+    lines = text.split("\n")
+    out = []
+    row = set()                          # registers holding a row's address
+    i = 0
+    n_idx = n_look = 0
+    def reads(l, r):
+        p = l.strip().split(None, 1)
+        if len(p) < 2:
+            return False
+        ops = [o.strip() for o in re.split(r",(?![^\[]*\])", p[1])]
+        first_src = p[0].startswith(("str", "cmp", "tst", "cmn", "b", "push", "pop"))
+        srcs = ops if first_src else ops[1:]
+        return any(re.search(r"\b%s\b" % r, o) for o in srcs)
+    while i < len(lines):
+        l = lines[i]
+        m = re.match(r"( +)lsls (r\d), \2, #2$", l)
+        if m and i > 0 and re.match(r" +add\.w %s, r\d+, r\d+, lsr #13$" % m.group(2), lines[i - 1]):
+            ri = m.group(2)
+            k = i + 1                    # the next map lookup: its register carries MapF's base
+            while not re.match(r" +ldr (r\d), =global_map(rlo|rhi|wlo|whi|host)$", lines[k]):
+                if reads(lines[k], ri) and not re.match(r" +ldr r\d, \[r\d, %s\]$" % ri, lines[k]):
+                    fail("map_rows: the index %s is read before its first lookup: %r" % (ri, lines[k]))
+                k += 1
+            rt = re.match(r" +ldr (r\d), =global_map", lines[k]).group(1)
+            for q in range(i + 1, k):
+                if reads(lines[q], rt):
+                    fail("map_rows: %s is read between the index and its lookup: %r" % (rt, lines[q]))
+            out += [m.group(1) + "lsls %s, %s, #5" % (ri, ri), m.group(1) + "ldr %s, =global_mapf" % rt,
+                    m.group(1) + "adds %s, %s, %s" % (ri, ri, rt)]
+            row.add(ri)
+            n_idx += 1
+            i += 1
+            continue
+        m = re.match(r"( +)ldr (r\d), =global_map(rlo|rhi|wlo|whi|host)$", l)
+        if m:
+            u = re.match(r" +ldr %s, \[%s, (r\d)\]$" % (m.group(2), m.group(2)), lines[i + 1])
+            if not u or u.group(1) not in row:
+                fail("map_rows: a map lookup it does not know: %r / %r" % (l, lines[i + 1]))
+            out.append(m.group(1) + "ldr %s, [%s, #%d]" % (m.group(2), u.group(1), MAP_FIELD[m.group(3)]))
+            n_look += 1
+            i += 2
+            continue
+        m = re.match(r"( +)lsrs (r\d), (r\d), #2$", l)
+        if m and m.group(3) in row:
+            out += [m.group(1) + "ldr %s, =global_mapf" % m.group(2),
+                    m.group(1) + "subs %s, %s, %s" % (m.group(2), m.group(3), m.group(2)),
+                    m.group(1) + "lsrs %s, %s, #5" % (m.group(2), m.group(2))]
+            i += 1
+            continue
+        for r in list(row):
+            if reads(l, r) and not l.strip().startswith(("b ", "bx ")):
+                fail("map_rows: the row register %s is read: %r" % (r, l))
+            p = l.strip().split(None, 1)
+            if len(p) == 2 and not p[0].startswith(("str", "cmp", "tst", "cmn", "b", "push")) \
+                    and p[1].split(",")[0].strip() == r:
+                row.discard(r)
+        out.append(l)
+        i += 1
+    if "global_map" in "\n".join(out).replace("global_mapf", "") or n_look < 60:
+        fail("map_rows: %d indexes, %d lookups; teach tools/mmu_gen.py." % (n_idx, n_look))
+    return "\n".join(out)
+
+
 def own_tails(text):
     out, n = [], 0
     for line in text.split("\n"):
@@ -698,8 +774,6 @@ def asm_mov(sm, dm, ref):
 # ----------------------------------------------------------------------
 ASM_EAW = """    mov r12, r0
     and.w r1, r0, #7
-    ldr r2, =global_eareg
-    str r1, [r2]
     ldr r2, =global_curd
     ldr r2, [r2]
     ldr r3, =global_eabase
@@ -723,13 +797,9 @@ ASM_EAW = """    mov r12, r0
     bge __eaw_slow
     lsls r0, r3, #31
     bne __eaw_slow
-    ldr r0, =global_adr
-    str r3, [r0]
     ldr r0, =global_maphost
     ldr r0, [r0, r2]
     ldrh r0, [r0, r3]
-    ldr r2, =global_tmp
-    str r0, [r2]
     adds r3, r3, #2
     uxth r3, r3
     ldr r2, =global_reg
@@ -756,8 +826,6 @@ __eaw_m4:
     blt __eaw_slow
 __eaw_m4a:
     str r3, [r2]
-    ldr r2, =global_tmp
-    str r0, [r2]
     movs r0, r3
     adds r1, #240
     b __eaw_rec
@@ -771,8 +839,6 @@ __eaw_m2:
     adds r0, r3, #2
     uxth r0, r0
     str r0, [r2]
-    ldr r2, =global_tmp
-    str r3, [r2]
     movs r0, r3
     cmp r1, #7
     bne __eaw_m2a
@@ -789,8 +855,6 @@ __eaw_m1:
     bne __eaw_m3
     cmp r1, #7
     beq __eaw_slow
-    ldr r2, =global_tmp
-    str r0, [r2]
     ldr r2, =global_reg
     lsls r0, r1, #2
     ldr r0, [r2, r0]
@@ -821,13 +885,9 @@ __eaw_m3e:
     ldr r0, [r0, r2]
     cmp r3, r0
     bge __eaw_slow
-    ldr r0, =global_adr
-    str r3, [r0]
     ldr r0, =global_maphost
     ldr r0, [r0, r2]
     ldrh r0, [r0, r3]
-    ldr r2, =global_tmp
-    str r0, [r2]
     adds r3, r3, #2
     uxth r3, r3
     ldr r2, =global_reg
@@ -887,13 +947,9 @@ __eaw_m7a:
     ldr r3, [r3, r2]
     cmp r0, r3
     bge __eaw_m7x
-    ldr r3, =global_adr
-    str r0, [r3]
     ldr r3, =global_maphost
     ldr r3, [r3, r2]
     ldrh r0, [r3, r0]
-    ldr r3, =global_tmp
-    str r0, [r3]
     ldr r3, =global_reg
     mov r1, r12
     str r1, [r3, #28]
@@ -1921,6 +1977,7 @@ def main():
             text = pico2_ops(text)
             text = own_tails(text)        # last: the assembly handlers' tails too
             text = reserve_vc(text)
+            text = map_rows(text)
         else:                                # the Pico: its SRAM holds CpuRun (Mini-Unix); CpuRunM stays in flash
             text = text.replace("\nProcedureRAM.i CpuRunM(n.i)", "\nProcedure.i CpuRunM(n.i)", 1)
         if "--check" in sys.argv:

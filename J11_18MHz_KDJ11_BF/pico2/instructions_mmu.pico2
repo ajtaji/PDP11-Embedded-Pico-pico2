@@ -240,8 +240,6 @@ CompilerIf #ASM_EA = 1
 __eaw:
     mov r12, r0
     and.w r1, r0, #7
-    ldr r2, =global_eareg
-    str r1, [r2]
     ldr r2, =global_curd
     ldr r2, [r2]
     ldr r3, =global_eabase
@@ -254,24 +252,19 @@ __eaw:
     ldr r2, =global_curi
     ldr r2, [r2]
     add.w r2, r2, r3, lsr #13
-    lsls r2, r2, #2
-    ldr r0, =global_maprlo
-    ldr r0, [r0, r2]
+    lsls r2, r2, #5
+    ldr r0, =global_mapf
+    adds r2, r2, r0
+    ldr r0, [r2, #0]
     cmp r3, r0
     blt __eaw_slow
-    ldr r0, =global_maprhi
-    ldr r0, [r0, r2]
+    ldr r0, [r2, #4]
     cmp r3, r0
     bge __eaw_slow
     lsls r0, r3, #31
     bne __eaw_slow
-    ldr r0, =global_adr
-    str r3, [r0]
-    ldr r0, =global_maphost
-    ldr r0, [r0, r2]
+    ldr r0, [r2, #16]
     ldrh r0, [r0, r3]
-    ldr r2, =global_tmp
-    str r0, [r2]
     adds r3, r3, #2
     uxth r3, r3
     ldr r2, =global_reg
@@ -298,8 +291,6 @@ __eaw_m4:
     blt __eaw_slow
 __eaw_m4a:
     str r3, [r2]
-    ldr r2, =global_tmp
-    str r0, [r2]
     movs r0, r3
     adds r1, #240
     b __eaw_rec
@@ -313,8 +304,6 @@ __eaw_m2:
     adds r0, r3, #2
     uxth r0, r0
     str r0, [r2]
-    ldr r2, =global_tmp
-    str r3, [r2]
     movs r0, r3
     cmp r1, #7
     bne __eaw_m2a
@@ -331,8 +320,6 @@ __eaw_m1:
     bne __eaw_m3
     cmp r1, #7
     beq __eaw_slow
-    ldr r2, =global_tmp
-    str r0, [r2]
     ldr r2, =global_reg
     lsls r0, r1, #2
     ldr r0, [r2, r0]
@@ -354,22 +341,17 @@ __eaw_m3i:
 __eaw_m3e:
     ldr r2, [r2]
     add.w r2, r2, r3, lsr #13
-    lsls r2, r2, #2
-    ldr r0, =global_maprlo
-    ldr r0, [r0, r2]
+    lsls r2, r2, #5
+    ldr r0, =global_mapf
+    adds r2, r2, r0
+    ldr r0, [r2, #0]
     cmp r3, r0
     blt __eaw_slow
-    ldr r0, =global_maprhi
-    ldr r0, [r0, r2]
+    ldr r0, [r2, #4]
     cmp r3, r0
     bge __eaw_slow
-    ldr r0, =global_adr
-    str r3, [r0]
-    ldr r0, =global_maphost
-    ldr r0, [r0, r2]
+    ldr r0, [r2, #16]
     ldrh r0, [r0, r3]
-    ldr r2, =global_tmp
-    str r0, [r2]
     adds r3, r3, #2
     uxth r3, r3
     ldr r2, =global_reg
@@ -389,17 +371,16 @@ __eaw_m7:
     ldr r2, =global_curi
     ldr r2, [r2]
     add.w r2, r2, r3, lsr #13
-    lsls r2, r2, #2
-    ldr r0, =global_maprlo
-    ldr r0, [r0, r2]
+    lsls r2, r2, #5
+    ldr r0, =global_mapf
+    adds r2, r2, r0
+    ldr r0, [r2, #0]
     cmp r3, r0
     blt __eaw_slow
-    ldr r0, =global_maprhi
-    ldr r0, [r0, r2]
+    ldr r0, [r2, #4]
     cmp r3, r0
     bge __eaw_slow
-    ldr r0, =global_maphost
-    ldr r0, [r0, r2]
+    ldr r0, [r2, #16]
     ldrh r0, [r0, r3]
     adds r3, r3, #2
     uxth r3, r3
@@ -420,22 +401,17 @@ __eaw_m7a:
     ldr r2, =global_curd
     ldr r2, [r2]
     add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #2
-    ldr r3, =global_maprlo
-    ldr r3, [r3, r2]
+    lsls r2, r2, #5
+    ldr r3, =global_mapf
+    adds r2, r2, r3
+    ldr r3, [r2, #0]
     cmp r0, r3
     blt __eaw_m7x
-    ldr r3, =global_maprhi
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #4]
     cmp r0, r3
     bge __eaw_m7x
-    ldr r3, =global_adr
-    str r0, [r3]
-    ldr r3, =global_maphost
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #16]
     ldrh r0, [r3, r0]
-    ldr r3, =global_tmp
-    str r0, [r3]
     ldr r3, =global_reg
     mov r1, r12
     str r1, [r3, #28]
@@ -494,17 +470,16 @@ __pushm:
     ldr r3, =global_curd
     ldr r3, [r3]
     add.w r3, r3, r1, lsr #13
-    lsls r3, r3, #2
-    ldr r2, =global_mapwlo
-    ldr r2, [r2, r3]
+    lsls r3, r3, #5
+    ldr r2, =global_mapf
+    adds r3, r3, r2
+    ldr r2, [r3, #8]
     cmp r1, r2
     blt __pushm_slow
-    ldr r2, =global_mapwhi
-    ldr r2, [r2, r3]
+    ldr r2, [r3, #12]
     cmp r1, r2
     bge __pushm_slow
-    ldr r2, =global_maphost
-    ldr r2, [r2, r3]
+    ldr r2, [r3, #16]
     strh r0, [r2, r1]
     ldr r2, =global_reg
     str r1, [r2, #24]
@@ -519,17 +494,16 @@ __popm:
     ldr r3, =global_curd
     ldr r3, [r3]
     add.w r3, r3, r1, lsr #13
-    lsls r3, r3, #2
-    ldr r0, =global_maprlo
-    ldr r0, [r0, r3]
+    lsls r3, r3, #5
+    ldr r0, =global_mapf
+    adds r3, r3, r0
+    ldr r0, [r3, #0]
     cmp r1, r0
     blt __popm_slow
-    ldr r0, =global_maprhi
-    ldr r0, [r0, r3]
+    ldr r0, [r3, #4]
     cmp r1, r0
     bge __popm_slow
-    ldr r0, =global_maphost
-    ldr r0, [r0, r3]
+    ldr r0, [r3, #16]
     ldrh r0, [r0, r1]
     adds r1, r1, #2
     uxth r1, r1
@@ -541,46 +515,48 @@ __rdw:
     ldr r2, =global_eabase
     ldr r2, [r2]
     add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #2
+    lsls r2, r2, #5
+    ldr r3, =global_mapf
+    adds r2, r2, r3
     lsls r3, r0, #31
     bne __rdw_slow
-    ldr r3, =global_maprlo
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #0]
     cmp r0, r3
     blt __rdw_slow
-    ldr r3, =global_maprhi
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #4]
     cmp r0, r3
     bge __rdw_slow
-    ldr r3, =global_maphost
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #16]
     ldrh r0, [r3, r0]
     bx lr
 __rdw_slow:
-    lsrs r1, r2, #2
+    ldr r1, =global_mapf
+    subs r1, r2, r1
+    lsrs r1, r1, #5
     b mmureadword
 __wrw:
     ldr r2, =global_eabase
     ldr r2, [r2]
     add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #2
+    lsls r2, r2, #5
+    ldr r3, =global_mapf
+    adds r2, r2, r3
     lsls r3, r0, #31
     bne __wrw_slow
-    ldr r3, =global_mapwlo
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #8]
     cmp r0, r3
     blt __wrw_slow
-    ldr r3, =global_mapwhi
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #12]
     cmp r0, r3
     bge __wrw_slow
-    ldr r3, =global_maphost
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #16]
     strh r1, [r3, r0]
     bx lr
 __wrw_slow:
     mov r12, r1
-    lsrs r1, r2, #2
+    ldr r1, =global_mapf
+    subs r1, r2, r1
+    lsrs r1, r1, #5
     mov r2, r12
     b mmuwriteword
 __srcwm:
@@ -626,42 +602,44 @@ __rdb:
     ldr r2, =global_eabase
     ldr r2, [r2]
     add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #2
-    ldr r3, =global_maprlo
-    ldr r3, [r3, r2]
+    lsls r2, r2, #5
+    ldr r3, =global_mapf
+    adds r2, r2, r3
+    ldr r3, [r2, #0]
     cmp r0, r3
     blt __rdb_slow
-    ldr r3, =global_maprhi
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #4]
     cmp r0, r3
     bge __rdb_slow
-    ldr r3, =global_maphost
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #16]
     ldrb r0, [r3, r0]
     bx lr
 __rdb_slow:
-    lsrs r1, r2, #2
+    ldr r1, =global_mapf
+    subs r1, r2, r1
+    lsrs r1, r1, #5
     b mmureadbyte
 __wrb:
     ldr r2, =global_eabase
     ldr r2, [r2]
     add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #2
-    ldr r3, =global_mapwlo
-    ldr r3, [r3, r2]
+    lsls r2, r2, #5
+    ldr r3, =global_mapf
+    adds r2, r2, r3
+    ldr r3, [r2, #8]
     cmp r0, r3
     blt __wrb_slow
-    ldr r3, =global_mapwhi
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #12]
     cmp r0, r3
     bge __wrb_slow
-    ldr r3, =global_maphost
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #16]
     strb r1, [r3, r0]
     bx lr
 __wrb_slow:
     mov r12, r1
-    lsrs r1, r2, #2
+    ldr r1, =global_mapf
+    subs r1, r2, r1
+    lsrs r1, r1, #5
     mov r2, r12
     b mmuwritebyte
   EndASM
@@ -9897,19 +9875,18 @@ __mv04_d1:
     ldr r2, =global_curd
     ldr r2, [r2]
     add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #2
-    ldr r3, =global_mapwlo
-    ldr r3, [r3, r2]
+    lsls r2, r2, #5
+    ldr r3, =global_mapf
+    adds r2, r2, r3
+    ldr r3, [r2, #8]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m04refm
-    ldr r3, =global_mapwhi
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #12]
     cmp r0, r3
     bge __ul_cpurunm_instructionmov_01_m04refm
     lsls r3, r0, #31
     bne __ul_cpurunm_instructionmov_01_m04refm
-    ldr r3, =global_maphost
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #16]
     ubfx r1, r8, #6, #3
     cmp r1, #7
     bne __mv04_a1
@@ -10058,19 +10035,18 @@ __mv40_s1:
     ldr r2, =global_curd
     ldr r2, [r2]
     add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #2
-    ldr r3, =global_maprlo
-    ldr r3, [r3, r2]
+    lsls r2, r2, #5
+    ldr r3, =global_mapf
+    adds r2, r2, r3
+    ldr r3, [r2, #0]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m40refm
-    ldr r3, =global_maprhi
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #4]
     cmp r0, r3
     bge __ul_cpurunm_instructionmov_01_m40refm
     lsls r3, r0, #31
     bne __ul_cpurunm_instructionmov_01_m40refm
-    ldr r3, =global_maphost
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #16]
     ldrh r1, [r3, r0]
     and.w r2, r8, #7
     cmp r2, #7
@@ -10197,19 +10173,18 @@ CompilerIf #ASM_MOV = 1
     ldr r2, =global_curi
     ldr r2, [r2]
     add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #2
-    ldr r3, =global_maprlo
-    ldr r3, [r3, r2]
+    lsls r2, r2, #5
+    ldr r3, =global_mapf
+    adds r2, r2, r3
+    ldr r3, [r2, #0]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m60refm
-    ldr r3, =global_maprhi
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #4]
     cmp r0, r3
     bge __ul_cpurunm_instructionmov_01_m60refm
     lsls r3, r0, #31
     bne __ul_cpurunm_instructionmov_01_m60refm
-    ldr r3, =global_maphost
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #16]
     ldrh r3, [r3, r0]
     ubfx r1, r8, #6, #3
     cmp r1, #7
@@ -10226,19 +10201,18 @@ __mv60_s2:
     ldr r2, =global_curd
     ldr r2, [r2]
     add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #2
-    ldr r3, =global_maprlo
-    ldr r3, [r3, r2]
+    lsls r2, r2, #5
+    ldr r3, =global_mapf
+    adds r2, r2, r3
+    ldr r3, [r2, #0]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m60refm
-    ldr r3, =global_maprhi
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #4]
     cmp r0, r3
     bge __ul_cpurunm_instructionmov_01_m60refm
     lsls r3, r0, #31
     bne __ul_cpurunm_instructionmov_01_m60refm
-    ldr r3, =global_maphost
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #16]
     ldrh r1, [r3, r0]
     and.w r2, r8, #7
     cmp r2, #7
@@ -10332,19 +10306,18 @@ CompilerIf #ASM_MOV = 1
     ldr r2, =global_curi
     ldr r2, [r2]
     add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #2
-    ldr r3, =global_maprlo
-    ldr r3, [r3, r2]
+    lsls r2, r2, #5
+    ldr r3, =global_mapf
+    adds r2, r2, r3
+    ldr r3, [r2, #0]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m64refm
-    ldr r3, =global_maprhi
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #4]
     cmp r0, r3
     bge __ul_cpurunm_instructionmov_01_m64refm
     lsls r3, r0, #31
     bne __ul_cpurunm_instructionmov_01_m64refm
-    ldr r3, =global_maphost
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #16]
     ldrh r3, [r3, r0]
     ubfx r1, r8, #6, #3
     cmp r1, #7
@@ -10361,19 +10334,18 @@ __mv64_s2:
     ldr r2, =global_curd
     ldr r2, [r2]
     add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #2
-    ldr r3, =global_maprlo
-    ldr r3, [r3, r2]
+    lsls r2, r2, #5
+    ldr r3, =global_mapf
+    adds r2, r2, r3
+    ldr r3, [r2, #0]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m64refm
-    ldr r3, =global_maprhi
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #4]
     cmp r0, r3
     bge __ul_cpurunm_instructionmov_01_m64refm
     lsls r3, r0, #31
     bne __ul_cpurunm_instructionmov_01_m64refm
-    ldr r3, =global_maphost
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #16]
     ldrh r1, [r3, r0]
     and.w r2, r8, #7
     cmp r2, #7
@@ -10391,19 +10363,18 @@ __mv64_d1:
     ldr r2, =global_curd
     ldr r2, [r2]
     add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #2
-    ldr r3, =global_mapwlo
-    ldr r3, [r3, r2]
+    lsls r2, r2, #5
+    ldr r3, =global_mapf
+    adds r2, r2, r3
+    ldr r3, [r2, #8]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m64refm
-    ldr r3, =global_mapwhi
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #12]
     cmp r0, r3
     bge __ul_cpurunm_instructionmov_01_m64refm
     lsls r3, r0, #31
     bne __ul_cpurunm_instructionmov_01_m64refm
-    ldr r3, =global_maphost
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #16]
     strh r1, [r3, r0]
     movs r4, r1
     adds.w r9, r9, #2
@@ -10533,19 +10504,18 @@ CompilerIf #ASM_MOV = 1
     ldr r2, =global_curd
     ldr r2, [r2]
     add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #2
-    ldr r3, =global_maprlo
-    ldr r3, [r3, r2]
+    lsls r2, r2, #5
+    ldr r3, =global_mapf
+    adds r2, r2, r3
+    ldr r3, [r2, #0]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m20refm
-    ldr r3, =global_maprhi
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #4]
     cmp r0, r3
     bge __ul_cpurunm_instructionmov_01_m20refm
     lsls r3, r0, #31
     bne __ul_cpurunm_instructionmov_01_m20refm
-    ldr r3, =global_maphost
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #16]
     ldrh r1, [r3, r0]
     and.w r2, r8, #7
     cmp r2, #7
@@ -10671,19 +10641,18 @@ CompilerIf #ASM_MOV = 1
     ldr r2, =global_curi
     ldr r2, [r2]
     add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #2
-    ldr r3, =global_maprlo
-    ldr r3, [r3, r2]
+    lsls r2, r2, #5
+    ldr r3, =global_mapf
+    adds r2, r2, r3
+    ldr r3, [r2, #0]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m61refm
-    ldr r3, =global_maprhi
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #4]
     cmp r0, r3
     bge __ul_cpurunm_instructionmov_01_m61refm
     lsls r3, r0, #31
     bne __ul_cpurunm_instructionmov_01_m61refm
-    ldr r3, =global_maphost
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #16]
     ldrh r3, [r3, r0]
     ubfx r1, r8, #6, #3
     cmp r1, #7
@@ -10700,19 +10669,18 @@ __mv61_s2:
     ldr r2, =global_curd
     ldr r2, [r2]
     add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #2
-    ldr r3, =global_maprlo
-    ldr r3, [r3, r2]
+    lsls r2, r2, #5
+    ldr r3, =global_mapf
+    adds r2, r2, r3
+    ldr r3, [r2, #0]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m61refm
-    ldr r3, =global_maprhi
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #4]
     cmp r0, r3
     bge __ul_cpurunm_instructionmov_01_m61refm
     lsls r3, r0, #31
     bne __ul_cpurunm_instructionmov_01_m61refm
-    ldr r3, =global_maphost
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #16]
     ldrh r1, [r3, r0]
     and.w r2, r8, #7
     cmp r2, #7
@@ -10723,19 +10691,18 @@ __mv61_s2:
     ldr r2, =global_curd
     ldr r2, [r2]
     add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #2
-    ldr r3, =global_mapwlo
-    ldr r3, [r3, r2]
+    lsls r2, r2, #5
+    ldr r3, =global_mapf
+    adds r2, r2, r3
+    ldr r3, [r2, #8]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m61refm
-    ldr r3, =global_mapwhi
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #12]
     cmp r0, r3
     bge __ul_cpurunm_instructionmov_01_m61refm
     lsls r3, r0, #31
     bne __ul_cpurunm_instructionmov_01_m61refm
-    ldr r3, =global_maphost
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #16]
     strh r1, [r3, r0]
     movs r4, r1
     adds.w r9, r9, #2
@@ -10824,19 +10791,18 @@ CompilerIf #ASM_MOV = 1
     ldr r2, =global_curi
     ldr r2, [r2]
     add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #2
-    ldr r3, =global_maprlo
-    ldr r3, [r3, r2]
+    lsls r2, r2, #5
+    ldr r3, =global_mapf
+    adds r2, r2, r3
+    ldr r3, [r2, #0]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m06refm
-    ldr r3, =global_maprhi
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #4]
     cmp r0, r3
     bge __ul_cpurunm_instructionmov_01_m06refm
     lsls r3, r0, #31
     bne __ul_cpurunm_instructionmov_01_m06refm
-    ldr r3, =global_maphost
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #16]
     ldrh r3, [r3, r0]
     and.w r1, r8, #7
     cmp r1, #7
@@ -10853,19 +10819,18 @@ __mv06_d2:
     ldr r2, =global_curd
     ldr r2, [r2]
     add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #2
-    ldr r3, =global_mapwlo
-    ldr r3, [r3, r2]
+    lsls r2, r2, #5
+    ldr r3, =global_mapf
+    adds r2, r2, r3
+    ldr r3, [r2, #8]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m06refm
-    ldr r3, =global_mapwhi
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #12]
     cmp r0, r3
     bge __ul_cpurunm_instructionmov_01_m06refm
     lsls r3, r0, #31
     bne __ul_cpurunm_instructionmov_01_m06refm
-    ldr r3, =global_maphost
-    ldr r3, [r3, r2]
+    ldr r3, [r2, #16]
     ubfx r1, r8, #6, #3
     cmp r1, #7
     bne __mv06_a1
