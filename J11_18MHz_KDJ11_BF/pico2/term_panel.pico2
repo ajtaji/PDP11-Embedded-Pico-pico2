@@ -1,0 +1,384 @@
+; ======================================================================
+;  term_panel.pico2 - the PDP-11's console as a terminal on the LAFVIN kit's
+;  ST7796 panel, drawn by core 1 (2026-10-25). Built by tools/term_build.py
+;  (#TERM_PANEL = 1); every other build leaves it out.
+;
+;  WHAT IT IS. A screen of 80 x 24 characters, as a VT52 or a VT100 shows the
+;  console: what the PDP-11 types on its console (the DL11's transmitter, the
+;  ConOut ring core 1 already drains to USB) is also put on the screen here, so
+;  the board shows its own console with no PC attached. The keyboard is still
+;  the USB port's.
+;
+;  THE PANEL is the 3.5" 480 x 320 ST7796 of the LAFVIN kit on SPI0 (SCK GP2,
+;  MOSI GP3, CS GP5, DC GP6, RST GP7; as demo_dev.pico2 and the Ms. Pac-Man and
+;  NES emulators drive it), turned to landscape. A character cell is 6 x 13
+;  pixels (term_font.pico2: four grey levels a pixel), so 80 x 24 is 480 x 312,
+;  4 pixels of margin above and below.
+;
+;  60 FRAMES A SECOND, the DEC terminals' rate. At each 60 Hz tick core 1 sends
+;  the rows that changed since the last frame, each as two bands (480 x 7 and
+;  480 x 6 pixels) by DMA, the next drawn while one goes. A row takes
+;  about 1.4 ms at the SPI's 75 MHz, so typing and a line of output are a frame;
+;  a full screen (a scroll) is 24 rows, about 33 ms, and takes two ticks - the
+;  stats block says how many frames a second were shown.
+;
+;  THE CODES: printable ASCII, CR, LF (scrolling at the foot), BS, TAB, BEL
+;  (counted, silent); VT52's ESC A B C D H J K and ESC Y row col; and the ANSI
+;  CSI forms a V7 termcap uses for a VT100: ESC [ row ; col H (or f), ESC [ J
+;  (0 and 2), ESC [ K, ESC [ n A/B/C/D; ESC [ ... m is accepted and ignored.
+;  A character in the last column leaves the cursor pending there and the next
+;  printable one wraps, as a VT100 does.
+; ======================================================================
+#TP_COLS = 80
+#TP_ROWS = 24
+#TP_CW = 6
+#TP_CH = 13
+#TP_Y0 = 4                               ; the screen's first pixel row on the panel
+#TP_BAND = 7                             ; a row goes out as two bands, its pixel rows 0-6 and 7-12 ...
+#TP_BAND_PAIRS = 1680                    ; ... each at most 480 x 7 pixels as pixel pairs (longs)
+#TP_FRAME_US = 16667                     ; 60 Hz
+#TP_SPI_DR = $40080008                  ; SPI0's data, status and DMA control registers
+#TP_SPI_SR = $4008000C
+#TP_SPI_DMACR = $40080024
+#TP_BLINK_US = 533333                    ; the cursor: on and off 1.875 times a second, as a VT100's
+
+Global Dim TpScr.a(#TP_COLS * #TP_ROWS)  ; the characters; row r of the screen is TpScr's row (TpTop + r) % 24
+Global Dim TpDirty.a(#TP_ROWS)           ; screen rows changed since they were last sent
+Global Dim TpFont.u(95 * #TP_CH)         ; term_font.pico2's glyphs, copied to SRAM
+Global Dim TpLut.i(16)                   ; two 2-bit pixels -> their RGB565 pair (the first in the low half)
+Global Dim TpStrip.i(#TP_BAND_PAIRS * 2) ; two band buffers
+Global TpTop.i, TpX.i, TpY.i, TpEsc.i, TpP1.i, TpP2.i, TpNP.i, TpTail.i, TpOn.i
+Global TpNext.i, TpRow.i = -1, TpHalf.i, TpPR.i = -1, TpPH.i, TpBuf.i, TpCurOn.i, TpBlinkAt.i, TpCurX.i, TpCurY.i
+Global TpFrames.i, TpRowsSent.i, TpBells.i, TpFrameBusy.i, TpFps.i, TpFpsFrames.i, TpFpsAt.i
+
+Procedure TermBegin()                    ; core 0, in Main, before core 1 starts
+  Define i.i
+  Define v.i
+  For i = 0 To 95 * #TP_CH - 1
+    TpFont(i) = PeekU(?TermFontData + i * 2)
+  Next
+  For i = 0 To 3                         ; grey levels 0, 1/3, 2/3, 1 as RGB565 white
+    v = i * 85
+    TpLut(i) = ((v >> 3) << 11) | ((v >> 2) << 5) | (v >> 3)
+  Next
+  For i = 15 To 0 Step -1                ; pairs: the first (left) pixel in bits 3-2, low half
+    TpLut(i) = TpLut((i >> 2) & 3) | (TpLut(i & 3) << 16)
+  Next
+  For i = 0 To #TP_COLS * #TP_ROWS - 1
+    TpScr(i) = 32
+  Next
+  For i = 0 To #TP_ROWS - 1
+    TpDirty(i) = 1
+  Next
+  SpiPeriFromSys(ClockSysKhz())
+  SpiBegin(0, 2, 3, -1, 100000)
+  Tft796Begin(0, 5, 6, 7)
+  Tft796Rotate(1)                        ; landscape, 480 x 320
+  Tft796Fill(0)
+  TpOn = 1
+EndProcedure
+
+Procedure TpClearRow(r.i, x0.i)       ; screen row r from column x0 to its end
+  Define i.i
+  Define a.i
+  a = ((TpTop + r) % #TP_ROWS) * #TP_COLS
+  For i = x0 To #TP_COLS - 1
+    TpScr(a + i) = 32
+  Next
+  TpDirty(r) = 1
+EndProcedure
+
+Procedure TpLineFeed()
+  Define i.i
+  If TpY < #TP_ROWS - 1
+    TpY = TpY + 1
+  Else                                   ; the foot: the screen moves up a row
+    TpTop = (TpTop + 1) % #TP_ROWS
+    TpClearRow(#TP_ROWS - 1, 0)
+    For i = 0 To #TP_ROWS - 1
+      TpDirty(i) = 1
+    Next
+  EndIf
+EndProcedure
+
+Procedure TpCsi(c.i)                  ; an ANSI CSI's final character
+  Define n.i
+  Define i.i
+  n = TpP1
+  If n < 1
+    n = 1
+  EndIf
+  If c = 72 Or c = 102                   ; H, f: row ; col, from 1
+    TpY = TpP1 - 1
+    TpX = TpP2 - 1
+  ElseIf c = 74                          ; J: 0 the rest of the screen, 2 all of it
+    If TpP1 = 2
+      For i = 0 To #TP_ROWS - 1
+        TpClearRow(i, 0)
+      Next
+    Else
+      TpClearRow(TpY, TpX)
+      For i = TpY + 1 To #TP_ROWS - 1
+        TpClearRow(i, 0)
+      Next
+    EndIf
+  ElseIf c = 75                          ; K: the rest of the line
+    TpClearRow(TpY, TpX)
+  ElseIf c = 65
+    TpY = TpY - n
+  ElseIf c = 66
+    TpY = TpY + n
+  ElseIf c = 67
+    TpX = TpX + n
+  ElseIf c = 68
+    TpX = TpX - n
+  EndIf
+EndProcedure
+
+; One character from the console.
+Procedure TermPut(c.i)
+  Define a.i
+  If TpEsc = 1                           ; after ESC
+    TpEsc = 0
+    If c = 91                            ; [ : ANSI
+      TpEsc = 2 : TpP1 = 0 : TpP2 = 0 : TpNP = 0
+    ElseIf c = 89                        ; Y: VT52's row, then column
+      TpEsc = 3
+    ElseIf c = 65
+      TpY = TpY - 1
+    ElseIf c = 66
+      TpY = TpY + 1
+    ElseIf c = 67
+      TpX = TpX + 1
+    ElseIf c = 68
+      TpX = TpX - 1
+    ElseIf c = 72
+      TpX = 0 : TpY = 0
+    ElseIf c = 74
+      TpCsi(74)
+    ElseIf c = 75
+      TpCsi(75)
+    EndIf
+  ElseIf TpEsc = 2                       ; inside ESC [
+    If c >= 48 And c <= 57
+      If TpNP = 0
+        TpP1 = TpP1 * 10 + c - 48
+      Else
+        TpP2 = TpP2 * 10 + c - 48
+      EndIf
+    ElseIf c = 59
+      TpNP = 1
+    ElseIf c >= 64
+      TpEsc = 0
+      TpCsi(c)
+    EndIf
+  ElseIf TpEsc = 3
+    TpY = c - 32
+    TpEsc = 4
+  ElseIf TpEsc = 4
+    TpX = c - 32
+    TpEsc = 0
+  ElseIf c = 27
+    TpEsc = 1
+  ElseIf c = 13
+    TpX = 0
+  ElseIf c = 10
+    TpLineFeed()
+  ElseIf c = 8
+    If TpX > 0
+      TpX = TpX - 1
+    EndIf
+  ElseIf c = 9
+    TpX = (TpX / 8 + 1) * 8
+  ElseIf c = 7
+    TpBells = TpBells + 1
+  ElseIf c >= 32 And c < 127
+    If TpX >= #TP_COLS                   ; the pending wrap of a VT100
+      TpX = 0
+      TpLineFeed()
+    EndIf
+    a = ((TpTop + TpY) % #TP_ROWS) * #TP_COLS + TpX
+    TpScr(a) = c
+    TpDirty(TpY) = 1
+    TpX = TpX + 1
+  EndIf
+  If TpX < 0                             ; the cursor stays on the screen (TpX = 80: pending)
+    TpX = 0
+  ElseIf TpX > #TP_COLS
+    TpX = #TP_COLS
+  EndIf
+  If TpY < 0
+    TpY = 0
+  ElseIf TpY >= #TP_ROWS
+    TpY = #TP_ROWS - 1
+  EndIf
+EndProcedure
+
+; Band h of screen row r (its pixel rows 0-6, or 7-12) into buffer buf: 80 cells a pixel row, the
+; cursor's cell inverted while it shows.
+ProcedureRAM TpRender(r.i, h.i, buf.i)
+  Define y.i
+  Define x.i
+  Define g.i
+  Define a.i
+  Define dst.i
+  Define cx.i
+  a = ((TpTop + r) % #TP_ROWS) * #TP_COLS
+  cx = -1
+  If TpCurOn And r = TpCurY
+    cx = TpCurX
+  EndIf
+  dst = buf
+  For y = h * #TP_BAND To h * #TP_BAND + #TP_BAND - 1 - h
+    For x = 0 To #TP_COLS - 1
+      g = TpFont((TpScr(a + x) - 32) * #TP_CH + y)
+      If x = cx
+        g = g ! $FFF
+      EndIf
+      PokeL(dst, TpLut((g >> 8) & 15))
+      PokeL(dst + 4, TpLut((g >> 4) & 15))
+      PokeL(dst + 8, TpLut(g & 15))
+      dst = dst + 12
+    Next
+  Next
+EndProcedure
+
+Procedure TpDmaStart(buf.i, pairs.i)
+  PokeL(#SPI_DMA_CH0_READ, buf)
+  PokeL(#SPI_DMA_CH0_WRITE, #TP_SPI_DR)
+  PokeL(#SPI_DMA_CH0_COUNT, pairs * 2)
+  PokeL(#SPI_DMA_CH0_CTRL, #SPI_DMA_EN | #SPI_DMA_SIZE_HALF | #SPI_DMA_INCR_READ | (#SPI_DMA_TREQ_SPI0_TX << #SPI_DMA_TREQ_SHIFT))
+EndProcedure
+
+Procedure.i TpNextDirty(from.i)       ; the next changed row from 'from', -1 none
+  Define r.i
+  For r = from To #TP_ROWS - 1
+    If TpDirty(r)
+      ProcedureReturn r
+    EndIf
+  Next
+  ProcedureReturn -1
+EndProcedure
+
+; Send band h of screen row r: the panel's window for it, then its pixels by DMA from buf (drawn already).
+Procedure TpSendBand(r.i, h.i, buf.i)
+  Define y0.i
+  Define n.i
+  y0 = #TP_Y0 + r * #TP_CH + h * #TP_BAND
+  n = #TP_BAND - h                       ; 7 pixel rows, then 6
+  Tft796Window(0, y0, #TP_COLS * #TP_CW - 1, y0 + n - 1)
+  SpiDmaInit()
+  SpiSetBits(0, 16)
+  Tft796PinSet(tft796_dc, 1)
+  Tft796PinSet(tft796_cs, 0)
+  PokeL(#TP_SPI_DMACR, PeekL(#TP_SPI_DMACR) | #SPI_SSPDMACR_TXDMAE)
+  TpDmaStart(buf, n * #TP_COLS * 3)
+EndProcedure
+
+; Band h of row r into buffer b, the next to go: a row's dirty mark is cleared when its first band
+; is drawn, so a character that lands after that draws the row again in the next frame.
+Procedure TpDraw(r.i, h.i, b.i)
+  If h = 0
+    TpDirty(r) = 0
+  Else
+    TpRowsSent = TpRowsSent + 1
+  EndIf
+  TpRender(r, h, @TpStrip(0) + b * #TP_BAND_PAIRS * 4)
+  TpPR = r
+  TpPH = h
+EndProcedure
+
+; The band after (r, h) in this frame - the row's second band, or the next changed row's first -
+; drawn now into the buffer not on its way to the panel; TpPR = -1 when the frame has no more.
+Procedure TpDrawNext(r.i, h.i)
+  Define n.i
+  If h = 0
+    TpDraw(r, 1, 1 - TpBuf)
+  Else
+    n = TpNextDirty(r + 1)
+    If n >= 0
+      TpDraw(n, 0, 1 - TpBuf)
+    Else
+      TpPR = -1
+    EndIf
+  EndIf
+EndProcedure
+
+Procedure TpSendPending()               ; the drawn band to the panel, and the one after it drawn while it goes
+  TpBuf = 1 - TpBuf
+  TpRow = TpPR
+  TpHalf = TpPH
+  TpSendBand(TpRow, TpHalf, @TpStrip(0) + TpBuf * #TP_BAND_PAIRS * 4)
+  TpDrawNext(TpRow, TpHalf)
+EndProcedure
+
+; Core 1, every pass of its loop and its idle wait: the console's characters onto the screen,
+; and at each 60 Hz tick the rows that changed, a band at a time by DMA, the next band drawn
+; while one goes. Never waits. 1 when it did something (core 1's busy figure), else 0.
+ProcedureRAM.i TermStep()
+  Define now.i
+  Define r.i
+  Define did.i
+  If TpOn = 0
+    ProcedureReturn 0
+  EndIf
+  If ConOutHead - TpTail > #CON_SIZE     ; fallen behind the ring: what was overwritten is gone
+    TpTail = ConOutHead - #CON_SIZE
+  EndIf
+  While TpTail <> ConOutHead
+    SmpBarrier()
+    TermPut(ConOut(TpTail & (#CON_SIZE - 1)) & $7F)
+    TpTail = TpTail + 1
+    did = 1
+  Wend
+  now = Micros()
+  If now - TpBlinkAt >= #TP_BLINK_US     ; the cursor's blink, and where it is
+    TpBlinkAt = now
+    TpCurOn = 1 - TpCurOn
+    TpDirty(TpCurY) = 1
+  EndIf
+  If TpCurX <> TpX Or TpCurY <> TpY
+    TpDirty(TpCurY) = 1
+    TpCurX = TpX
+    If TpCurX >= #TP_COLS
+      TpCurX = #TP_COLS - 1
+    EndIf
+    TpCurY = TpY
+    TpDirty(TpCurY) = 1
+  EndIf
+  If now - TpFpsAt >= 1000000            ; frames shown in the last second
+    TpFps = TpFrames - TpFpsFrames
+    TpFpsFrames = TpFrames
+    TpFpsAt = now
+  EndIf
+  If TpRow >= 0                          ; a band going out
+    If PeekL(#SPI_DMA_CH0_CTRL) & #SPI_DMA_BUSY
+      ProcedureReturn did
+    EndIf
+    While PeekL(#TP_SPI_SR) & #SPI_SR_BSY
+    Wend
+    SpiDmaRestore(0)
+    Tft796PinSet(tft796_cs, 1)
+    If TpPR >= 0
+      TpSendPending()
+    Else
+      TpRow = -1                         ; the frame is out
+      TpFrames = TpFrames + 1
+    EndIf
+    ProcedureReturn 1
+  EndIf
+  If now - TpNext < 0                    ; the next frame starts at the next tick
+    ProcedureReturn did
+  EndIf
+  TpNext = TpNext + #TP_FRAME_US
+  If now - TpNext >= 0
+    TpNext = now + #TP_FRAME_US
+  EndIf
+  r = TpNextDirty(0)
+  If r < 0                               ; nothing changed: no frame to send
+    ProcedureReturn did
+  EndIf
+  TpDraw(r, 0, 1 - TpBuf)
+  TpSendPending()
+  ProcedureReturn 1
+EndProcedure

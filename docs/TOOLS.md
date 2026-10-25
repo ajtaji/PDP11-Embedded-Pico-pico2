@@ -261,6 +261,29 @@ python tools/pack_install.py --board feather|picoplus2 --image combined.uf2 (--h
 
 For a board with no boot drive at hand. With `--compiler` it builds and uploads the installer (`pico2/packinstall.pico2`); then it sends each pack region of the image a sector at a time, every sector answered with a checksum, the header sector last, and the whole region read back and compared at the end. `--probe` tests one sector first; `--status` only asks what the flash holds (`PACK`, `UNFINISHED`, `BLANK`, `OTHER`); `--sums` prints the image's region checksums, the ones the firmware prints at start-up. The installer refuses a region inside the first 256 KB, past the flash size it measured, or past the size it was built for. It runs on Windows (the hub port from the device's location path) and reads the same from sysfs on Linux, where it has not been run.
 
+## `term_build.py` - the console on the LAFVIN panel (Pico 2 W)
+
+```
+python tools/term_build.py [--compiler EXE] [--out DIR] [--port COMnn]
+```
+
+The Pico 2 W firmware with `#TERM_PANEL = 1`: core 1 also shows the PDP-11's console as an 80 x 24 terminal
+on the kit's 480 x 320 ST7796 (`pico2/term_panel.pico2`: VT52 and the usual ANSI codes, 6 x 13 cells, the
+rows that changed sent at each 60 Hz tick, the next band drawn while one goes by DMA). The packs stay on
+the board. Measured on COM6, 2026-10-25: 60 frames a second while a frame's changes fit, 27-29 during
+full-screen scrolling (`od /rkunix`: the SPI's 75 MHz carries a whole 480 x 312 frame in 32 ms); core 0
+99% and core 1 42% busy meanwhile (the stats block's `busy` line). The file-write overlay is 230 blocks
+in this build (254 otherwise): the panel's buffers take the rest of the SRAM.
+
+## `term_font.py` - the terminal's glyphs
+
+```
+python tools/term_font.py DejaVuSansMono.ttf [--preview glyphs.png]
+```
+
+Writes `pico2/term_font.pico2`: ASCII 32-126 in 6 x 13 cells at four grey levels (13 rows of 12 bits a
+glyph) from a monospace TTF; the firmware's are DejaVu Sans Mono's (any Linux has the font).
+
 ## `demo_build.py` - the demo's firmware for a Pico 2 W in the LAFVIN kit
 
 ```

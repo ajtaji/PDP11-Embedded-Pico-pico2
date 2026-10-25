@@ -72,6 +72,7 @@ CompilerEndIf
 #PSRAM_SRAM_KB = 224         ; with PSRAM: how much of the PDP-11 memory is in SRAM (cpu.pico2, #RAM_BYTES); the rest is in the PSRAM. 224: with CpuRun in SRAM too (psram_build.py), the most that leaves OpTable its 32 KB in one piece
 #SRAM_MEM_KB = 152           ; the PDP-11 memory without PSRAM, in SRAM (cpu.pico2, #RAM_BYTES): 152 KB, the rest of the SRAM going to the file-write overlay (disk.pico2)
 #DEMO_DEV = 0                ; 1 = the demo display and tone generator (demo_dev.pico2): only tools/demo_build.py sets it
+#TERM_PANEL = 0              ; 1 = the console as a terminal on the LAFVIN panel (term_panel.pico2): only tools/term_build.py sets it
 #PS_DISK_UNCACHED = 1        ; the packs in PSRAM: 1 = through the uncached window, 0 = through the XIP cache
 #PS_MEM_UNCACHED = 0         ; the PDP-11 memory in PSRAM: the same choice (psram_pdp11.pico2, WHICH WINDOW)
 EnableExplicit
@@ -763,6 +764,11 @@ Procedure StatsBlock()
   Else
     Say(", interrupts off")
   EndIf
+  CompilerIf #TERM_PANEL = 1
+    StatLine("panel   the console as an 80 x 24 terminal: ") : Num(TpFrames) : Say(" frames, ") : Num(TpRowsSent)
+    Say(" rows sent; ") : Num(TpFps) : Say(" frames in the last second (60 at most: a frame only when the screen changed); SPI ")
+    Num(SpiHz(0) / 1000) : Say(" kHz")
+  CompilerEndIf
   CompilerIf #DEMO_DEV = 1
     StatLine("display 164000: DPCSR ") : Oct(DdCsr & $C1) : Say(", DPBASE ") : Oct(DdBase) : Say(", ")
     Num(DdFrames) : Say(" frames seen by the PDP-11, ") : Num(DvShown) : Say(" sent to the panel, ") : Num(DdSeq) : Say(" vertical blanks, SPI ") : Num(SpiHz(0) / 1000) : Say(" kHz; sound ") : If AudioRunning : Say("playing to the speaker") : Else : Say("not playing (") : Num(AudioRc) : Say(")") : EndIf
@@ -1719,6 +1725,9 @@ Procedure Core1Main()
     CompilerIf #DEMO_DEV = 1
       DvStep()                           ; the panel from power-up, with or without a PC on the port
     CompilerEndIf
+    CompilerIf #TERM_PANEL = 1
+      TermStep()                         ; the terminal from power-up, with or without a PC on the port
+    CompilerEndIf
   Wend
   ClkKhz = ClockSysKhz()                 ; before the banner: its 1 ms is not a gap anyone sees
   t0 = Micros()
@@ -1728,6 +1737,9 @@ Procedure Core1Main()
     DkServe()
     CompilerIf #DEMO_DEV = 1
       DvStep()
+    CompilerEndIf
+    CompilerIf #TERM_PANEL = 1
+      TermStep()
     CompilerEndIf
   Wend
   If Mode = #MODE_RUN
@@ -1841,6 +1853,9 @@ Procedure Core1Main()
     CompilerIf #DEMO_DEV = 1
       DvStep()                           ; the demo display's 60 Hz and the panel (demo_dev.pico2)
     CompilerEndIf
+    CompilerIf #TERM_PANEL = 1
+      TermStep()                         ; the console onto the panel at 60 Hz (term_panel.pico2)
+    CompilerEndIf
     C1Where = 6
     CompilerIf #DESK_PROBE = 1
       t0 = Micros()
@@ -1864,6 +1879,12 @@ Procedure Core1Main()
         tstrip = Micros()
         DvStep()                         ; the next strip as soon as the last has gone
         tidle = tidle + Micros() - tstrip
+      CompilerEndIf
+      CompilerIf #TERM_PANEL = 1
+        tstrip = Micros()
+        If TermStep()                    ; the next band as soon as the last has gone: work only when it did some
+          tidle = tidle + Micros() - tstrip
+        EndIf
       CompilerEndIf
     Wend
     C1IdleUs = C1IdleUs + Micros() - tidle
@@ -1906,6 +1927,9 @@ Procedure Main()
     ProbeFeedLoad()
   CompilerEndIf
   PswSnap = PswGet()
+  CompilerIf #TERM_PANEL = 1
+    TermBegin()                          ; the LAFVIN ST7796 panel as the console's screen, before core 1 owns it
+  CompilerEndIf
   CompilerIf #DEMO_DEV = 1
     DvBegin()                            ; the LAFVIN ST7796 panel (demo_dev.pico2), before core 1 owns it
     DdAudioBegin()                       ; the Bluetooth speaker, when the build has one (core 1 not started: the link key may be written)
