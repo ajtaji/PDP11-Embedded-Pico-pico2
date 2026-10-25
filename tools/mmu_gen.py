@@ -354,7 +354,24 @@ def pico2_tails(text):
 # with its own labels and its rare exits after its "bx": the common path
 # falls straight through, and only a window's end, a slow fetch or a trap
 # branches (short, to that tail's long jump). The macros stay for #ASM_TAILS = 0.
+# THUMB-2 TAILS (2026-10-25, compiler 883c4ae12 or later: b<c>.w and ldr pc,
+# [Rn, Rm, lsl #2]): the rare exits as 32-bit conditional branches, no long
+# jumps after the tail, and the dispatch as one table load into pc. Chosen by
+# T2_TAILS; a firmware built with it needs that compiler.
+T2_TAILS = os.environ.get("MMU_GEN_T2") == "1"
+
+
+def tail_fetch_t2(odd):
+    return (("    lsls r1, r0, #31\n    bne.w __ul_cpurunm_slowfetchm\n" if odd else "")
+            + "    ldr r3, =global_fw\n    ldr r1, [r3, #0]\n    cmp r0, r1\n    blt.w __ul_cpurunm_slowfetchm\n"
+            "    ldr r1, [r3, #4]\n    cmp r0, r1\n    bge.w __ul_cpurunm_slowfetchm\n    str r0, [r3, #12]\n"
+            "    ldr r1, [r3, #8]\n    ldrh r2, [r1, r0]\n    mov r8, r2\n    adds.w r9, r9, #2\n    lsrs r2, r2, #3\n"
+            "    ldr r1, =global_optablem\n    ldr pc, [r1, r2, lsl #2]\n")
+
+
 def tail_fetch(n, odd):
+    if T2_TAILS:
+        return tail_fetch_t2(odd)
     return ((("    lsls r1, r0, #31\n    bne __tm%d_s\n" % n) if odd else "")
             + "    ldr r3, =global_fw\n    ldr r1, [r3, #0]\n    cmp r0, r1\n    blt __tm%d_s\n"
             "    ldr r1, [r3, #4]\n    cmp r0, r1\n    bge __tm%d_s\n    str r0, [r3, #12]\n    ldr r1, [r3, #8]\n"
@@ -505,6 +522,10 @@ def own_tails(text):
                        + tail_fetch(n, False) + "  EndASM")
                 if s == "NextNativeTrapM()":
                     asm = "  If TrapVector\n    Goto SlowTailM\n  EndIf\n" + asm
+            if T2_TAILS:                 # the exits as b<c>.w, straight to RunEndM and SlowTailM
+                asm = (asm.replace("    bne __tm%d_t\n" % n, "    bne.w __ul_cpurunm_slowtailm\n")
+                       .replace("    beq __tm%d_e\n" % n, "    beq.w __ul_cpurunm_runendm\n")
+                       .replace("__tm%d_t:\n    b __ul_cpurunm_slowtailm\n" % n, ""))
             out.append("CompilerIf #ASM_TAILS = 1\n" + asm + "\nCompilerElse\n" + line + "\nCompilerEndIf")
         else:
             out.append(line)

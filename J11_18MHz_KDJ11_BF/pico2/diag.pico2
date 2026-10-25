@@ -621,6 +621,12 @@ Procedure StatLine(*s.i)
   Say(*s)
 EndProcedure
 
+; EACH CORE'S BUSY FIGURE (2026-10-25), for the stats block: core 0's time in
+; slices that ended with the PDP-11 running (not in a WAIT), and core 1's time
+; outside its idle wait at the foot of each pass (the demo panel's strips, drawn
+; there, count as work). Each over the time since the last stats block.
+Global C0BusyUs.i, C1IdleUs.i, BusyFrom.i, BusyC0At.i, BusyC1At.i, tbusy.i
+
 Procedure StatsBlock()
   Define khz.i
   Define i.i
@@ -767,6 +773,13 @@ Procedure StatsBlock()
     StatLine("cores   core 1 did not start: the I/O runs on core 0 and the PDP-11 cannot run")
   Else
     StatLine("cores   core 0: the PDP-11 CPU and its device registers; core 1: USB, console, disk storage, 60 Hz, this block")
+    tbusy = Micros() - BusyFrom
+    If BusyFrom <> 0 And tbusy > 0
+      StatLine("busy    core 0 ") : Num(((C0BusyUs - BusyC0At) / 100) * 100 / (tbusy / 100))
+      Say("% running PDP-11 instructions (not in a WAIT); core 1 ") : Num(100 - ((C1IdleUs - BusyC1At) / 100) * 100 / (tbusy / 100))
+      Say("% at work (outside its idle wait); over the last ") : Num(tbusy / 1000) : Say(" ms")
+    EndIf
+    BusyFrom = Micros() : BusyC0At = C0BusyUs : BusyC1At = C1IdleUs
   EndIf
   StatLine("typed   ") : Num(ConTyped) : Say(" characters from the port since BOOT, ") : Num(Dl11RxReads)
   Say(" read by the PDP-11, ") : Num(ConInHead - ConInTail) : Say(" waiting, ") : Num(ConDropped + usbser_rxlost)
@@ -1554,6 +1567,7 @@ Procedure C0Do(what.i, arg1.i, arg2.i)
 EndProcedure
 
 Procedure Core0Loop()
+  Define tb.i
   CompilerIf #DESK_PROBE = 1
     Define t0.i
   CompilerEndIf
@@ -1588,7 +1602,11 @@ Procedure Core0Loop()
           ChkNext = ChkNext + #CHK_EVERY
         EndIf
       CompilerElse
+        tb = Micros()
         Total = Total + CpuRun(#CORE0_SLICE)
+        If Waiting = 0
+          C0BusyUs = C0BusyUs + Micros() - tb
+        EndIf
       CompilerEndIf
       PswSnap = PswGet()
       CompilerIf #DESK_PROBE = 1
@@ -1685,6 +1703,8 @@ CompilerEndIf
 
 Procedure Core1Main()
   Define t0.i
+  Define tidle.i
+  Define tstrip.i
   Define tlast.i
   Define tdisk.i
   Define tpass.i
@@ -1834,15 +1854,19 @@ Procedure Core1Main()
     CompilerEndIf
     Service()
     C1Where = 8
+    tidle = Micros()
     While (Micros() - tpass) < #C1_PASS_US And ConOutHead = ConOutTail And DkReqSeq = DkDoneSeq
       If Micros() - UsbLastSvc > 250     ; nothing to do: USB and the clock every 250 us
         Service()
         KwTick()
       EndIf
       CompilerIf #DEMO_DEV = 1
+        tstrip = Micros()
         DvStep()                         ; the next strip as soon as the last has gone
+        tidle = tidle + Micros() - tstrip
       CompilerEndIf
     Wend
+    C1IdleUs = C1IdleUs + Micros() - tidle
   ForEver
 EndProcedure
 
