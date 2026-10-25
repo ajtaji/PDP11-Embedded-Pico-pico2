@@ -1,5 +1,25 @@
 # Ready-to-flash Unix images
 
+**Read this first (2026-10-24, evening).** The five RP2350 files carry new firmware again, built from
+a clean `git archive` of `d58922d` with the same release compiler (`37314eeb8`): the operand address in
+assembly for the loop that runs with memory management off (boot, the diagnostics), and saves to the
+store that wait for less erasing on the PSRAM boards (a used store's 165-block save 1.9 s -> 0.65-0.9 s).
+Firmware SHA-256: Pico 2 W `c2191254...1e93`, Pico Plus 2 W `d50fc4fc...a5fd`, Feather `9741f875...4bdb`.
+**The disk packs are byte for byte the earlier ones, nonce included** (`tools/uf2_firmware.py`), so the
+PSRAM boards keep what Unix saved. Run on 2026-10-24, the Pico 2 W file sent whole through the compiler's
+uploader, the PSRAM files' packs with a fresh nonce (an empty store: the boards' old saves were not
+replayed) through `tools/pack_install.py` and the firmware after them:
+
+| File | Board | Run |
+|---|---|---|
+| `pico2w-v6` | Pico 2 W | `mem = 556`, `cc -O` builds and runs a program, `time od /rkunix` real 9.0 (8.7 s from the host, as before: V6 runs mapped), 0 clock ticks dropped; diagnostic ladder 19 of 21 (the two HALTs a J-11 gives) |
+| `picoplus2` | Pico Plus 2 W | `mem = 1036`, `cc -O` builds and runs a program, `od` real 9.0, a save of 9 blocks in 46 ms |
+| `picoplus2-v7` | Pico Plus 2 W | `mem = 2012672`, `df` lists `/dev/rk0` and `/dev/rp3`, a `double` program prints 6.285714, `od /unix` real 14.0, `icheck` missing 0 |
+| `feather` | Feather RP2350 HSTX | `mem = 1036`, `cc -O` builds and runs a program, `od` real 9.0 |
+| `feather-v7` | Feather RP2350 HSTX | `mem = 2012672`, the `double` program prints 6.285714, `od /unix` real 14.0, `icheck` of rk0 and rk1 missing 0 |
+
+The Pico W files are unchanged. What follows is the record of the earlier files.
+
 **Read this first (2026-10-24).** The five RP2350 files (`pico2w-v6`, `picoplus2`, `picoplus2-v7`,
 `feather`, `feather-v7`) carry new firmware, built from a clean `git archive` of `ad32bcd` with
 PureMetal Forge's release binaries of 2026-10-19 (compiler `37314eeb8`): the hot paths of 2026-10-23
@@ -52,7 +72,7 @@ The UNIX files inside the disk packs are covered by the Caldera licence in
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `pico2w-v6/combined.uf2` | 3,248,128 | `26b184e8267ae0df629e6258697f17f7c2d95d4465531fe2efc4b65b49b9cdae` |
+| `pico2w-v6/combined.uf2` | 3,247,616 | `9c05765e9d20926cd24def73f936499fa71eb6241fb10966ed5ed4c0a41021d2` |
 
 Firmware and disk pack in one UF2: hold BOOTSEL, plug in, copy the file to
 the `RP2350` drive. At the serial console:
@@ -90,8 +110,8 @@ works; use `df /dev/rk0` (plain `df` looks for V6's built-in `/dev/rk2` and
 
 | Board | File | Size | SHA-256 |
 |---|---|---|---|
-| Pimoroni Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w)): RP2350B, PSRAM chip select GPIO47, 16 MB flash | `picoplus2/combined.uf2` | 9,466,368 | `98464c27bf33f0bb2ed00ce618f34a38a3e5eb710685253525eb6e66ed48dd05` |
-| Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM ([6130](https://www.adafruit.com/product/6130)): RP2350A, GPIO8, 8 MB flash | `feather/combined.uf2` | 9,466,368 | `c92f373d18b78d0384895962ea32d889280504b8b6c539d9de9ee1e45a155b1e` |
+| Pimoroni Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w)): RP2350B, PSRAM chip select GPIO47, 16 MB flash | `picoplus2/combined.uf2` | 9,469,952 | `8a205b3c483a1a765770be88d7630896a7d08817a639c9b89be9829a9d794562` |
+| Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM ([6130](https://www.adafruit.com/product/6130)): RP2350A, GPIO8, 8 MB flash | `feather/combined.uf2` | 9,469,952 | `3a9a37c391b1cc6c73f8e3be7f8f4a19ea03c08ba23efcbc3a07cf2de1801d7e` |
 
 Each is one UF2 with the firmware, RK0 (the V6 root pack, as in `pico2w-v6/`,
 plus `/dev/rk1`) and RK1 (V6's source pack, `../media/unix/v6src.gz`).
@@ -124,7 +144,7 @@ python tools/psram_build.py --board feather   --compiler PureMetalForge.exe
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `picoplus2-v7/combined.uf2` | 22,852,096 | `c4b75c938fd96f4f57d8a154b7140ae0a30ff1c0292c0b2fee9f6d0b6588f1f2` |
+| `picoplus2-v7/combined.uf2` | 22,855,680 | `4f0171bdcc113d233c4dc34fc21ab9ed5b64820f442d3a777aef0e2ad1463f7b` |
 
 Rebuilt on 2026-10-22 from a clean `git archive` of commit `ce1436f` (the same as `0fd25ce`'s file but for the
 floating point fixes DEC's KDJ11 FPA diagnostics found; booted on a Pico Plus 2 W: an empty store, `df`, `od /unix`
@@ -166,7 +186,7 @@ has the use and the build.
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `feather-v7/combined.uf2` | 9,466,368 | `b86b806098da717d76d22a2becc4235508fdf2b41e5f59c75174c735721dc5a0` |
+| `feather-v7/combined.uf2` | 9,469,952 | `92940d735d9813f304622ffa2353d592791bd065c56dfc87ad828ef9f6728dfb` |
 
 Built on 2026-10-22 from a clean `git archive` of the current source with the same firmware as
 `feather/combined.uf2` (SHA-256 `5a2ccc1c...7e5d`), and V7's packs: RK0 the root file system and kernel,
