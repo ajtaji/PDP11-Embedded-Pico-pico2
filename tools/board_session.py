@@ -19,6 +19,9 @@ THE SCRIPT, one step per line:
                       already up, a Return gets the prompt
     !timeout N        the timeout of the steps that follow, seconds (default 30)
     !stats            the firmware's statistics block (Ctrl-] then s)
+    !save             a save now (Ctrl-] then w; the PSRAM boards): waits for the
+                      firmware's "[saved: ...]" or "[packs saved ...]" line, which
+                      says how many blocks and how long; type "sync" first
     !eof              Ctrl-D (ends "cat >file")
     !raw TEXT         typed with no Return and no wait
     !line TEXT        typed with a Return, no wait for the prompt (a line of
@@ -113,6 +116,14 @@ def main():
         elif line == "!stats":
             s.write(b"\x1ds")
             pump(2.0)
+        elif line == "!save":
+            t0 = time.time()
+            s.write(b"\x1dw")
+            if not pump(timeout, "]\n"):
+                emit("\n[board_session: no save report within %.0f s]\n" % timeout)
+                rc = 1
+                break
+            emit("[host: %.2f s]\n" % (time.time() - t0))
         elif line == "!eof":
             s.write(b"\x04")
             pump(0.3)

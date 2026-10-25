@@ -1639,7 +1639,8 @@ Procedure PsSaveReport()
     ElseIf StAuto = 0
       Say("[saved: ") : Num(StLastBlocks) : Say(" changed blocks into the store, ") : Num(StLastSectors)
       Say(" sectors written, in ") : Num(PsSaveUs / 1000) : Say(" ms; the store holds ") : Num(StLive)
-      Say(" of its ") : Num(#ST_SLOTS) : Say(" slots]") : Eol()
+      Say(" of its ") : Num(#ST_SLOTS) : Say(" slots (listing ") : Num(StListUs / 1000) : Say(" ms, ")
+      Num(StLastErases) : Say(" erases ") : Num(StEraseUs / 1000) : Say(" ms, programming ") : Num(StProgUs / 1000) : Say(" ms)]") : Eol()
     EndIf
     StAuto = 0
     ProcedureReturn

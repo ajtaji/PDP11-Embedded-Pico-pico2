@@ -284,7 +284,7 @@ For a release where only the firmware changed: every block of the image from the
 python tools/board_session.py (--hub-port N | --usb-serial TEXT) --script FILE [--out TRANSCRIPT] [--max-seconds 240]
 ```
 
-One open of the port; each line of the script is typed and timed from the Return to the next prompt; `!boot`, `!stats`, `!eof`, `!line`, `!expect`, `!timeout`, `!wait` steps (the file's header lists them). The scripts used on the PSRAM boards are in `docs/psram/`.
+One open of the port; each line of the script is typed and timed from the Return to the next prompt; `!boot`, `!stats`, `!save` (Ctrl-] w on a PSRAM board, waiting for its report: blocks, sectors, and the time spent listing, erasing and programming), `!eof`, `!line`, `!expect`, `!timeout`, `!wait` steps (the file's header lists them). The scripts used on the PSRAM boards are in `docs/psram/`.
 
 ## `psram_desk_check.py` - the PSRAM image on the emulator
 

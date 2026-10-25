@@ -65,6 +65,13 @@
 ;  the save is a fold. A save that would leave more than #ST_FULL live
 ;  slots is a fold too: collecting a nearly full store moves more than it
 ;  frees. At most one sector a save is moved for its age (#ST_AGE).
+;  ERASING is most of a save's time, so a save waits for as little of it
+;  as it can (2026-10-24): a blank sector is written before one that needs
+;  erasing; when one needs it, a 64 KB group of 16 sectors with nothing
+;  live is erased with one block erase instead, if four or more of them
+;  need it (StGroupErase: about three sector erases' time for sixteen); a
+;  sector that is erased alone is erased in the same park of core 1 as its
+;  programming; and only the slots a sector uses are programmed.
 ;
 ;  SAVES BY THEMSELVES (diag.pico2, core 1): when a block has been written
 ;  since the last save, the disks have been quiet for #ST_QUIET_US and the
@@ -87,6 +94,7 @@ Global StLive.i, StFree.i, StNList.i
 Global StSaves.i, StAutoSaves.i, StFolds.i, StErases.i, StWrites.i, StBlocks.i, StMoved.i
 Global StLastSave.i, StWhy.i, StErr.i, StFoundSlots.i, StBadSlots.i
 Global StLastBlocks.i, StLastSectors.i
+Global StGroups.i, StLastErases.i, StEraseUs.i, StProgUs.i, StListUs.i   ; the last save's time: erasing, programming, listing
 
 Macro StTag(mS, mK)
   PeekL(@DkSwapRam(0) + #SW_TAG + ((mS) * 7 + (mK)) * 4)
@@ -269,8 +277,17 @@ Procedure StInit()
 EndProcedure
 
 ; ---- the flash operations, core 1 parked ----------------------------------
+; Sector s reads blank now: its erase sequence, state and counts.
+Procedure StErased(s.i)
+  StEraMax = StEraMax + 1
+  PokeL(@DkSwapRam(0) + #SW_ERA + s * 4, StEraMax)
+  PokeA(@DkSwapRam(0) + #SW_STATE + s, 0)
+  StErases = StErases + 1
+EndProcedure
+
 Procedure.i StErase(s.i)
-  Define ok.i
+  Define ok.i, t0.i
+  t0 = Micros()
   If PsPark() = 0
     PsUnpark()
     StWhy = 1
@@ -279,44 +296,126 @@ Procedure.i StErase(s.i)
   ok = FlashRangeErase(#FL_STORE + s * 4096, 4096)
   StErr = flash_error
   PsUnpark()
+  StEraseUs = StEraseUs + Micros() - t0
+  StLastErases = StLastErases + 1
   If ok = 0
     StWhy = 2
     ProcedureReturn 0
   EndIf
-  StEraMax = StEraMax + 1
-  PokeL(@DkSwapRam(0) + #SW_ERA + s * 4, StEraMax)
-  PokeA(@DkSwapRam(0) + #SW_STATE + s, 0)
-  StErases = StErases + 1
+  StErased(s)
+  ProcedureReturn 1
+EndProcedure
+
+; A 64 KB group of 16 sectors with nothing live in it and not the newest
+; sector, four or more of them to erase: erased with ONE block erase, which
+; takes about the time of three sector erases (W25Q: 150 ms against 45 ms
+; each, typical). Sectors are written about in turn and V7 writes the same
+; blocks again and again, so whole groups go dead together. The group with
+; the most to erase. 1 done, 0 there is none, -1 the flash refused (StWhy).
+Procedure.i StGroupErase()
+  Define g.i, s.i, n.i, bad.i, bg.i, bn.i, ok.i, t0.i
+  bg = -1
+  bn = 3
+  For g = 0 To #ST_SECTORS / 16 - 1
+    n = 0
+    bad = 0
+    For s = g * 16 To g * 16 + 15
+      If s = StTopSec
+        bad = 1
+        Break
+      EndIf
+      If StState(s) = 1
+        If StLiveIn(s) > 0
+          bad = 1
+          Break
+        EndIf
+      EndIf
+      If StState(s) <> 0
+        n = n + 1
+      EndIf
+    Next
+    If bad = 0 And n > bn
+      bg = g
+      bn = n
+    EndIf
+  Next
+  If bg < 0
+    ProcedureReturn 0
+  EndIf
+  t0 = Micros()
+  If PsPark() = 0
+    PsUnpark()
+    StWhy = 1
+    ProcedureReturn -1
+  EndIf
+  ok = FlashRangeErase(#FL_STORE + bg * 65536, 65536)
+  StErr = flash_error
+  PsUnpark()
+  StEraseUs = StEraseUs + Micros() - t0
+  StLastErases = StLastErases + 1
+  If ok = 0
+    StWhy = 2
+    ProcedureReturn -1
+  EndIf
+  For s = bg * 16 To bg * 16 + 15
+    If StState(s) = 1                    ; written, nothing live: free now
+      StFree = StFree + 1
+    EndIf
+    StErased(s)
+  Next
+  StGroups = StGroups + 1
   ProcedureReturn 1
 EndProcedure
 
 ; The stage (#SW_STAGE, header filled but its era) into sector s: erased
 ; first unless blank, data pages, then the header, read back. 1 or 0.
 Procedure.i StProgram(s.i)
-  Define buf.i, off.i, i.i, ok.i
+  Define buf.i, off.i, i.i, ok.i, t0.i, t1.i, er.i, n.i
   buf = @DkSwapRam(0) + #SW_STAGE
-  If StState(s) <> 0
-    If StErase(s) = 0
-      ProcedureReturn 0
-    EndIf
+  er = Bool(StState(s) <> 0)
+  If er                                  ; its erase sequence as it will be
+    PokeL(buf + 16, StEraMax + 1)
+  Else
+    PokeL(buf + 16, StEra(s))
   EndIf
-  PokeL(buf + 16, StEra(s))
   PokeL(buf + 80, StSum(buf, 80))
+  n = PeekL(buf + 20)
   off = #FL_STORE + s * 4096
+  t0 = Micros()
   If PsPark() = 0
     PsUnpark()
     StWhy = 1
     ProcedureReturn 0
   EndIf
-  ok = FlashRangeProgram(off + 512, buf + 512, 3584)
+  ok = 1
+  If er                                  ; erased in the same park: one wait for core 1, not two
+    ok = FlashRangeErase(off, 4096)
+  EndIf
+  t1 = Micros()
+  If ok And n > 0                        ; the slots used (the rest read blank already), then the header
+    ok = FlashRangeProgram(off + 512, buf + 512, n * 512)
+  EndIf
   If ok
     ok = FlashRangeProgram(off, buf, 256)
   EndIf
   StErr = flash_error
   PsUnpark()
+  If er
+    StEraseUs = StEraseUs + t1 - t0
+    StLastErases = StLastErases + 1
+    StProgUs = StProgUs + Micros() - t1
+  Else
+    StProgUs = StProgUs + Micros() - t0
+  EndIf
   If ok = 0
     StWhy = 2
+    If er
+      PokeA(@DkSwapRam(0) + #SW_STATE + s, 2)
+    EndIf
     ProcedureReturn 0
+  EndIf
+  If er
+    StErased(s)
   EndIf
   For i = 0 To 1023
     If PeekL($10000000 + off + i * 4) <> PeekL(buf + i * 4)
@@ -381,17 +480,41 @@ Procedure StCommit(s.i)
   Next
 EndProcedure
 
-Procedure.i StPickFree()                 ; the free sector erased longest ago, -1 none
-  Define s.i, b.i
-  b = -1
-  For s = 0 To #ST_SECTORS - 1
-    If StState(s) <> 1
-      If b < 0 Or StEra(s) < StEra(b) Or (StEra(s) = StEra(b) And StState(s) = 0 And StState(b) <> 0)
-        b = s
+; The free sector to write: a blank one (erased already, so the save waits
+; for no erase), the one erased longest ago among them; else, when a whole
+; group can be erased at once (StGroupErase), one of those; else the free
+; sector erased longest ago, which StProgram erases. -1 none, -2 the flash
+; refused.
+Procedure.i StPickFree()
+  Define s.i, b.i, z.i, g.i
+  While 1
+    b = -1
+    z = -1
+    For s = 0 To #ST_SECTORS - 1
+      If StState(s) = 0
+        If z < 0 Or StEra(s) < StEra(z)
+          z = s
+        EndIf
+      ElseIf StState(s) = 2
+        If b < 0 Or StEra(s) < StEra(b)
+          b = s
+        EndIf
       EndIf
+    Next
+    If z >= 0
+      ProcedureReturn z
     EndIf
-  Next
-  ProcedureReturn b
+    If b < 0 Or g
+      ProcedureReturn b
+    EndIf
+    g = 1
+    z = StGroupErase()
+    If z < 0
+      ProcedureReturn -2
+    ElseIf z = 0
+      ProcedureReturn b
+    EndIf
+  Wend
 EndProcedure
 
 ; The written sector to collect: fewest live slots, then oldest erase.
@@ -522,6 +645,7 @@ Procedure.i StSave()
   StWhy = 0
   StLastBlocks = 0
   StLastSectors = 0
+  StLastErases = 0 : StEraseUs = 0 : StProgUs = 0
   If StBuildList() = 0
     ProcedureReturn -2
   EndIf
@@ -531,13 +655,20 @@ Procedure.i StSave()
       newn = newn + 1
     EndIf
   Next
+  StListUs = Micros() - t0
   If StLive + newn > #ST_FULL
     ProcedureReturn -2
   EndIf
   p = 0
   While p < StNList
     v = -1
-    If StFree < 2                        ; a written sector with nothing live: erased, no copying
+    If StFree < 2                        ; a whole group with nothing live (StGroupErase), else
+      i = StGroupErase()                 ; a written sector with nothing live: erased, no copying
+      If i < 0
+        ProcedureReturn -1
+      ElseIf i > 0
+        Continue
+      EndIf
       v = StPickVictim()
       If v >= 0
         If StLiveIn(v) = 0
@@ -558,9 +689,11 @@ Procedure.i StSave()
         ProcedureReturn -2
       EndIf
       f = StPickFree()
-      If f < 0
-        ProcedureReturn -2
-      EndIf
+    EndIf
+    If f = -2                            ; the flash refused a group erase
+      ProcedureReturn -1
+    ElseIf f < 0
+      ProcedureReturn -2
     EndIf
     StStageNew()
     If v >= 0
@@ -605,6 +738,10 @@ Procedure.i StSave()
   Next
   If v >= 0 And StEraMax - StEra(v) > #ST_AGE And StFree >= 1
     f = StPickFree()
+  Else
+    v = -1
+  EndIf
+  If v >= 0 And f >= 0
     StStageNew()
     StStageCarry(v)
     If StProgram(f)
