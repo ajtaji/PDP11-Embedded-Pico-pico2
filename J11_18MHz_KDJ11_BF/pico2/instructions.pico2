@@ -274,6 +274,227 @@ SlowFetch:                               ; the I/O page, an odd PC, past the end
                                          ; 1983, model differences 28 and 30)
   Goto OpTable(Op >> 3)
 
+; ---- UNMAPPED ONLY: the operand address in assembly (tools/mmu_gen.py leaves this block out) ----
+; __eau, what the unmapped handlers reach with "bl" instead of calling EaWord
+; (cpu.pico2, EaFast and MSrcWord; #ASM_EA = 1): the call, the frame and the
+; return of a Basic procedure cost more than the work - EaWord was 52% of the
+; time of a program running with memory management off (the PDP-11 demo,
+; profiled on a Pico 2 W, 2026-10-24). In: r0 = the 6-bit mode and register.
+; Out: r0 = the address, with EaReg, Tmp, Adr and the register left exactly as
+; EaWord leaves them. All seven modes are done here when every access is in
+; RAM below 160000 and even and -(SP) or @-(SP) leaves SP at or above 000400;
+; anything else goes on to EaWord itself with the spec, nothing changed, and lr
+; still the handler's, so EaWord returns straight to the handler. It clobbers
+; r0-r3, r12 and lr only. asm_check.pico2 holds it to EaWord.
+; __eaub is the byte form (EaByte): (R)+ and -(R) step by one, by two through
+; SP and PC; the other modes are EaWord's, so it goes on to __eau.
+CompilerIf #ASM_EA = 1
+  ASM
+__eau:
+    mov r12, r0
+    and.w r1, r0, #7
+    ldr r2, =global_eareg
+    str r1, [r2]
+    ubfx r0, r0, #3, #3
+    ldr r2, =global_reg
+    cmp r0, #6
+    bne __eau_m4
+    ldr r3, [r2, #28]
+    cmp.w r3, #0xE000
+    bhs __eau_slow
+    lsls r0, r3, #31
+    bne __eau_slow
+    ldr r0, =global_adr
+    str r3, [r0]
+    ldr r0, =global_mem
+    ldrh r0, [r0, r3]
+    adds r3, r3, #2
+    uxth r3, r3
+    str r3, [r2, #28]
+    ldr r3, =global_tmp
+    str r0, [r3]
+    add.w r3, r2, r1, lsl #2
+    ldr r3, [r3]
+    adds r0, r0, r3
+    uxth r0, r0
+    bx lr
+__eau_m4:
+    cmp r0, #4
+    bne __eau_m2
+    add.w r2, r2, r1, lsl #2
+    ldr r3, [r2]
+    subs r3, r3, #2
+    uxth r3, r3
+    cmp r1, #6
+    bne __eau_m4a
+    cmp.w r3, #0x100
+    blo __eau_slow
+__eau_m4a:
+    str r3, [r2]
+    ldr r2, =global_tmp
+    str r0, [r2]
+    movs r0, r3
+    bx lr
+__eau_m2:
+    cmp r0, #2
+    bne __eau_m1
+    add.w r2, r2, r1, lsl #2
+    ldr r3, [r2]
+    adds r0, r3, #2
+    uxth r0, r0
+    str r0, [r2]
+    ldr r2, =global_tmp
+    str r3, [r2]
+    movs r0, r3
+    bx lr
+__eau_m1:
+    cmp r0, #1
+    bne __eau_m3
+    ldr r3, =global_tmp
+    str r0, [r3]
+    add.w r2, r2, r1, lsl #2
+    ldr r0, [r2]
+    bx lr
+__eau_m3:
+    cmp r0, #3
+    bne __eau_m5
+    add.w r2, r2, r1, lsl #2
+    ldr r3, [r2]
+    cmp.w r3, #0xE000
+    bhs __eau_slow
+    lsls r0, r3, #31
+    bne __eau_slow
+    ldr r0, =global_adr
+    str r3, [r0]
+    ldr r0, =global_mem
+    ldrh r0, [r0, r3]
+    adds r3, r3, #2
+    uxth r3, r3
+    str r3, [r2]
+    ldr r2, =global_tmp
+    str r0, [r2]
+    bx lr
+__eau_m5:
+    cmp r0, #5
+    bne __eau_m7
+    add.w r2, r2, r1, lsl #2
+    ldr r3, [r2]
+    subs r3, r3, #2
+    uxth r3, r3
+    cmp r1, #6
+    bne __eau_m5a
+    cmp.w r3, #0x100
+    blo __eau_slow
+__eau_m5a:
+    cmp.w r3, #0xE000
+    bhs __eau_slow
+    lsls r0, r3, #31
+    bne __eau_slow
+    str r3, [r2]
+    ldr r0, =global_adr
+    str r3, [r0]
+    ldr r0, =global_mem
+    ldrh r0, [r0, r3]
+    ldr r2, =global_tmp
+    str r0, [r2]
+    bx lr
+__eau_m7:
+    cmp r0, #7
+    bne __eau_slow
+    ldr r3, [r2, #28]
+    cmp.w r3, #0xE000
+    bhs __eau_slow
+    lsls r0, r3, #31
+    bne __eau_slow
+    ldr r0, =global_mem
+    ldrh r0, [r0, r3]
+    adds r3, r3, #2
+    uxth r3, r3
+    cmp r1, #7
+    beq __eau_m7p
+    push {r5}
+    add.w r5, r2, r1, lsl #2
+    ldr r5, [r5]
+    adds r0, r0, r5
+    pop {r5}
+    b __eau_m7a
+__eau_m7p:
+    adds r0, r0, r3
+__eau_m7a:
+    uxth r0, r0
+    cmp.w r0, #0xE000
+    bhs __eau_slow
+    lsls r1, r0, #31
+    bne __eau_slow
+    str r3, [r2, #28]
+    ldr r2, =global_adr
+    str r0, [r2]
+    ldr r2, =global_mem
+    ldrh r0, [r2, r0]
+    ldr r2, =global_tmp
+    str r0, [r2]
+    bx lr
+__eau_slow:
+    mov r0, r12
+    ldr r1, =global_easpec
+    str r0, [r1]
+    b eaword
+__eaub:
+    mov r12, r0
+    and.w r1, r0, #7
+    ldr r2, =global_eareg
+    str r1, [r2]
+    movs r3, #1
+    cmp r1, #6
+    blo __eaub_s
+    movs r3, #2
+__eaub_s:
+    ldr r2, =global_eastep
+    str r3, [r2]
+    ubfx r0, r0, #3, #3
+    cmp r0, #2
+    bne __eaub_m4
+    ldr r2, =global_reg
+    add.w r2, r2, r1, lsl #2
+    ldr r1, [r2]
+    adds r3, r1, r3
+    uxth r3, r3
+    str r3, [r2]
+    ldr r2, =global_tmp
+    str r1, [r2]
+    movs r0, r1
+    bx lr
+__eaub_m4:
+    cmp r0, #4
+    bne __eaub_w
+    ldr r2, =global_reg
+    add.w r2, r2, r1, lsl #2
+    push {r5}
+    ldr r5, [r2]
+    subs r3, r5, r3
+    pop {r5}
+    uxth r3, r3
+    cmp r1, #6
+    bne __eaub_m4a
+    cmp.w r3, #0x100
+    bhs __eaub_m4a
+    mov r0, r12
+    ldr r1, =global_easpec
+    str r0, [r1]
+    b eabyte
+__eaub_m4a:
+    str r3, [r2]
+    ldr r2, =global_tmp
+    str r0, [r2]
+    movs r0, r3
+    bx lr
+__eaub_w:
+    mov r0, r12
+    b __eau
+  EndASM
+CompilerEndIf
+; ---- END UNMAPPED ONLY ----
+
 ;-MOV-------------------------------------------------------------------
 InstructionMOV_01:            ; 01SSDD   entries $0200-$03FF
   PcOut()
@@ -282,7 +503,7 @@ InstructionMOV_01:            ; 01SSDD   entries $0200-$03FF
   If (Op & $38) = 0
     Reg(Op & 7) = Src
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MWriteWord(Ea, Src)
   EndIf
   FlagNZ = Src
@@ -299,7 +520,7 @@ InstructionMOVB_11:           ; 11SSDD   entries $1200-$13FF
   If (Op & $38) = 0
     Reg(Op & 7) = (Src | (0 - (Src & $80))) & $FFFF   ; to a register it is sign-extended
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MWriteByte(Ea, Src)
   EndIf
   FlagNZ = Src << 8
@@ -317,7 +538,7 @@ InstructionCMP_02:            ; 02SSDD   entries $0400-$05FF
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
   EndIf
   Res = Src - Dst                        ; src - dst, the other way round from SUB
@@ -336,7 +557,7 @@ InstructionCMPB_12:           ; 12SSDD   entries $1400-$15FF
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
   EndIf
   Res = Src - Dst
@@ -356,7 +577,7 @@ InstructionBIT_03:            ; 03SSDD   entries $0600-$07FF
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
   EndIf
   FlagNZ = Src & Dst
@@ -373,7 +594,7 @@ InstructionBITB_13:           ; 13SSDD   entries $1600-$17FF
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
   EndIf
   FlagNZ = (Src & Dst) << 8
@@ -392,7 +613,7 @@ InstructionBIC_04:            ; 04SSDD   entries $0800-$09FF
     Res = Reg(Op & 7) & ~Src & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Res, Ea)
     Res = Res & ~Src & $FFFF
     MWriteWord(Ea, Res)
@@ -412,7 +633,7 @@ InstructionBICB_14:           ; 14SSDD   entries $1800-$19FF
     Res = Reg(Op & 7) & ~Src & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Res, Ea)
     Res = Res & ~Src & $FF
     MWriteByte(Ea, Res)
@@ -433,7 +654,7 @@ InstructionBIS_05:            ; 05SSDD   entries $0A00-$0BFF
     Res = Reg(Op & 7) | Src
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Res, Ea)
     Res = Res | Src
     MWriteWord(Ea, Res)
@@ -453,7 +674,7 @@ InstructionBISB_15:           ; 15SSDD   entries $1A00-$1BFF
     Res = (Reg(Op & 7) | Src) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Res, Ea)
     Res = Res | Src
     MWriteByte(Ea, Res)
@@ -475,7 +696,7 @@ InstructionADD_06:            ; 06SSDD   entries $0C00-$0DFF
     Res = Src + Dst
     Reg(Op & 7) = Res & $FFFF
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = Src + Dst
     MWriteWord(Ea, Res)
@@ -498,7 +719,7 @@ InstructionSUB_16:            ; 16SSDD   entries $1C00-$1DFF
     Res = Dst - Src
     Reg(Op & 7) = Res & $FFFF
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = Dst - Src
     MWriteWord(Ea, Res)
@@ -523,7 +744,7 @@ InstructionCLR_0050:          ; 0050DD   entries $0140-$0147
   If (Op & $38) = 0
     Reg(Op & 7) = 0
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MWriteWord(Ea, 0)
   EndIf
   FlagNZ = 0
@@ -540,7 +761,7 @@ InstructionCLRB_1050:         ; 1050DD   entries $1140-$1147
   If (Op & $38) = 0
     Reg(Op & 7) = Reg(Op & 7) & $FF00
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MWriteByte(Ea, 0)
   EndIf
   FlagNZ = 0
@@ -559,7 +780,7 @@ InstructionCOM_0051:          ; 0051DD   entries $0148-$014F
     Res = Reg(Op & 7) ! $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Res, Ea)
     Res = Res ! $FFFF
     MWriteWord(Ea, Res)
@@ -579,7 +800,7 @@ InstructionCOMB_1051:         ; 1051DD   entries $1148-$114F
     Res = (Reg(Op & 7) ! $FF) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Res, Ea)
     Res = Res ! $FF
     MWriteByte(Ea, Res)
@@ -601,7 +822,7 @@ InstructionINC_0052:          ; 0052DD   entries $0150-$0157   C unaffected
     Res = (Dst + 1) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst + 1) & $FFFF
     MWriteWord(Ea, Res)
@@ -624,7 +845,7 @@ InstructionINCB_1052:         ; 1052DD   entries $1150-$1157
     Res = (Dst + 1) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
     Res = (Dst + 1) & $FF
     MWriteByte(Ea, Res)
@@ -648,7 +869,7 @@ InstructionDEC_0053:          ; 0053DD   entries $0158-$015F   C unaffected
     Res = (Dst - 1) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst - 1) & $FFFF
     MWriteWord(Ea, Res)
@@ -671,7 +892,7 @@ InstructionDECB_1053:         ; 1053DD   entries $1158-$115F
     Res = (Dst - 1) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
     Res = (Dst - 1) & $FF
     MWriteByte(Ea, Res)
@@ -694,7 +915,7 @@ InstructionNEG_0054:          ; 0054DD   entries $0160-$0167
     Res = (0 - Reg(Op & 7)) & $FFFF      ; 100000 negates to itself
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Res, Ea)
     Res = (0 - Res) & $FFFF
     MWriteWord(Ea, Res)
@@ -720,7 +941,7 @@ InstructionNEGB_1054:         ; 1054DD   entries $1160-$1167
     Res = (0 - Reg(Op & 7)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Res, Ea)
     Res = (0 - Res) & $FF
     MWriteByte(Ea, Res)
@@ -748,7 +969,7 @@ InstructionADC_0055:          ; 0055DD   entries $0168-$016F
     Res = (Dst + ((FlagC >> 16) & 1)) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst + ((FlagC >> 16) & 1)) & $FFFF
     MWriteWord(Ea, Res)
@@ -774,7 +995,7 @@ InstructionADCB_1055:         ; 1055DD   entries $1168-$116F
     Res = (Dst + ((FlagC >> 16) & 1)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
     Res = (Dst + ((FlagC >> 16) & 1)) & $FF
     MWriteByte(Ea, Res)
@@ -804,7 +1025,7 @@ InstructionSBC_0056:          ; 0056DD   entries $0170-$0177
     Res = (Dst - ((FlagC >> 16) & 1)) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst - ((FlagC >> 16) & 1)) & $FFFF
     MWriteWord(Ea, Res)
@@ -830,7 +1051,7 @@ InstructionSBCB_1056:         ; 1056DD   entries $1170-$1177
     Res = (Dst - ((FlagC >> 16) & 1)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
     Res = (Dst - ((FlagC >> 16) & 1)) & $FF
     MWriteByte(Ea, Res)
@@ -855,7 +1076,7 @@ InstructionTST_0057:          ; 0057DD   entries $0178-$017F
   If (Op & $38) = 0
     FlagNZ = Reg(Op & 7)
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(FlagNZ, Ea)
   EndIf
   FlagV = 0
@@ -871,7 +1092,7 @@ InstructionTSTB_1057:         ; 1057DD   entries $1178-$117F
   If (Op & $38) = 0
     FlagNZ = (Reg(Op & 7) & $FF) << 8
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(FlagNZ, Ea)
     FlagNZ = FlagNZ << 8
   EndIf
@@ -895,7 +1116,7 @@ InstructionROR_0060:          ; 0060DD   entries $0180-$0187
     Res = (Dst >> 1) | ((FlagC >> 1) & $8000)
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst >> 1) | ((FlagC >> 1) & $8000)
     MWriteWord(Ea, Res)
@@ -916,7 +1137,7 @@ InstructionRORB_1060:         ; 1060DD   entries $1180-$1187
     Res = (Dst >> 1) | ((FlagC >> 9) & $80)
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
     Res = (Dst >> 1) | ((FlagC >> 9) & $80)
     MWriteByte(Ea, Res)
@@ -938,7 +1159,7 @@ InstructionROL_0061:          ; 0061DD   entries $0188-$018F
     Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FFFF
     MWriteWord(Ea, Res)
@@ -959,7 +1180,7 @@ InstructionROLB_1061:         ; 1061DD   entries $1188-$118F
     Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
     Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FF
     MWriteByte(Ea, Res)
@@ -981,7 +1202,7 @@ InstructionASR_0062:          ; 0062DD   entries $0190-$0197
     Res = (Dst >> 1) | (Dst & $8000)
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst >> 1) | (Dst & $8000)
     MWriteWord(Ea, Res)
@@ -1002,7 +1223,7 @@ InstructionASRB_1062:         ; 1062DD   entries $1190-$1197
     Res = (Dst >> 1) | (Dst & $80)
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
     Res = (Dst >> 1) | (Dst & $80)
     MWriteByte(Ea, Res)
@@ -1024,7 +1245,7 @@ InstructionASL_0063:          ; 0063DD   entries $0198-$019F
     Res = (Dst << 1) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst << 1) & $FFFF
     MWriteWord(Ea, Res)
@@ -1045,7 +1266,7 @@ InstructionASLB_1063:         ; 1063DD   entries $1198-$119F
     Res = (Dst << 1) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
     Res = (Dst << 1) & $FF
     MWriteByte(Ea, Res)
@@ -1067,7 +1288,7 @@ InstructionSWAB_0003:         ; 0003DD   entries $0018-$001F
     Res = ((Dst >> 8) | (Dst << 8)) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = ((Dst >> 8) | (Dst << 8)) & $FFFF
     MWriteWord(Ea, Res)
@@ -1091,7 +1312,7 @@ InstructionSXT_0067:          ; 0067DD   entries $01B8-$01BF   N unaffected
   If (Op & $38) = 0
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MWriteWord(Ea, Res)
   EndIf
   SetNZ(FlagN(), 1 - FlagN())
@@ -1109,7 +1330,7 @@ InstructionMFPS_1067:         ; 1067DD   entries $11B8-$11BF
   If (Op & $38) = 0
     Reg(Op & 7) = (Res | (0 - (Res & $80))) & $FFFF   ; sign-extended into a register
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MWriteByte(Ea, Res)
   EndIf
   FlagNZ = Res << 8
@@ -1125,7 +1346,7 @@ InstructionMTPS_1064:         ; 1064SS   entries $11A0-$11A7   the T bit is not 
   If (Op & $38) = 0
     Src = Reg(Op & 7) & $FF
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Src, Ea)
   EndIf
   If PswHigh & $C000                     ; outside kernel mode only the condition codes
@@ -1150,7 +1371,7 @@ InstructionMFPI_0065:         ; 0065SS   entries $01A8-$01AF
       Src = ModeSp((PswHigh >> 12) & 3)
     EndIf
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Src, Ea)
   EndIf
   If TrapVector = 0                      ; a read that failed (bus error, MMU abort) aborts
@@ -1174,7 +1395,7 @@ InstructionMTPI_0066:         ; 0066DD   entries $01B0-$01B7
       Reg(Op & 7) = Src
     EndIf
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MWriteWord(Ea, Src)
   EndIf
   FlagNZ = Src
@@ -1383,7 +1604,7 @@ InstructionJSR_004:           ; 004RDD   entries $0100-$013F
   If (Op & $38) = 0
     TrapVector = #VEC_BUS                ; JSR to a register is illegal
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     Push(Reg((Op >> 6) & 7))
     Reg((Op >> 6) & 7) = Reg(7)
     Reg(7) = Ea
@@ -1449,7 +1670,7 @@ InstructionMUL_070:           ; 070RSS   entries $0E00-$0E3F
   If (Op & $38) = 0
     Src = Reg(Op & 7)
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Src, Ea)
   EndIf
   Src = Src - ((Src & $8000) << 1)                        ; signed 16
@@ -1480,7 +1701,7 @@ InstructionDIV_071:           ; 071RSS   entries $0E40-$0E7F
   If (Op & $38) = 0
     Src = Reg(Op & 7)
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Src, Ea)
   EndIf
   Src = Src - ((Src & $8000) << 1)
@@ -1518,7 +1739,7 @@ InstructionASH_072:           ; 072RSS   entries $0E80-$0EBF
   If (Op & $38) = 0
     Src = Reg(Op & 7) & $3F
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Src, Ea)
     Src = Src & $3F
   EndIf
@@ -1556,7 +1777,7 @@ InstructionASHC_073:          ; 073RSS   entries $0EC0-$0EFF
   If (Op & $38) = 0
     Src = Reg(Op & 7) & $3F
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Src, Ea)
     Src = Src & $3F
   EndIf
@@ -1596,7 +1817,7 @@ InstructionXOR_074:           ; 074RDD   entries $0F00-$0F3F
     Res = Reg(Op & 7) ! Reg((Op >> 6) & 7)
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Res, Ea)
     Res = Res ! Reg((Op >> 6) & 7)
     MWriteWord(Ea, Res)
@@ -2235,7 +2456,7 @@ InstructionBITB_13_IR:           ; 1327DD  BITB #n,Rd, the source an immediate
 ; ======================================================================
 InstructionMOV_01_RM:            ; 010SDD  MOV Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MWriteWord(Ea, Src)
   FlagNZ = Src
@@ -2244,7 +2465,7 @@ InstructionMOV_01_RM:            ; 010SDD  MOV Rs,memory
 
 InstructionCMP_02_RM:            ; 020SDD  CMP Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MReadWord(Dst, Ea)
   Res = Src - Dst
@@ -2255,7 +2476,7 @@ InstructionCMP_02_RM:            ; 020SDD  CMP Rs,memory
 
 InstructionBIT_03_RM:            ; 030SDD  BIT Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MReadWord(Dst, Ea)
   FlagNZ = Src & Dst
@@ -2264,7 +2485,7 @@ InstructionBIT_03_RM:            ; 030SDD  BIT Rs,memory
 
 InstructionBIC_04_RM:            ; 040SDD  BIC Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MReadWord(Res, Ea)
   Res = Res & ~Src & $FFFF
@@ -2275,7 +2496,7 @@ InstructionBIC_04_RM:            ; 040SDD  BIC Rs,memory
 
 InstructionBIS_05_RM:            ; 050SDD  BIS Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MReadWord(Res, Ea)
   Res = Res | Src
@@ -2286,7 +2507,7 @@ InstructionBIS_05_RM:            ; 050SDD  BIS Rs,memory
 
 InstructionADD_06_RM:            ; 060SDD  ADD Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MReadWord(Dst, Ea)
   Res = Src + Dst
@@ -2298,7 +2519,7 @@ InstructionADD_06_RM:            ; 060SDD  ADD Rs,memory
 
 InstructionSUB_16_RM:            ; 160SDD  SUB Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MReadWord(Dst, Ea)
   Res = Dst - Src
@@ -2310,7 +2531,7 @@ InstructionSUB_16_RM:            ; 160SDD  SUB Rs,memory
 
 InstructionMOVB_11_RM:           ; 110SDD  MOVB Rs,memory
   PcOut()
-  Ea = EaByte(Op & $3F)
+  EaFastB()
   Src = Reg((Op >> 6) & 7) & $FF
   MWriteByte(Ea, Src)
   FlagNZ = Src << 8
@@ -2319,7 +2540,7 @@ InstructionMOVB_11_RM:           ; 110SDD  MOVB Rs,memory
 
 InstructionCMPB_12_RM:           ; 120SDD  CMPB Rs,memory
   PcOut()
-  Ea = EaByte(Op & $3F)
+  EaFastB()
   Src = Reg((Op >> 6) & 7) & $FF
   MReadByte(Dst, Ea)
   Res = Src - Dst
@@ -2330,7 +2551,7 @@ InstructionCMPB_12_RM:           ; 120SDD  CMPB Rs,memory
 
 InstructionBITB_13_RM:           ; 130SDD  BITB Rs,memory
   PcOut()
-  Ea = EaByte(Op & $3F)
+  EaFastB()
   Src = Reg((Op >> 6) & 7) & $FF
   MReadByte(Dst, Ea)
   FlagNZ = (Src & Dst) << 8
@@ -2339,7 +2560,7 @@ InstructionBITB_13_RM:           ; 130SDD  BITB Rs,memory
 
 InstructionBICB_14_RM:           ; 140SDD  BICB Rs,memory
   PcOut()
-  Ea = EaByte(Op & $3F)
+  EaFastB()
   Src = Reg((Op >> 6) & 7) & $FF
   MReadByte(Res, Ea)
   Res = Res & ~Src & $FF
@@ -2350,7 +2571,7 @@ InstructionBICB_14_RM:           ; 140SDD  BICB Rs,memory
 
 InstructionBISB_15_RM:           ; 150SDD  BISB Rs,memory
   PcOut()
-  Ea = EaByte(Op & $3F)
+  EaFastB()
   Src = Reg((Op >> 6) & 7) & $FF
   MReadByte(Res, Ea)
   Res = Res | Src

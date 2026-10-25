@@ -1426,7 +1426,16 @@ Macro MSrcWord()
   If (Op & $0E00) = 0
     Src = Reg((Op >> 6) & 7)
   Else
+CompilerIf #ASM_EA = 1
+  ASM Uses Op
+    ubfx r0, r8, #6, #6
+    bl __eau
+    ldr r1, =global_ea
+    str r0, [r1]
+  EndASM
+CompilerElse
     Ea = EaWord((Op >> 6) & $3F)
+CompilerEndIf
     MReadWord(Src, Ea)
   EndIf
 EndMacro
@@ -1435,9 +1444,48 @@ Macro MSrcByte()
   If (Op & $0E00) = 0
     Src = Reg((Op >> 6) & 7) & $FF
   Else
+CompilerIf #ASM_EA = 1
+  ASM Uses Op
+    ubfx r0, r8, #6, #6
+    bl __eaub
+    ldr r1, =global_ea
+    str r0, [r1]
+  EndASM
+CompilerElse
     Ea = EaByte((Op >> 6) & $3F)
+CompilerEndIf
     MReadByte(Src, Ea)
   EndIf
+EndMacro
+
+; The destination's address in the unmapped handlers: __eau / __eaub
+; (instructions.pico2, the UNMAPPED ONLY block; #ASM_EA = 1), else EaWord /
+; EaByte. tools/mmu_gen.py turns both back into the Ea lines they stand for
+; when it writes the mapped loop, which has its own (__eaw, __eab).
+Macro EaFast()
+CompilerIf #ASM_EA = 1
+  ASM Uses Op
+    and.w r0, r8, #0x3f
+    bl __eau
+    ldr r1, =global_ea
+    str r0, [r1]
+  EndASM
+CompilerElse
+  Ea = EaWord(Op & $3F)
+CompilerEndIf
+EndMacro
+
+Macro EaFastB()
+CompilerIf #ASM_EA = 1
+  ASM Uses Op
+    and.w r0, r8, #0x3f
+    bl __eaub
+    ldr r1, =global_ea
+    str r0, [r1]
+  EndASM
+CompilerElse
+  Ea = EaByte(Op & $3F)
+CompilerEndIf
 EndMacro
 
 ; ======================================================================

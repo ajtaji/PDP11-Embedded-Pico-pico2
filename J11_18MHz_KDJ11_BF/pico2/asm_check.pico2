@@ -574,6 +574,127 @@ Procedure EaOne()
 EndProcedure
 
 
+; ---- __eau / __eaub, the unmapped handlers' operand address -----------------
+; (instructions.pico2, the UNMAPPED ONLY block): held to EaWord and EaByte, the
+; plain bodies they go on to, with memory management off - random registers
+; (mostly even and in the 56 KB, some odd, at the edge of the I/O page, in it,
+; or either side of the stack limit), random specs, the same state for both.
+Procedure EauAsm()
+  ASM
+    push {r5}
+    mov r5, lr
+    ldr r0, =global_espec
+    ldr r0, [r0]
+    bl __eau
+    ldr r1, =global_er
+    str r0, [r1]
+    mov lr, r5
+    pop {r5}
+  EndASM
+EndProcedure
+
+Procedure EaubAsm()
+  ASM
+    push {r5}
+    mov r5, lr
+    ldr r0, =global_espec
+    ldr r0, [r0]
+    bl __eaub
+    ldr r1, =global_er
+    str r0, [r1]
+    mov lr, r5
+    pop {r5}
+  EndASM
+EndProcedure
+
+Global EuChecks.i, EuFast.i, EuFailures.i, EuFirst.i, EuFirstSpec.i, EuFirstField.i, EuByte.i
+Global Dim EuReg.i(8)
+
+Procedure.i RndRegU()
+  Define k.i
+  k = RndN(12)
+  If k < 7
+    ProcedureReturn RndN($6FFC) * 2 + 2   ; even, in the 56 KB, room for -(R)
+  ElseIf k = 7
+    ProcedureReturn $DFF8 + RndN(8) * 2   ; either side of 160000
+  ElseIf k = 8
+    ProcedureReturn RndN($10000) | 1
+  ElseIf k = 9
+    ProcedureReturn $FC + RndN(8) * 2     ; either side of the stack limit
+  ElseIf k = 10
+    ProcedureReturn $E000 + RndN($800) * 2   ; the I/O page's empty start: a bus error
+  EndIf
+  ProcedureReturn RndN($10000)
+EndProcedure
+
+Procedure EuPrep()
+  For Ei = 0 To 7 : Reg(Ei) = EuReg(Ei) : Next
+  TrapVector = 0 : CpuErr = 0 : StackYellow = 0 : AbortPsw = 0
+  EaReg = -1 : Tmp = -1 : Adr = -1 : EaStep = -1
+  ER = 0
+  EaSpec = #EA_NONE
+EndProcedure
+
+Procedure EuSnap(*s.i)
+  GS = *s
+  PokeL(GS, ER)
+  For GI = 0 To 7 : PokeL(GS + 4 + GI * 4, Reg(GI)) : Next
+  PokeL(GS + 36, EaReg)
+  PokeL(GS + 40, Tmp)
+  PokeL(GS + 44, Adr)
+  PokeL(GS + 48, EaStep)
+  PokeL(GS + 52, TrapVector)
+  PokeL(GS + 56, CpuErr)
+  PokeL(GS + 60, StackYellow)
+  PokeL(GS + 64, AbortPsw)
+  PokeL(GS + 68, Bool(EaSpec = #EA_NONE))
+EndProcedure
+
+Procedure EuOne()
+  PswSet($00E0)
+  Mmr0 = 0 : MmuOn = 0
+  For Ei = 0 To 7 : EuReg(Ei) = RndRegU() : Next
+  ESpec = RndN(64)
+  If RndN(4) <> 0                       ; mostly modes 1 to 7
+    ESpec = (ESpec & 7) | ((1 + RndN(7)) << 3)
+  EndIf
+  EuPrep()
+  If EuByte
+    EaubAsm()
+  Else
+    EauAsm()
+  EndIf
+  EuSnap(@EaA(0))
+  EuPrep()
+  If EuByte
+    ER = EaByte(ESpec)
+  Else
+    ER = EaWord(ESpec)
+  EndIf
+  EuSnap(@EaB(0))
+  EuChecks = EuChecks + 1
+  If EaA(17) = 1
+    EuFast = EuFast + 1
+  EndIf
+  EField = -1
+  For Ei = 0 To 16
+    If EaA(Ei) <> EaB(Ei) And EField < 0
+      EField = Ei
+    EndIf
+  Next
+  If EField >= 0
+    EuFailures = EuFailures + 1
+    If EuFirst < 0
+      EuFirst = EuChecks
+      EuFirstSpec = ESpec
+      EuFirstField = EField
+      Say("EAU FIRST FAIL byte=") : Num(EuByte) : Say(" spec=") : Oct(ESpec) : Say(" field=") : Num(EField)
+      Say(" asm=") : Num(EaA(EField)) : Say(" plain=") : Num(EaB(EField)) : Say(" fast=") : Num(EaA(17)) : Eol()
+    EndIf
+  EndIf
+EndProcedure
+
+
 ; ---- the FPU's assembly (fp11.pico2) ----------------------------------------
 ; FpFracMulAsm against FpFracMulRef, and FpDivQAsm against FpDivQRef, on the
 ; same fractions: random ones (the hidden bit set, the low word 0 a third of
@@ -856,6 +977,7 @@ Procedure Main()
   Next
   FirstBad = -1
   EaFirst = -1
+  EuFirst = -1
   FpFirst = -1
   OpFirst = -1
   EdgeW(0) = 0 : EdgeW(1) = $FFFF : EdgeW(2) = $7FFF : EdgeW(3) = $8000
@@ -905,6 +1027,23 @@ Procedure Main()
       Say(" PASS")
     Else
       Say(" FAIL")
+    EndIf
+    Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
+    Mt0 = Micros()
+    For EuByte = 0 To 1
+      For EbI = 1 To #ROUND * 5
+        EuOne()
+        UsbSerialTask()
+        SafetyPet()
+      Next
+    Next
+    EuByte = 0
+    Say("ASMCHECK eau (unmapped __eau and __eaub) checks=") : Num(EuChecks) : Say(" fast=") : Num(EuFast)
+    Say(" failures=") : Num(EuFailures)
+    If EuFailures = 0
+      Say(" PASS")
+    Else
+      Say(" FAIL first=") : Num(EuFirst) : Say(" spec=") : Oct(EuFirstSpec) : Say(" field=") : Num(EuFirstField)
     EndIf
     Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
     Mt0 = Micros()

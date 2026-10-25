@@ -107,6 +107,8 @@ def generate():
     # the Pico's handlers write the operand address as EaFast() (cpu.pico: __eaw1
     # with #ASM_EA = 1); the mapped loop gets the EaWord line it stands for
     raw = raw.replace("EaFast()", "Ea = EaWord(Op & $3F)")
+    # ... and the Pico 2's unmapped handlers EaFastB() for the byte form (cpu.pico2: __eaub)
+    raw = raw.replace("EaFastB()", "Ea = EaByte(Op & $3F)")
     # the unmapped loop's own MOV handlers (and their table lines) stay out:
     # they use the unmapped operand code directly, and the Pico 2's mapped
     # loop gets handlers written here instead (specialise, below)
