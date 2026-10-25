@@ -242,6 +242,7 @@ Macro BranchTo()
   PC = (PC + ((Op << 24) >> 23)) & $FFFF
 EndMacro
 
+  GBase = @Reg(0)                        ; r5: the base the mapped loop's assembly reaches its globals from
   If OpTableReady = 0
     Goto BuildTable
   EndIf

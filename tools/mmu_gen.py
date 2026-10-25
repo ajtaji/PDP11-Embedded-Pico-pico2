@@ -519,6 +519,175 @@ def map_rows(text):
     return "\n".join(out)
 
 
+# THE HOT GLOBALS FROM ONE BASE REGISTER (2026-10-25, compiler of 2026-10-25 or later: a
+# symbol difference as a load or store offset, ToDo 1427). cpu.pico2 reserves GBase in r5 and
+# sets it to @Reg(0); the globals the run loop touches on every instruction lie within about
+# 2 KB of it. The assembly loaded each one's address from a literal pool and then the global
+# through it - two loads, the first one memory traffic the M33 waits on. Here:
+#   ldr rX, =global_reg      -> mov.w rX, r5   (any use: it is the base)
+#   ldr rX, =global_<hot>    -> gone, when every use of rX before it is written again - on the
+#       straight path and at every branch target it reaches - is a load or store [rX] or
+#       [rX, #k]: each becomes [r5, #global_<hot> - global_reg + k], one load or store.
+# Anything not proven so is left as it was. The assembler refuses an offset out of reach
+# (0..4095, or 255 below), so a layout that moves a global away cannot go wrong quietly.
+BASE_HOT = ["fw", "curd", "curi", "eabase", "ea", "src", "dst", "trapvector", "flagc", "flagv",
+            "mmr0", "mmr1", "mmupcrec", "tmp", "adr", "easpec", "eastep", "eareg"]
+_MEMOP = re.compile(r"^( +)(ldr|str|ldrh|strh|ldrb|strb)(\.w)? (r\d+), \[(r\d+)(?:, #(-?\d+))?\]$")
+_DEST_FIRST = ("ldr", "mov", "movs", "add", "adds", "sub", "subs", "and", "ands", "orr", "orrs", "eor", "eors",
+               "lsl", "lsls", "lsr", "lsrs", "asr", "asrs", "ubfx", "sbfx", "uxth", "uxtb", "sxth", "sxtb", "bic",
+               "bics", "mul", "muls", "mvn", "mvns", "rsb", "rsbs", "sdiv", "udiv", "mls", "movw", "movt")
+
+
+def _ops(line):
+    p = line.strip().split(None, 1)
+    if len(p) < 2:
+        return p[0] if p else "", []
+    return p[0], [o.strip() for o in re.split(r",(?![^\[{]*[\]}])", p[1])]
+
+
+def _reads(line, r):
+    """r read as a source by this instruction (memory bases included)."""
+    op, ops = _ops(line)
+    base = op.split(".")[0]
+    if not ops:
+        return False
+    first_src = base.startswith(("str", "cmp", "cmn", "tst", "teq", "b", "push", "stm", "cbz", "cbnz"))
+    srcs = ops if first_src else ops[1:]
+    return any(re.search(r"\b%s\b" % r, o) for o in srcs)
+
+
+def _writes(line, r):
+    op, ops = _ops(line)
+    base = op.split(".")[0]
+    if not ops or base.startswith(("str", "cmp", "cmn", "tst", "teq", "b", "push", "stm", "cbz", "cbnz")):
+        return False
+    if base.startswith(("ldm", "pop")):
+        return re.search(r"\b%s\b" % r, ",".join(ops[1:] if base.startswith("ldm") else ops)) is not None
+    return ops[0] == r or ops[0].rstrip("!") == r
+
+
+_BRANCH = re.compile(r"^b(eq|ne|lt|ge|gt|le|hs|lo|hi|ls|mi|pl|cs|cc|vs|vc|al)?(\.w)?$")
+
+
+def base_rel(text):
+    lines = text.split("\n")
+    labels = {}
+    for i, l in enumerate(lines):
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*):$", l.strip())
+        if m and not l.startswith(" "):
+            labels[m.group(1)] = i
+
+    def clean_from(i, r, depth, seen):
+        """True when, from line i, r is written again (or dies) before any read, on every path."""
+        if depth > 6:
+            return False
+        while i < len(lines):
+            l = lines[i]
+            s = l.strip()
+            if s == "EndASM":
+                return True
+            if s.endswith(":") and not s.startswith(";"):
+                i += 1
+                continue
+            op, ops = _ops(l)
+            if _reads(l, r):
+                return False
+            if op in ("bx", "bx.n"):
+                return True
+            if _BRANCH.match(op) or op in ("cbz", "cbnz"):
+                tgt = ops[-1]
+                if tgt.startswith("__ul_cpurunm_") or tgt not in labels:
+                    ok = True                    # Basic code or a procedure: assumes nothing in r0-r3
+                elif (tgt, r) in seen:
+                    ok = True
+                else:
+                    ok = clean_from(labels[tgt] + 1, r, depth + 1, seen | {(tgt, r)})
+                if not ok:
+                    return False
+                if op in ("b", "b.w"):
+                    return True
+            elif _writes(l, r):
+                return True
+            i += 1
+        return False
+
+    out = list(lines)
+    n_reg = n_hot = 0
+    for i, l in enumerate(lines):
+        m = re.match(r"^( +)ldr (r\d), =global_(\w+)$", l)
+        if not m:
+            continue
+        ind, rx, g = m.groups()
+        if g != "reg" and g not in BASE_HOT:
+            continue
+        uses, j, ok = [], i + 1, True
+        while j < len(lines):                # the straight path: its uses of rx, up to rx written again
+            s = lines[j].strip()
+            if s == "EndASM":
+                break
+            if s.endswith(":"):              # a label: other paths join here; rx must not be read past it
+                ok = clean_from(j + 1, rx, 0, frozenset())
+                break
+            op, ops = _ops(lines[j])
+            mm = _MEMOP.match(lines[j])
+            if mm and mm.group(5) == rx and mm.group(4) != rx:
+                uses.append(j)
+            elif mm and mm.group(5) == rx and mm.group(4) == rx and mm.group(2).startswith("ldr"):
+                uses.append(j)               # ldr rx, [rx, #k]: the last use, rx written
+                break
+            elif _reads(lines[j], rx):
+                ok = False
+                break
+            elif op in ("bx", "bx.n"):
+                break
+            elif _BRANCH.match(op) or op in ("cbz", "cbnz"):
+                tgt = ops[-1]
+                if not (tgt.startswith("__ul_cpurunm_") or tgt not in labels
+                        or clean_from(labels[tgt] + 1, rx, 0, frozenset())):
+                    ok = False
+                    break
+                if op in ("b", "b.w"):
+                    break
+            elif _writes(lines[j], rx):
+                break
+            j += 1
+        if not ok or not uses:
+            if g == "reg":                   # used otherwise (an index, an add): the base itself
+                out[i] = "%smov.w %s, r5" % (ind, rx)
+                n_reg += 1
+            continue
+        for u in uses:
+            mm = _MEMOP.match(lines[u])
+            k = int(mm.group(6) or 0)
+            off = "global_%s - global_reg%s" % (g, (" + %d" % k) if k > 0 else (" - %d" % -k) if k < 0 else "")
+            out[u] = "%s%s.w %s, [r5, #%s]" % (mm.group(1), mm.group(2), mm.group(4), off)
+        out[i] = None
+        n_hot += 1
+    lines = [l for l in out if l is not None]
+    i = 0                                    # GBase on the ASM Uses line of every block that names r5
+    while i < len(lines):
+        st = lines[i].strip()
+        if st == "ASM" or st.startswith("ASM Uses"):
+            j = i + 1
+            while lines[j].strip() != "EndASM":
+                j += 1
+            if re.search(r"\br5\b", "\n".join(lines[i + 1:j])):
+                ind = lines[i][:len(lines[i]) - len(lines[i].lstrip())]
+                have = [] if st == "ASM" else [x.strip() for x in st[len("ASM Uses"):].split(",")]
+                if "GBase" not in have:
+                    lines[i] = ind + "ASM Uses " + ", ".join(have + ["GBase"])
+            i = j
+        i += 1
+    if n_reg < 30 or n_hot < 50:
+        fail("base_rel: only %d global_reg and %d hot loads changed; teach tools/mmu_gen.py." % (n_reg, n_hot))
+    text = "\n".join(lines)
+    start = "  If OpTableReadyM = 0\n    Goto BuildTableM\n  EndIf\nRunStartM:\n"
+    if text.count(start) != 1:
+        fail("base_rel: CpuRunM's first lines moved; teach tools/mmu_gen.py where GBase is set.")
+    return text.replace(start, "  GBase = @Reg(0)                        ; r5, the base of the globals above (cpu.pico2)\n"
+                        + start)
+
+
 def own_tails(text):
     out, n = [], 0
     for line in text.split("\n"):
@@ -1326,17 +1495,19 @@ __divm_nz:
     str r0, [r3]
     uxth r2, r2
     str r2, [r1]
-    movs r5, #0
+    movs r2, #0
     movs r0, #0
     b __divm_done
 __divm_zero:
-    mov.w r5, #0x8000
+    mov.w r2, #0x8000
     mov.w r0, #0x10000
     b __divm_done
 __divm_over:
-    mov.w r5, #0x8000
+    mov.w r2, #0x8000
     movs r0, #0
 __divm_done:
+    ldr r1, =global_flagv
+    str r2, [r1]
     ldr r1, =global_flagc
     str r0, [r1]
   EndASM
@@ -1884,8 +2055,9 @@ OPS = ["JSR_004", "RTS_00020", "DIV_071", "CMP_02", "TST_0057", "INC_0052", "DEC
 # 15, C FlagC's bit 16. The native tail follows, as in the plain handler.
 BR_Z = "    lsls r0, r4, #16\n"
 BR_N = "    tst.w r4, #0x18000\n"
-BR_NV = "    orr.w r0, r4, r4, lsr #1\n    eor.w r0, r0, r5\n    tst.w r0, #0x8000\n"
-BR_V = "    tst.w r5, #0x8000\n"
+BR_NV = ("    ldr r1, =global_flagv\n    ldr r1, [r1]\n    orr.w r0, r4, r4, lsr #1\n    eor.w r0, r0, r1\n"
+         "    tst.w r0, #0x8000\n")
+BR_V = "    ldr r1, =global_flagv\n    ldr r1, [r1]\n    tst.w r1, #0x8000\n"
 BR_C = "    ldr r1, =global_flagc\n    ldr r1, [r1]\n    tst.w r1, #0x10000\n"
 BRANCHES = {             # the label part: [(test, branch to "nt" (not taken) or "tk" (taken)), ...]
     "BR_0004": [], "BNE_0010": [(BR_Z, "beq nt")], "BEQ_0014": [(BR_Z, "bne nt")],
@@ -1941,15 +2113,17 @@ def _imm(name):                          # r0 = the word at PC through CurI's fa
 _STSRC = "    ldr r3, =global_src\n    str r0, [r3]\n"
 _C_R3 = "    ldr r2, =global_flagc\n    str r3, [r2]\n"          # FlagC = r3
 _C0 = "    movs r2, #0\n    ldr r3, =global_flagc\n    str r2, [r3]\n"
-_ADDV = ("    eor.w r1, r0, r3\n    subs r2, r3, r0\n    eor.w r2, r2, r3\n    and.w r5, r1, r2\n")
-_SUBV = ("    adds r2, r3, r0\n    eor.w r1, r0, r2\n    eor.w r2, r2, r3\n    and.w r5, r1, r2\n")
-_CMPV = ("    subs r2, r0, r3\n    eor.w r2, r2, r0\n    eor.w r1, r0, r3\n    and.w r5, r1, r2\n")
+_V0 = "    movs r2, #0\n    ldr r3, =global_flagv\n    str r2, [r3]\n"            # FlagV = 0
+_VST = "    and.w r1, r1, r2\n    ldr r2, =global_flagv\n    str r1, [r2]\n"      # FlagV = r1 & r2
+_ADDV = ("    eor.w r1, r0, r3\n    subs r2, r3, r0\n    eor.w r2, r2, r3\n" + _VST)
+_SUBV = ("    adds r2, r3, r0\n    eor.w r1, r0, r2\n    eor.w r2, r2, r3\n" + _VST)
+_CMPV = ("    subs r2, r0, r3\n    eor.w r2, r2, r0\n    eor.w r1, r0, r3\n" + _VST)
 _WR = "    str r3, [r1]\n"
 
 
 def _two(kind):                          # r0 = Src, r1 = &Reg(d)
     if kind == "mov":
-        return _STSRC + "    str r0, [r1]\n    mov.w r4, r0\n    mov.w r5, #0\n"
+        return _STSRC + "    str r0, [r1]\n    mov.w r4, r0\n" + _V0
     if kind == "cmp":
         return (_STSRC + "    ldr r3, [r1]\n    subs r3, r0, r3\n    mov r10, r3\n" + _C_R3
                 + "    uxth r4, r3\n" + _CMPV)
@@ -1960,18 +2134,19 @@ def _two(kind):                          # r0 = Src, r1 = &Reg(d)
         return (_STSRC + "    ldr r3, [r1]\n    subs r3, r3, r0\n" + _C_R3 + "    uxth r3, r3\n" + _WR
                 + "    mov r10, r3\n    mov.w r4, r3\n" + _SUBV)
     if kind == "bit":
-        return _STSRC + "    ldr r3, [r1]\n    and.w r4, r0, r3\n    mov.w r5, #0\n"
+        return _STSRC + "    ldr r3, [r1]\n    and.w r4, r0, r3\n" + _V0
 
 
 def _one(kind):                          # r1 = &Reg(d)
     if kind == "clr":
-        return "    movs r3, #0\n" + _WR + "    movs r4, #0\n    mov.w r5, #0\n" + _C0
+        return "    movs r3, #0\n" + _WR + "    movs r4, #0\n" + _V0 + _C0
     if kind == "tst":
-        return "    ldr r4, [r1]\n    mov.w r5, #0\n" + _C0
+        return "    ldr r4, [r1]\n" + _V0 + _C0
     op, edge = ("adds", "0x7fff") if kind == "inc" else ("subs", "0x8000")
     return ("    ldr r0, [r1]\n    %s r3, r0, #1\n    uxth r3, r3\n" % op + _WR
-            + "    mov r10, r3\n    mov.w r5, #0\n    movw r2, #%s\n    cmp r0, r2\n    bne __rf_%s_nov\n"
-            "    mov.w r5, #0x8000\n__rf_%s_nov:\n    mov.w r4, r3\n" % (edge, kind, kind))
+            + "    mov r10, r3\n    movs r1, #0\n    movw r2, #%s\n    cmp r0, r2\n    bne __rf_%s_nov\n"
+            "    mov.w r1, #0x8000\n__rf_%s_nov:\n    ldr r2, =global_flagv\n    str r1, [r2]\n    mov.w r4, r3\n"
+            % (edge, kind, kind))
 
 
 FAST = {                                 # name: (assembly body, the plain one's tail)
@@ -2150,8 +2325,8 @@ def main():
             text = pico2_eaw(text)
             text = pico2_ops(text)
             text = own_tails(text)        # last: the assembly handlers' tails too
-            text = reserve_vc(text)
             text = map_rows(text)
+            text = base_rel(text)         # last: the hot globals from GBase (r5)
         else:                                # the Pico: its SRAM holds CpuRun (Mini-Unix); CpuRunM stays in flash
             text = text.replace("\nProcedureRAM.i CpuRunM(n.i)", "\nProcedure.i CpuRunM(n.i)", 1)
         if "--check" in sys.argv:

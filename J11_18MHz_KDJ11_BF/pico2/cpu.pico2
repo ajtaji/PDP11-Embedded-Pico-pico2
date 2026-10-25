@@ -222,6 +222,8 @@ CompilerEndIf
 
 ; ---- machine state ---------------------------------------------------
 Global Dim Reg.i(8)         ; R0-R7, R6 = SP, R7 = PC. 16-bit values.
+Global GBase.i              ; @Reg(0), held in r5 (ReserveRegister below): the mapped loop's assembly reaches
+                            ; the globals it touches on every instruction from it (tools/mmu_gen.py, base_rel)
 Global Dim Mem.u(#RAM_WORDS)
 CompilerIf #PSRAM = 1                ; a board with PSRAM (psram_pdp11.pico2)
 CompilerIf #PS_MEM_UNCACHED = 1
@@ -410,7 +412,7 @@ EndProcedure
 #RESERVE_MORE = 1
 CompilerIf #RESERVE_REGISTERS = 1
   CompilerIf #RESERVE_MORE = 1
-    ReserveRegister Op = r8, PC = r9, Res = r10, RunLeft = r11, FlagNZ = r4, FlagV = r5   ; Src stays out of r12: see below
+    ReserveRegister Op = r8, PC = r9, Res = r10, RunLeft = r11, FlagNZ = r4, GBase = r5   ; Src stays out of r12: see below
   CompilerElse
     ReserveRegister Op = r8, PC = r9, Res = r10, RunLeft = r11
   CompilerEndIf
@@ -2204,6 +2206,7 @@ EndProcedure
 ; ======================================================================
 ProcedureRAM CpuReset()
   Protected i.i
+  GBase = @Reg(0)
   For i = 0 To 7
     Reg(i) = 0
   Next
