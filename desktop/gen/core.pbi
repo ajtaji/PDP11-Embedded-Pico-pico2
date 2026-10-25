@@ -1,6 +1,6 @@
 ; desktop/gen/core.pbi - WRITTEN BY desktop/tools/desktop_gen.py from the Pico 2's
 ; sources; do not edit (edit the board's files and run the tool again).
-; cpu.pico2 (3 ASM blocks dropped); fp11.pico2 (2 ASM blocks dropped); instructions_mmu.pico2 (86 ASM blocks dropped); instructions.pico2 (2 ASM blocks dropped); kw11.pico2 (0 ASM blocks dropped); rk11.pico2 (0 ASM blocks dropped); rp11.pico2 (0 ASM blocks dropped)
+; cpu.pico2 (7 ASM blocks dropped); fp11.pico2 (2 ASM blocks dropped); instructions_mmu.pico2 (315 ASM blocks dropped); instructions.pico2 (3 ASM blocks dropped); kw11.pico2 (0 ASM blocks dropped); rk11.pico2 (0 ASM blocks dropped); rp11.pico2 (0 ASM blocks dropped)
 
 Declare SmpBarrier()
 Declare CpuEventIn(k.l)
@@ -378,6 +378,8 @@ CompilerEndIf
 
 ; ---- machine state ---------------------------------------------------
 Global Dim Reg.l(8)         ; R0-R7, R6 = SP, R7 = PC. 16-bit values.
+Global GBase.i              ; @Reg(0), held in r5 (ReserveRegister below): the mapped loop's assembly reaches
+                            ; the globals it touches on every instruction from it (tools/mmu_gen.py, base_rel)
 Global Dim Mem.u(#RAM_WORDS)
 CompilerIf #DESK_MEM = 1                ; a board with PSRAM (psram_pdp11.pico2)
 Global MemTop.l = #RAM_BYTES         ; the end of physical memory: #RAM_BYTES, or 3812 KB with the PSRAM
@@ -413,14 +415,29 @@ Global Dim Pdr.l(64)        ; the registers, by entry
 Global Dim Par.l(64)
 Global Dim MapReg.l(64)     ; the registers an entry uses (a D entry uses I's when D space is off)
 Global Dim MapBase.l(64)    ; physical = virtual + MapBase, before the 18/22-bit mask
-Global Dim MapHost.i(64)    ; the fast windows' memory: virtual byte va is at host address va + MapHost
 Global Dim MapLo.l(64)      ; the virtual bytes the page length allows: MapLo <= va < MapHi
 Global Dim MapHi.l(64)
 Global Dim MapAcf.l(64)     ; 0 not resident, 1 read-only, 3 read/write
-Global Dim MapRLo.l(64)     ; THE FAST WINDOWS: readable and all in one memory (SRAM, or the PSRAM) ...
-Global Dim MapRHi.l(64)
-Global Dim MapWLo.l(64)     ; ... and writable with W already set
-Global Dim MapWHi.l(64)
+; THE FAST WINDOWS, one entry's five words together (2026-10-25): MapF(e * 8 +
+; 0-4) is MapRLo, MapRHi, MapWLo, MapWHi and MapHost, so the mapped loop's
+; assembly reaches all five from one base (tools/mmu_gen.py, map_rows) instead
+; of loading three or four array addresses on every access.
+Global Dim MapF.i(64 * 8)
+Macro MapRLo(mE)            ; readable and all in one memory (SRAM, or the PSRAM) ...
+  MapF((mE) << 3)
+EndMacro
+Macro MapRHi(mE)
+  MapF(((mE) << 3) + 1)
+EndMacro
+Macro MapWLo(mE)            ; ... and writable with W already set
+  MapF(((mE) << 3) + 2)
+EndMacro
+Macro MapWHi(mE)
+  MapF(((mE) << 3) + 3)
+EndMacro
+Macro MapHost(mE)           ; the fast windows' memory: virtual byte va is at host address va + MapHost
+  MapF(((mE) << 3) + 4)
+EndMacro
 Global MapMask.l            ; $3FFFF (18-bit) or $3FFFFF (22-bit)
 Global Dim UbMap.l(32)      ; THE UNIBUS MAP: each register's 22-bit address (bit 0 always 0)
 Global CpuErr.l             ; the CPU error register (THE CPU ERROR AND MAINTENANCE REGISTERS)
@@ -820,11 +837,11 @@ Procedure MmuMapEntry(e.i)
   MapBase(e) = bs
   MapLo(e) = lo
   MapHi(e) = hi
-  MapRLo(e) = #MAP_NONE
-  MapRHi(e) = 0
-  MapWLo(e) = #MAP_NONE
-  MapWHi(e) = 0
-  MapHost(e) = @Mem(0) + bs
+  MapF((e << 3)) = #MAP_NONE
+  MapF((e << 3) + 1) = 0
+  MapF((e << 3) + 2) = #MAP_NONE
+  MapF((e << 3) + 3) = 0
+  MapF((e << 3) + 4) = @Mem(0) + bs
   If bs + lo < #RAM_BYTES          ; the page starts in the SRAM: what lies in it is fast
     If bs + hi > #RAM_BYTES
       hi = #RAM_BYTES - bs
@@ -834,17 +851,17 @@ Procedure MmuMapEntry(e.i)
       If bs + hi > MemLim          ; (MemLim is #RAM_BYTES when no PSRAM is in use: no window)
         hi = MemLim - bs
       EndIf
-      MapHost(e) = PsMem + bs
+      MapF((e << 3) + 4) = PsMem + bs
     CompilerElse
       hi = lo                      ; no memory there
     CompilerEndIf
   EndIf
   If acf <> 0 And hi > lo And bs + lo >= 0 And ((Par(r) << 6) + $2000) <= MapMask
-    MapRLo(e) = lo
-    MapRHi(e) = hi
+    MapF((e << 3)) = lo
+    MapF((e << 3) + 1) = hi
     If acf = 3 And (dv & $40) <> 0
-      MapWLo(e) = lo
-      MapWHi(e) = hi
+      MapF((e << 3) + 2) = lo
+      MapF((e << 3) + 3) = hi
     EndIf
   EndIf
 EndProcedure
@@ -1577,7 +1594,10 @@ Macro MSrcWord()
   If (Op & $0E00) = 0
     Src = Reg((Op >> 6) & 7)
   Else
+CompilerIf #ASM_EA = 1
+CompilerElse
     Ea = EaWord((Op >> 6) & $3F)
+CompilerEndIf
     MReadWord(Src, Ea)
   EndIf
 EndMacro
@@ -1586,9 +1606,30 @@ Macro MSrcByte()
   If (Op & $0E00) = 0
     Src = Reg((Op >> 6) & 7) & $FF
   Else
+CompilerIf #ASM_EA = 1
+CompilerElse
     Ea = EaByte((Op >> 6) & $3F)
+CompilerEndIf
     MReadByte(Src, Ea)
   EndIf
+EndMacro
+
+; The destination's address in the unmapped handlers: __eau / __eaub
+; (instructions.pico2, the UNMAPPED ONLY block; #ASM_EA = 1), else EaWord /
+; EaByte. tools/mmu_gen.py turns both back into the Ea lines they stand for
+; when it writes the mapped loop, which has its own (__eaw, __eab).
+Macro EaFast()
+CompilerIf #ASM_EA = 1
+CompilerElse
+  Ea = EaWord(Op & $3F)
+CompilerEndIf
+EndMacro
+
+Macro EaFastB()
+CompilerIf #ASM_EA = 1
+CompilerElse
+  Ea = EaByte(Op & $3F)
+CompilerEndIf
 EndMacro
 
 ; ======================================================================
@@ -2280,7 +2321,8 @@ EndProcedure
 ;  RESET. The run loop, CpuRun(n), is in instructions.pico2.
 ; ======================================================================
 Procedure CpuReset()
-  Protected i.l
+  Protected i.i
+  GBase = @Reg(0)
   For i = 0 To 7
     Reg(i) = 0
   Next
@@ -2714,8 +2756,9 @@ EndProcedure
 
 ; ---- THE ASSEMBLY --------------------------------------------------------
 ; The pairs are reached at fixed offsets: PH(n) and PL(n) are words, #P_FF = 3
-; (byte 12), #P_SF = 4 (16), #P_Q = 5 (20). Free here: r0-r3, r12, and r5 r6
-; saved (r4 is FlagNZ, r7 the frame, r8-r11 the reserved registers).
+; (byte 12), #P_SF = 4 (16), #P_Q = 5 (20). Free here: r0-r3, r12, and r6
+; saved (r4 and r5 are FlagNZ and FlagV, r7 the frame, r8-r11 the other
+; reserved registers).
 ;
 ; The multiply: a = ff (56 bits, its hidden bit at 55), b = sf << 3 (59 bits);
 ; the product's bits 56-119 are the result. Schoolbook on 32-bit halves, the
@@ -3478,8 +3521,8 @@ EndProcedure
 ;  Include it after cpu and before instructions.
 ; ======================================================================
 Global Dim OpTableM.i(8192)
-Global Dim OpAsmM.i(11)                 ; JSR, RTS, DIV: the assembly entry ...
-Global Dim OpRefM.i(11)                 ; ... and the plain one (tools/mmu_gen.py, pico2_ops)
+Global Dim OpAsmM.i(51)                 ; JSR, RTS, DIV: the assembly entry ...
+Global Dim OpRefM.i(51)                 ; ... and the plain one (tools/mmu_gen.py, pico2_ops)
 Global Dim MovAsmM.l(7)                ; the MOV handlers by mode: the assembly entry ...
 Global Dim MovRefM.l(7)                ; ... and the plain one (tools/mmu_gen.py, asm_mov)
 Global OpTableReadyM.l                    ; 0 until the first CpuRun fills OpTable
@@ -3573,7 +3616,10 @@ Macro NextNativeTrapM()
   If TrapVector
     Goto SlowTailM
   EndIf
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 EndMacro
 
 ; A branch taken: the low byte of the instruction, signed, in words.
@@ -3583,6 +3629,7 @@ Macro BranchToM()
   PC = (PC + ((Op << 56) >> 55)) & $FFFF
 EndMacro
 
+  GBase = @Reg(0)                        ; r5, the base of the globals above (cpu.pico2)
   If OpTableReadyM = 0
     Goto BuildTableM
   EndIf
@@ -3632,7 +3679,10 @@ CompilerEndIf
 InstructionMOV_01M:            ; 01SSDD   entries $0200-$03FF
 CompilerIf #ASM_OPS = 1
   PcOutM()
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionMOV_01RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -3652,9 +3702,20 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("MOV " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMOVB_11M:           ; 11SSDD   entries $1200-$13FF
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionMOVB_11RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "MOVB"
   MMSrcByte()
@@ -3672,14 +3733,19 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("MOVB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-CMP-------------------------------------------------------------------
 InstructionCMP_02M:            ; 02SSDD   entries $0400-$05FF
 CompilerIf #ASM_OPS = 1
   PcOutM()
-  MMSrcWord()
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionCMP_02RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -3701,9 +3767,20 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("CMP " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionCMPB_12M:           ; 12SSDD   entries $1400-$15FF
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionCMPB_12RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "CMPB"
   MMSrcByte()
@@ -3723,10 +3800,21 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("CMPB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-BIT-------------------------------------------------------------------
 InstructionBIT_03M:            ; 03SSDD   entries $0600-$07FF
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionBIT_03RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "BIT"
   MMSrcWord()
@@ -3744,9 +3832,20 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIT " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBITB_13M:           ; 13SSDD   entries $1600-$17FF
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionBITB_13RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "BITB"
   MMSrcByte()
@@ -3764,10 +3863,21 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BITB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-BIC-------------------------------------------------------------------
 InstructionBIC_04M:            ; 04SSDD   entries $0800-$09FF
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionBIC_04RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "BIC"
   MMSrcWord()
@@ -3788,7 +3898,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBICB_14M:           ; 14SSDD   entries $1800-$19FF
   PcOutM()
@@ -3811,10 +3924,21 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BICB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-BIS-------------------------------------------------------------------
 InstructionBIS_05M:            ; 05SSDD   entries $0A00-$0BFF
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionBIS_05RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "BIS"
   MMSrcWord()
@@ -3835,7 +3959,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIS " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBISB_15M:           ; 15SSDD   entries $1A00-$1BFF
   PcOutM()
@@ -3858,10 +3985,21 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BISB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-ADD-------------------------------------------------------------------
 InstructionADD_06M:            ; 06SSDD   entries $0C00-$0DFF
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionADD_06RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "ADD"
   MMSrcWord()
@@ -3884,10 +4022,21 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("ADD " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-SUB-------------------------------------------------------------------
 InstructionSUB_16M:            ; 16SSDD   entries $1C00-$1DFF
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionSUB_16RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "SUB"
   MMSrcWord()
@@ -3910,7 +4059,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("SUB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ; ======================================================================
 ;  SINGLE-OPERAND. The destination is fetched at the top and stored at
@@ -3919,6 +4071,14 @@ CompilerEndIf
 
 ;-CLR-------------------------------------------------------------------
 InstructionCLR_0050M:          ; 0050DD   entries $0140-$0147
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionCLR_0050RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "CLR"
   If (Op & $38) = 0
@@ -3936,9 +4096,20 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionCLRB_1050M:         ; 1050DD   entries $1140-$1147
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionCLRB_1050RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "CLRB"
   If (Op & $38) = 0
@@ -3956,7 +4127,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLRB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-COM-------------------------------------------------------------------
 InstructionCOM_0051M:          ; 0051DD   entries $0148-$014F
@@ -3980,7 +4154,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("COM " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionCOMB_1051M:         ; 1051DD   entries $1148-$114F
   PcOutM()
@@ -4003,13 +4180,19 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("COMB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-INC-------------------------------------------------------------------
 InstructionINC_0052M:          ; 0052DD   entries $0150-$0157   C unaffected
 CompilerIf #ASM_OPS = 1
   PcOutM()
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionINC_0052RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -4035,7 +4218,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("INC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionINCB_1052M:         ; 1052DD   entries $1150-$1157
   PcOutM()
@@ -4061,13 +4247,19 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("INCB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-DEC-------------------------------------------------------------------
 InstructionDEC_0053M:          ; 0053DD   entries $0158-$015F   C unaffected
 CompilerIf #ASM_OPS = 1
   PcOutM()
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionDEC_0053RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -4093,7 +4285,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("DEC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionDECB_1053M:         ; 1053DD   entries $1158-$115F
   PcOutM()
@@ -4119,7 +4314,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("DECB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-NEG-------------------------------------------------------------------
 InstructionNEG_0054M:          ; 0054DD   entries $0160-$0167
@@ -4149,7 +4347,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("NEG " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionNEGB_1054M:         ; 1054DD   entries $1160-$1167
   PcOutM()
@@ -4178,7 +4379,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("NEGB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-ADC-------------------------------------------------------------------
 InstructionADC_0055M:          ; 0055DD   entries $0168-$016F
@@ -4208,7 +4412,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ADC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionADCB_1055M:         ; 1055DD   entries $1168-$116F
   PcOutM()
@@ -4237,7 +4444,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ADCB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-SBC-------------------------------------------------------------------
 ; C: set if the destination was 0 and C was 1, cleared otherwise (the
@@ -4270,7 +4480,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SBC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionSBCB_1056M:         ; 1056DD   entries $1170-$1177
   PcOutM()
@@ -4299,13 +4512,19 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SBCB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-TST-------------------------------------------------------------------
 InstructionTST_0057M:          ; 0057DD   entries $0178-$017F
 CompilerIf #ASM_OPS = 1
   PcOutM()
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionTST_0057RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -4324,9 +4543,20 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TST " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionTSTB_1057M:         ; 1057DD   entries $1178-$117F
+CompilerIf #ASM_OPS = 1
+  PcOutM()
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
+CompilerEndIf
+InstructionTSTB_1057RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
   ;name = "TSTB"
   If (Op & $38) = 0
@@ -4344,7 +4574,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TSTB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ; ======================================================================
 ;  SHIFTS AND ROTATES. V is N xor C after the operation.
@@ -4373,7 +4606,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionRORB_1060M:         ; 1060DD   entries $1180-$1187
   PcOutM()
@@ -4397,7 +4633,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("RORB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-ROL-------------------------------------------------------------------
 InstructionROL_0061M:          ; 0061DD   entries $0188-$018F
@@ -4422,7 +4661,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROL " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionROLB_1061M:         ; 1061DD   entries $1188-$118F
   PcOutM()
@@ -4446,7 +4688,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROLB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-ASR-------------------------------------------------------------------
 InstructionASR_0062M:          ; 0062DD   entries $0190-$0197
@@ -4471,7 +4716,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionASRB_1062M:         ; 1062DD   entries $1190-$1197
   PcOutM()
@@ -4495,7 +4743,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASRB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-ASL-------------------------------------------------------------------
 InstructionASL_0063M:          ; 0063DD   entries $0198-$019F
@@ -4520,7 +4771,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASL " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionASLB_1063M:         ; 1063DD   entries $1198-$119F
   PcOutM()
@@ -4544,7 +4798,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASLB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-SWAB------------------------------------------------------------------
 InstructionSWAB_0003M:         ; 0003DD   entries $0018-$001F
@@ -4569,13 +4826,19 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SWAB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-SXT-------------------------------------------------------------------
 InstructionSXT_0067M:          ; 0067DD   entries $01B8-$01BF   N unaffected
 CompilerIf #ASM_OPS = 1
   PcOutM()
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionSXT_0067RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -4598,7 +4861,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SXT " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-MFPS / MTPS ----------------------------------------------------------
 InstructionMFPS_1067M:         ; 1067DD   entries $11B8-$11BF
@@ -4619,7 +4885,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MFPS " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMTPS_1064M:         ; 1064SS   entries $11A0-$11A7   the T bit is not written
   PcOutM()
@@ -4641,7 +4910,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MTPS " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-MFPI / MTPI / MFPD / MTPD -------------------------------------------
 ; One address space until the memory management unit is modelled, so the
@@ -4659,7 +4931,10 @@ CompilerIf #ASM_OPS = 1
   EndIf
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionMFPI_0065RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -4684,7 +4959,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MFPI " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMTPI_0066M:         ; 0066DD   entries $01B0-$01B7
 CompilerIf #ASM_OPS = 1
@@ -4699,7 +4977,10 @@ CompilerIf #ASM_OPS = 1
   EndIf
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionMTPI_0066RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -4723,7 +5004,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MTPI " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMFPD_1065M:         ; 1065SS   entries $11A8-$11AF
   ;name = "MFPD"
@@ -4744,14 +5028,31 @@ InstructionMTPD_1066M:         ; 1066DD   entries $11B0-$11B7
 
 ;-BR--------------------------------------------------------------------
 InstructionBR_0004M:           ; 000400   entries $0020-$003F
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionBR_0004RefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "BR"
   BranchToM()
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BR " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBNE_0010M:          ; 001000   entries $0040-$005F   Z = 0
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionBNE_0010RefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "BNE"
   If FlagNZ & $FFFF
     BranchToM()
@@ -4759,9 +5060,19 @@ InstructionBNE_0010M:          ; 001000   entries $0040-$005F   Z = 0
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BNE " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBEQ_0014M:          ; 001400   entries $0060-$007F   Z = 1
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionBEQ_0014RefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "BEQ"
   If (FlagNZ & $FFFF) = 0
     BranchToM()
@@ -4769,9 +5080,19 @@ InstructionBEQ_0014M:          ; 001400   entries $0060-$007F   Z = 1
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BEQ " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBGE_0020M:          ; 002000   entries $0080-$009F   N xor V = 0
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionBGE_0020RefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "BGE"
   If (((FlagNZ | (FlagNZ >> 1)) ! FlagV) & $8000) = 0     ; N xor V = 0 (N: bit 15, or bit 16 with Z)
     BranchToM()
@@ -4779,9 +5100,19 @@ InstructionBGE_0020M:          ; 002000   entries $0080-$009F   N xor V = 0
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BGE " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBLT_0024M:          ; 002400   entries $00A0-$00BF   N xor V = 1
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionBLT_0024RefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "BLT"
   If ((FlagNZ | (FlagNZ >> 1)) ! FlagV) & $8000
     BranchToM()
@@ -4789,9 +5120,19 @@ InstructionBLT_0024M:          ; 002400   entries $00A0-$00BF   N xor V = 1
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BLT " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBGT_0030M:          ; 003000   entries $00C0-$00DF   Z or (N xor V) = 0
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionBGT_0030RefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "BGT"
   If FlagNZ & $FFFF                      ; nested, not And: no truth values built
     If (((FlagNZ | (FlagNZ >> 1)) ! FlagV) & $8000) = 0     ; N xor V = 0 (N: bit 15, or bit 16 with Z)
@@ -4801,9 +5142,19 @@ InstructionBGT_0030M:          ; 003000   entries $00C0-$00DF   Z or (N xor V) =
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BGT " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBLE_0034M:          ; 003400   entries $00E0-$00FF   Z or (N xor V) = 1
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionBLE_0034RefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "BLE"
   If (FlagNZ & $FFFF) = 0
     BranchToM()
@@ -4813,9 +5164,19 @@ InstructionBLE_0034M:          ; 003400   entries $00E0-$00FF   Z or (N xor V) =
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BLE " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBPL_1000M:          ; 100000   entries $1000-$101F   N = 0
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionBPL_1000RefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "BPL"
   If (FlagNZ & $18000) = 0
     BranchToM()
@@ -4823,9 +5184,19 @@ InstructionBPL_1000M:          ; 100000   entries $1000-$101F   N = 0
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BPL " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBMI_1004M:          ; 100400   entries $1020-$103F   N = 1
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionBMI_1004RefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "BMI"
   If FlagNZ & $18000
     BranchToM()
@@ -4833,9 +5204,19 @@ InstructionBMI_1004M:          ; 100400   entries $1020-$103F   N = 1
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BMI " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBHI_1010M:          ; 101000   entries $1040-$105F   C = 0 and Z = 0
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionBHI_1010RefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "BHI"
   If (FlagC & $10000) = 0
     If FlagNZ & $FFFF
@@ -4845,9 +5226,19 @@ InstructionBHI_1010M:          ; 101000   entries $1040-$105F   C = 0 and Z = 0
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BHI " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBLOS_1014M:         ; 101400   entries $1060-$107F   C = 1 or Z = 1
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionBLOS_1014RefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "BLOS"
   If FlagC & $10000
     BranchToM()
@@ -4857,9 +5248,19 @@ InstructionBLOS_1014M:         ; 101400   entries $1060-$107F   C = 1 or Z = 1
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BLOS " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBVC_1020M:          ; 102000   entries $1080-$109F   V = 0
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionBVC_1020RefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "BVC"
   If (FlagV & $8000) = 0
     BranchToM()
@@ -4867,9 +5268,19 @@ InstructionBVC_1020M:          ; 102000   entries $1080-$109F   V = 0
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BVC " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBVS_1024M:          ; 102400   entries $10A0-$10BF   V = 1
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionBVS_1024RefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "BVS"
   If FlagV & $8000
     BranchToM()
@@ -4877,9 +5288,19 @@ InstructionBVS_1024M:          ; 102400   entries $10A0-$10BF   V = 1
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BVS " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBCC_1030M:          ; 103000   entries $10C0-$10DF   C = 0 (also BHIS)
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionBCC_1030RefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "BCC"
   If (FlagC & $10000) = 0
     BranchToM()
@@ -4887,9 +5308,19 @@ InstructionBCC_1030M:          ; 103000   entries $10C0-$10DF   C = 0 (also BHIS
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BCC " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBCS_1034M:          ; 103400   entries $10E0-$10FF   C = 1 (also BLO)
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionBCS_1034RefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "BCS"
   If FlagC & $10000
     BranchToM()
@@ -4897,7 +5328,10 @@ InstructionBCS_1034M:          ; 103400   entries $10E0-$10FF   C = 1 (also BLO)
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("BCS " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 ; ======================================================================
 ;  JUMPS AND SUBROUTINES
@@ -4918,7 +5352,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("JMP " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-JSR-------------------------------------------------------------------
 InstructionJSR_004M:           ; 004RDD   entries $0100-$013F
@@ -4928,7 +5365,10 @@ CompilerIf #ASM_OPS = 1
     TrapVector = #VEC_BUS                ; JSR to a register is illegal
   Else
   EndIf
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionJSR_004RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -4947,13 +5387,19 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("JSR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-RTS-------------------------------------------------------------------
 InstructionRTS_00020M:         ; 00020R   entry $0010
 CompilerIf #ASM_OPS = 1
   PcOutM()
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionRTS_00020RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -4963,7 +5409,10 @@ InstructionRTS_00020RefM:         ; the plain version: the reference (asm_check.
   ; ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("RTS " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-MARK------------------------------------------------------------------
 InstructionMARK_0064M:         ; 0064NN   entries $01A0-$01A7
@@ -4975,10 +5424,20 @@ InstructionMARK_0064M:         ; 0064NN   entries $01A0-$01A7
   ; ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("MARK " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-SOB-------------------------------------------------------------------
 InstructionSOB_077M:           ; 077RNN   entries $0FC0-$0FFF
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionSOB_077RefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "SOB"                          ; R0-R6 only: SOB R7 is below
   Res = (Reg((Op >> 6) & 7) - 1) & $FFFF
   Reg((Op >> 6) & 7) = Res
@@ -4988,7 +5447,10 @@ InstructionSOB_077M:           ; 077RNN   entries $0FC0-$0FFF
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
   ;disassembly("SOB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionSOB_077_PCM:        ; 0777NN   SOB R7 - legal, if strange: it counts the PC down
   PcOutM()
@@ -4997,7 +5459,10 @@ InstructionSOB_077_PCM:        ; 0777NN   SOB R7 - legal, if strange: it counts 
     Reg(7) = (Reg(7) - ((Op & $3F) << 1)) & $FFFF
   EndIf
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ; ======================================================================
 ;  EIS - MUL, DIV, ASH, ASHC, XOR. Register in bits 8-6, operand in 5-0.
@@ -5035,7 +5500,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("MUL " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-DIV-------------------------------------------------------------------
 InstructionDIV_071M:           ; 071RSS   entries $0E40-$0E7F
@@ -5054,7 +5522,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("DIV " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 InstructionDIV_071RefM:         ; the plain version: the reference (asm_check.pico2)
   PcOutM()
@@ -5092,7 +5563,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("DIV " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-ASH-------------------------------------------------------------------
 ; Shift count is the low six bits of the source, signed: positive shifts
@@ -5135,7 +5609,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("ASH " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-ASHC------------------------------------------------------------------
 InstructionASHC_073M:          ; 073RSS   entries $0EC0-$0EFF
@@ -5177,7 +5654,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("ASHC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ;-XOR-------------------------------------------------------------------
 InstructionXOR_074M:           ; 074RDD   entries $0F00-$0F3F
@@ -5200,7 +5680,10 @@ CompilerEndIf
   ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("XOR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ; ======================================================================
 ;  TRAPS AND MACHINE CONTROL
@@ -5212,7 +5695,10 @@ InstructionEMT_104M:           ; 104000-104377   entries $1100-$111F
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("EMT " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionTRAP_1044M:         ; 104400-104777   entries $1120-$113F
   PcOutM()
@@ -5221,7 +5707,10 @@ InstructionTRAP_1044M:         ; 104400-104777   entries $1120-$113F
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("TRAP " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionHALT_000000M:       ; entry $0000, sub-decoded
   PcOutM()
@@ -5245,7 +5734,10 @@ InstructionWAIT_000001M:       ; entry $0000, sub-decoded
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("WAIT")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionRTI_000002M:        ; entry $0000, sub-decoded
   PcOutM()
@@ -5262,7 +5754,10 @@ InstructionRTI_000002M:        ; entry $0000, sub-decoded
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("RTI")
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBPT_000003M:        ; entry $0000, sub-decoded
   PcOutM()
@@ -5271,7 +5766,10 @@ InstructionBPT_000003M:        ; entry $0000, sub-decoded
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("BPT")
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionIOT_000004M:        ; entry $0000, sub-decoded
   PcOutM()
@@ -5280,7 +5778,10 @@ InstructionIOT_000004M:        ; entry $0000, sub-decoded
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("IOT")
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionRESET_000005M:      ; entry $0000, sub-decoded
   ;name = "RESET"
@@ -5288,7 +5789,10 @@ InstructionRESET_000005M:      ; entry $0000, sub-decoded
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("RESET")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionRTT_000006M:        ; entry $0000, sub-decoded (the T bit: StartWindow in cpu)
   PcOutM()
@@ -5302,7 +5806,10 @@ InstructionRTT_000006M:        ; entry $0000, sub-decoded (the T bit: StartWindo
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("RTT")
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMFPT_000007M:       ; entry $0000, sub-decoded
   ;name = "MFPT"
@@ -5310,7 +5817,10 @@ InstructionMFPT_000007M:       ; entry $0000, sub-decoded
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("MFPT")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionSPL_00023M:         ; 00023N   entry $0013
   ;name = "SPL"
@@ -5321,7 +5831,10 @@ InstructionSPL_00023M:         ; 00023N   entry $0013
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("SPL")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 ; 000240-000277: bit 4 = set (1) or clear (0), bits 3-0 = N Z V C.
 ; 000240 is NOP, 000257 CCC, 000277 SCC.
@@ -5366,13 +5879,19 @@ InstructionCC_00024M:          ; 00024x-00027x   entries $0014-$0017
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("CC")
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 CompilerIf #FP11 = 1
 InstructionFPM:                ; 17xxxx: the FPJ11 (pico2/fp11.pico2, FpExec; #FP11 is 0 on the Pico)
   PcOutM()
   FpExec()
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 CompilerEndIf
 
 InstructionReservedM:          ; every opcode this model does not execute
@@ -5382,7 +5901,10 @@ InstructionReservedM:          ; every opcode this model does not execute
   ; ClockCycles = ClockCycles + #J11_T_TRAP
   ;disassembly(".WORD")
   ; ---- next instruction (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ; ======================================================================
 ;  000000-000007 - the one entry that still holds several instructions.
@@ -5424,6 +5946,13 @@ InstructionGroup0_0000M:       ; 000000-000007   entry $0000
 ; ======================================================================
 
 InstructionMOV_01_RRM:               ; 01SD, both operands in registers
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionMOV_01_RRRefM:         ; the plain version: the reference (asm_check.pico2)
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionMOV_01M       ; the general handler
   EndIf
@@ -5435,9 +5964,19 @@ InstructionMOV_01_RRM:               ; 01SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("MOV " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionCMP_02_RRM:               ; 02SD, both operands in registers
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionCMP_02_RRRefM:         ; the plain version: the reference (asm_check.pico2)
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionCMP_02M       ; the general handler
   EndIf
@@ -5450,7 +5989,10 @@ InstructionCMP_02_RRM:               ; 02SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("CMP " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBIT_03_RRM:               ; 03SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -5462,7 +6004,10 @@ InstructionBIT_03_RRM:               ; 03SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIT " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBIC_04_RRM:               ; 04SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -5476,7 +6021,10 @@ InstructionBIC_04_RRM:               ; 04SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIC " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBIS_05_RRM:               ; 05SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -5490,9 +6038,19 @@ InstructionBIS_05_RRM:               ; 05SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIS " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionADD_06_RRM:               ; 06SD, both operands in registers
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionADD_06_RRRefM:         ; the plain version: the reference (asm_check.pico2)
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionADD_06M       ; the general handler
   EndIf
@@ -5507,7 +6065,10 @@ InstructionADD_06_RRM:               ; 06SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("ADD " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionMOVB_11_RRM:              ; 11SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -5521,7 +6082,10 @@ InstructionMOVB_11_RRM:              ; 11SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("MOVB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionCMPB_12_RRM:              ; 12SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -5537,7 +6101,10 @@ InstructionCMPB_12_RRM:              ; 12SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("CMPB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBITB_13_RRM:              ; 13SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -5549,7 +6116,10 @@ InstructionBITB_13_RRM:              ; 13SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BITB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBICB_14_RRM:              ; 14SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -5563,7 +6133,10 @@ InstructionBICB_14_RRM:              ; 14SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BICB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionBISB_15_RRM:              ; 15SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -5577,9 +6150,19 @@ InstructionBISB_15_RRM:              ; 15SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BISB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionSUB_16_RRM:               ; 16SD, both operands in registers
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionSUB_16_RRRefM:         ; the plain version: the reference (asm_check.pico2)
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionSUB_16M       ; the general handler
   EndIf
@@ -5594,9 +6177,19 @@ InstructionSUB_16_RRM:               ; 16SD, both operands in registers
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("SUB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionCLR_0050_RM:              ; 0050R, operand in a register
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionCLR_0050_RRefM:         ; the plain version: the reference (asm_check.pico2)
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionCLR_0050M     ; the general handler
   EndIf
@@ -5608,7 +6201,10 @@ InstructionCLR_0050_RM:              ; 0050R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLR " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionCOM_0051_RM:              ; 0051R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -5623,9 +6219,19 @@ InstructionCOM_0051_RM:              ; 0051R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("COM " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionINC_0052_RM:              ; 0052R, operand in a register
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionINC_0052_RRefM:         ; the plain version: the reference (asm_check.pico2)
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionINC_0052M     ; the general handler
   EndIf
@@ -5641,9 +6247,19 @@ InstructionINC_0052_RM:              ; 0052R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("INC " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionDEC_0053_RM:              ; 0053R, operand in a register
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionDEC_0053_RRefM:         ; the plain version: the reference (asm_check.pico2)
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionDEC_0053M     ; the general handler
   EndIf
@@ -5659,7 +6275,10 @@ InstructionDEC_0053_RM:              ; 0053R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("DEC " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionNEG_0054_RM:              ; 0054R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -5680,9 +6299,19 @@ InstructionNEG_0054_RM:              ; 0054R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("NEG " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionTST_0057_RM:              ; 0057R, operand in a register
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+InstructionTST_0057_RRefM:         ; the plain version: the reference (asm_check.pico2)
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionTST_0057M     ; the general handler
   EndIf
@@ -5693,7 +6322,10 @@ InstructionTST_0057_RM:              ; 0057R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TST " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionROR_0060_RM:              ; 0060R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -5709,7 +6341,10 @@ InstructionROR_0060_RM:              ; 0060R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROR " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionROL_0061_RM:              ; 0061R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -5725,7 +6360,10 @@ InstructionROL_0061_RM:              ; 0061R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROL " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionASR_0062_RM:              ; 0062R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -5741,7 +6379,10 @@ InstructionASR_0062_RM:              ; 0062R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASR " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionASL_0063_RM:              ; 0063R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -5757,7 +6398,10 @@ InstructionASL_0063_RM:              ; 0063R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASL " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionSWAB_0003_RM:             ; 0003R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -5773,7 +6417,10 @@ InstructionSWAB_0003_RM:             ; 0003R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SWAB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionCLRB_1050_RM:             ; 1050R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -5787,7 +6434,10 @@ InstructionCLRB_1050_RM:             ; 1050R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLRB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionINCB_1052_RM:             ; 1052R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -5805,7 +6455,10 @@ InstructionINCB_1052_RM:             ; 1052R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("INCB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionDECB_1053_RM:             ; 1053R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -5823,7 +6476,10 @@ InstructionDECB_1053_RM:             ; 1053R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("DECB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 InstructionTSTB_1057_RM:             ; 1057R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
@@ -5836,7 +6492,10 @@ InstructionTSTB_1057_RM:             ; 1057R, operand in a register
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TSTB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextNativeM()
+CompilerEndIf
 
 
 ; ======================================================================
@@ -5848,6 +6507,16 @@ InstructionTSTB_1057_RM:             ; 1057R, operand in a register
 ; ======================================================================
 
 InstructionMOV_01_IRM:            ; 0127DD  MOV #n,Rd, the source an immediate
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+CompilerElse
+  NextNativeTrapM()
+CompilerEndIf
+CompilerEndIf
+InstructionMOV_01_IRRefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "MOV #n,Rd"
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionMOV_01M                  ; the general handler
@@ -5858,9 +6527,25 @@ InstructionMOV_01_IRM:            ; 0127DD  MOV #n,Rd, the source an immediate
   FlagNZ = Src
   FlagV = 0
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 InstructionCMP_02_IRM:            ; 0227DD  CMP #n,Rd, the source an immediate
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+CompilerElse
+  NextNativeTrapM()
+CompilerEndIf
+CompilerEndIf
+InstructionCMP_02_IRRefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "CMP #n,Rd"
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionCMP_02M                  ; the general handler
@@ -5872,9 +6557,25 @@ InstructionCMP_02_IRM:            ; 0227DD  CMP #n,Rd, the source an immediate
   FlagNZ = Res & $FFFF
   FlagV = (Src ! (Src - Res)) & (Src ! Res)   ; bit 15; Src - Res is Rd
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 InstructionBIT_03_IRM:            ; 0327DD  BIT #n,Rd, the source an immediate
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+CompilerElse
+  NextNativeTrapM()
+CompilerEndIf
+CompilerEndIf
+InstructionBIT_03_IRRefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "BIT #n,Rd"
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionBIT_03M                  ; the general handler
@@ -5884,7 +6585,13 @@ InstructionBIT_03_IRM:            ; 0327DD  BIT #n,Rd, the source an immediate
   FlagNZ = Src & Reg(Op & 7)
   FlagV = 0
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 InstructionBIC_04_IRM:            ; 0427DD  BIC #n,Rd, the source an immediate
   ;name = "BIC #n,Rd"
@@ -5898,7 +6605,13 @@ InstructionBIC_04_IRM:            ; 0427DD  BIC #n,Rd, the source an immediate
   FlagNZ = Res
   FlagV = 0
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 InstructionBIS_05_IRM:            ; 0527DD  BIS #n,Rd, the source an immediate
   ;name = "BIS #n,Rd"
@@ -5912,9 +6625,25 @@ InstructionBIS_05_IRM:            ; 0527DD  BIS #n,Rd, the source an immediate
   FlagNZ = Res
   FlagV = 0
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 InstructionADD_06_IRM:            ; 0627DD  ADD #n,Rd, the source an immediate
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+CompilerElse
+  NextNativeTrapM()
+CompilerEndIf
+CompilerEndIf
+InstructionADD_06_IRRefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "ADD #n,Rd"
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionADD_06M                  ; the general handler
@@ -5928,9 +6657,25 @@ InstructionADD_06_IRM:            ; 0627DD  ADD #n,Rd, the source an immediate
   FlagNZ = Res
   FlagV = (Src ! Res) & ((Res - Src) ! Res)   ; bit 15; Res - Src is the old Rd
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 InstructionSUB_16_IRM:            ; 1627DD  SUB #n,Rd, the source an immediate
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+CompilerElse
+  NextNativeTrapM()
+CompilerEndIf
+CompilerEndIf
+InstructionSUB_16_IRRefM:         ; the plain version: the reference (asm_check.pico2)
   ;name = "SUB #n,Rd"
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionSUB_16M                  ; the general handler
@@ -5944,7 +6689,13 @@ InstructionSUB_16_IRM:            ; 1627DD  SUB #n,Rd, the source an immediate
   FlagNZ = Res
   FlagV = (Src ! (Res + Src)) & ((Res + Src) ! Res)   ; bit 15; Res + Src is the old Rd
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 InstructionMOVB_11_IRM:           ; 1127DD  MOVB #n,Rd, the source an immediate
   ;name = "MOVB #n,Rd"
@@ -5957,7 +6708,13 @@ InstructionMOVB_11_IRM:           ; 1127DD  MOVB #n,Rd, the source an immediate
   FlagNZ = Src << 8
   FlagV = 0
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 InstructionCMPB_12_IRM:           ; 1227DD  CMPB #n,Rd, the source an immediate
   ;name = "CMPB #n,Rd"
@@ -5972,7 +6729,13 @@ InstructionCMPB_12_IRM:           ; 1227DD  CMPB #n,Rd, the source an immediate
   FlagV = ((Src ! Dst) & (Src ! Res)) << 8
   FlagNZ = (Res & $FF) << 8
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 InstructionBITB_13_IRM:           ; 1327DD  BITB #n,Rd, the source an immediate
   ;name = "BITB #n,Rd"
@@ -5984,7 +6747,13 @@ InstructionBITB_13_IRM:           ; 1327DD  BITB #n,Rd, the source an immediate
   FlagNZ = (Src & Reg(Op & 7) & $FF) << 8
   FlagV = 0
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+CompilerIf #ASM_TAILS = 1
+  If TrapVector
+    Goto SlowTailM
+  EndIf
+CompilerElse
   NextNativeTrapM()
+CompilerEndIf
 
 ; ======================================================================
 ;  REGISTER SOURCE, MEMORY DESTINATION - OP Rs,(Rd)  OP Rs,(Rd)+  OP Rs,X(Rd)
@@ -6014,7 +6783,10 @@ CompilerEndIf
   MMWriteWord(Ea, Src)
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionCMP_02_RMM:            ; 020SDD  CMP Rs,memory
   PcOutM()
@@ -6028,7 +6800,10 @@ CompilerEndIf
   FlagC = Res
   FlagV = (Src ! Dst) & (Src ! Res)
   FlagNZ = Res & $FFFF
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBIT_03_RMM:            ; 030SDD  BIT Rs,memory
   PcOutM()
@@ -6040,7 +6815,10 @@ CompilerEndIf
   MMReadWord(Dst, Ea)
   FlagNZ = Src & Dst
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBIC_04_RMM:            ; 040SDD  BIC Rs,memory
   PcOutM()
@@ -6054,7 +6832,10 @@ CompilerEndIf
   MMWriteWord(Ea, Res)
   FlagNZ = Res
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBIS_05_RMM:            ; 050SDD  BIS Rs,memory
   PcOutM()
@@ -6068,7 +6849,10 @@ CompilerEndIf
   MMWriteWord(Ea, Res)
   FlagNZ = Res
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionADD_06_RMM:            ; 060SDD  ADD Rs,memory
   PcOutM()
@@ -6083,7 +6867,10 @@ CompilerEndIf
   FlagC = Res
   FlagV = ~(Src ! Dst) & (Src ! Res)
   FlagNZ = Res & $FFFF
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionSUB_16_RMM:            ; 160SDD  SUB Rs,memory
   PcOutM()
@@ -6098,7 +6885,10 @@ CompilerEndIf
   FlagC = Res                ; borrow
   FlagV = (Src ! Dst) & (Dst ! Res)
   FlagNZ = Res & $FFFF
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMOVB_11_RMM:           ; 110SDD  MOVB Rs,memory
   PcOutM()
@@ -6110,7 +6900,10 @@ CompilerEndIf
   MMWriteByte(Ea, Src)
   FlagNZ = Src << 8
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionCMPB_12_RMM:           ; 120SDD  CMPB Rs,memory
   PcOutM()
@@ -6124,7 +6917,10 @@ CompilerEndIf
   FlagC = Res << 8
   FlagV = ((Src ! Dst) & (Src ! Res)) << 8
   FlagNZ = (Res & $FF) << 8
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBITB_13_RMM:           ; 130SDD  BITB Rs,memory
   PcOutM()
@@ -6136,7 +6932,10 @@ CompilerEndIf
   MMReadByte(Dst, Ea)
   FlagNZ = (Src & Dst) << 8
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBICB_14_RMM:           ; 140SDD  BICB Rs,memory
   PcOutM()
@@ -6150,7 +6949,10 @@ CompilerEndIf
   MMWriteByte(Ea, Res)
   FlagNZ = Res << 8
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionBISB_15_RMM:           ; 150SDD  BISB Rs,memory
   PcOutM()
@@ -6164,7 +6966,10 @@ CompilerEndIf
   MMWriteByte(Ea, Res)
   FlagNZ = Res << 8
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ; ======================================================================
 ;  THE SLOW WAY OUT OF AN INSTRUCTION - a trap to take, or a HALT. The
@@ -6266,7 +7071,10 @@ InstructionMOV_01_M04RefM:         ; the plain version: the fast path's slow pat
   MMWriteWordE(Ea, Src, CurD)
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMOV_01_M40M:            ; MOV, source mode 4, destination mode 0
 CompilerIf #ASM_MOV = 1
@@ -6284,7 +7092,10 @@ InstructionMOV_01_M40RefM:         ; the plain version: the fast path's slow pat
   Reg(Op & 7) = Src
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMOV_01_M60M:            ; MOV, source mode 6, destination mode 0
 CompilerIf #ASM_MOV = 1
@@ -6300,7 +7111,10 @@ InstructionMOV_01_M60RefM:         ; the plain version: the fast path's slow pat
   Reg(Op & 7) = Src
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMOV_01_M64M:            ; MOV, source mode 6, destination mode 4
 CompilerIf #ASM_MOV = 1
@@ -6323,7 +7137,10 @@ InstructionMOV_01_M64RefM:         ; the plain version: the fast path's slow pat
   MMWriteWordE(Ea, Src, CurD)
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMOV_01_M20M:            ; MOV, source mode 2, destination mode 0
 CompilerIf #ASM_MOV = 1
@@ -6338,7 +7155,10 @@ InstructionMOV_01_M20RefM:         ; the plain version: the fast path's slow pat
   Reg(Op & 7) = Src
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMOV_01_M61M:            ; MOV, source mode 6, destination mode 1
 CompilerIf #ASM_MOV = 1
@@ -6356,7 +7176,10 @@ InstructionMOV_01_M61RefM:         ; the plain version: the fast path's slow pat
   MMWriteWordE(Ea, Src, CurD)
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 InstructionMOV_01_M06M:            ; MOV, source mode 0, destination mode 6
 CompilerIf #ASM_MOV = 1
@@ -6372,7 +7195,10 @@ InstructionMOV_01_M06RefM:         ; the plain version: the fast path's slow pat
   MMWriteWordE(Ea, Src, CurD)
   FlagNZ = Src
   FlagV = 0
+CompilerIf #ASM_TAILS = 1
+CompilerElse
   NextSyncedM()
+CompilerEndIf
 
 ; ======================================================================
 ;  THE TABLE - filled the first time CpuRun runs. A '.i' is taken
@@ -6625,6 +7451,86 @@ BuildTableM:
   OpRefM(9) = ?InstructionMTPI_0066RefM
   OpAsmM(10) = ?InstructionMOV_01M
   OpRefM(10) = ?InstructionMOV_01RefM
+  OpAsmM(11) = ?InstructionADD_06M
+  OpRefM(11) = ?InstructionADD_06RefM
+  OpAsmM(12) = ?InstructionSUB_16M
+  OpRefM(12) = ?InstructionSUB_16RefM
+  OpAsmM(13) = ?InstructionBIT_03M
+  OpRefM(13) = ?InstructionBIT_03RefM
+  OpAsmM(14) = ?InstructionBIC_04M
+  OpRefM(14) = ?InstructionBIC_04RefM
+  OpAsmM(15) = ?InstructionBIS_05M
+  OpRefM(15) = ?InstructionBIS_05RefM
+  OpAsmM(16) = ?InstructionMOVB_11M
+  OpRefM(16) = ?InstructionMOVB_11RefM
+  OpAsmM(17) = ?InstructionCMPB_12M
+  OpRefM(17) = ?InstructionCMPB_12RefM
+  OpAsmM(18) = ?InstructionBITB_13M
+  OpRefM(18) = ?InstructionBITB_13RefM
+  OpAsmM(19) = ?InstructionCLR_0050M
+  OpRefM(19) = ?InstructionCLR_0050RefM
+  OpAsmM(20) = ?InstructionCLRB_1050M
+  OpRefM(20) = ?InstructionCLRB_1050RefM
+  OpAsmM(21) = ?InstructionTSTB_1057M
+  OpRefM(21) = ?InstructionTSTB_1057RefM
+  OpAsmM(22) = ?InstructionBR_0004M
+  OpRefM(22) = ?InstructionBR_0004RefM
+  OpAsmM(23) = ?InstructionBNE_0010M
+  OpRefM(23) = ?InstructionBNE_0010RefM
+  OpAsmM(24) = ?InstructionBEQ_0014M
+  OpRefM(24) = ?InstructionBEQ_0014RefM
+  OpAsmM(25) = ?InstructionBGE_0020M
+  OpRefM(25) = ?InstructionBGE_0020RefM
+  OpAsmM(26) = ?InstructionBLT_0024M
+  OpRefM(26) = ?InstructionBLT_0024RefM
+  OpAsmM(27) = ?InstructionBGT_0030M
+  OpRefM(27) = ?InstructionBGT_0030RefM
+  OpAsmM(28) = ?InstructionBLE_0034M
+  OpRefM(28) = ?InstructionBLE_0034RefM
+  OpAsmM(29) = ?InstructionBPL_1000M
+  OpRefM(29) = ?InstructionBPL_1000RefM
+  OpAsmM(30) = ?InstructionBMI_1004M
+  OpRefM(30) = ?InstructionBMI_1004RefM
+  OpAsmM(31) = ?InstructionBHI_1010M
+  OpRefM(31) = ?InstructionBHI_1010RefM
+  OpAsmM(32) = ?InstructionBLOS_1014M
+  OpRefM(32) = ?InstructionBLOS_1014RefM
+  OpAsmM(33) = ?InstructionBVC_1020M
+  OpRefM(33) = ?InstructionBVC_1020RefM
+  OpAsmM(34) = ?InstructionBVS_1024M
+  OpRefM(34) = ?InstructionBVS_1024RefM
+  OpAsmM(35) = ?InstructionBCC_1030M
+  OpRefM(35) = ?InstructionBCC_1030RefM
+  OpAsmM(36) = ?InstructionBCS_1034M
+  OpRefM(36) = ?InstructionBCS_1034RefM
+  OpAsmM(37) = ?InstructionMOV_01_RRM
+  OpRefM(37) = ?InstructionMOV_01_RRRefM
+  OpAsmM(38) = ?InstructionCMP_02_RRM
+  OpRefM(38) = ?InstructionCMP_02_RRRefM
+  OpAsmM(39) = ?InstructionADD_06_RRM
+  OpRefM(39) = ?InstructionADD_06_RRRefM
+  OpAsmM(40) = ?InstructionSUB_16_RRM
+  OpRefM(40) = ?InstructionSUB_16_RRRefM
+  OpAsmM(41) = ?InstructionCLR_0050_RM
+  OpRefM(41) = ?InstructionCLR_0050_RRefM
+  OpAsmM(42) = ?InstructionINC_0052_RM
+  OpRefM(42) = ?InstructionINC_0052_RRefM
+  OpAsmM(43) = ?InstructionDEC_0053_RM
+  OpRefM(43) = ?InstructionDEC_0053_RRefM
+  OpAsmM(44) = ?InstructionTST_0057_RM
+  OpRefM(44) = ?InstructionTST_0057_RRefM
+  OpAsmM(45) = ?InstructionMOV_01_IRM
+  OpRefM(45) = ?InstructionMOV_01_IRRefM
+  OpAsmM(46) = ?InstructionCMP_02_IRM
+  OpRefM(46) = ?InstructionCMP_02_IRRefM
+  OpAsmM(47) = ?InstructionBIT_03_IRM
+  OpRefM(47) = ?InstructionBIT_03_IRRefM
+  OpAsmM(48) = ?InstructionADD_06_IRM
+  OpRefM(48) = ?InstructionADD_06_IRRefM
+  OpAsmM(49) = ?InstructionSUB_16_IRM
+  OpRefM(49) = ?InstructionSUB_16_IRRefM
+  OpAsmM(50) = ?InstructionSOB_077M
+  OpRefM(50) = ?InstructionSOB_077RefM
   OpTableReadyM = 1
   Goto RunStartM
 EndProcedure
@@ -6840,6 +7746,7 @@ Macro BranchTo()
   PC = (PC + ((Op << 56) >> 55)) & $FFFF
 EndMacro
 
+  GBase = @Reg(0)                        ; r5: the base the mapped loop's assembly reaches its globals from
   If OpTableReady = 0
     Goto BuildTable
   EndIf
@@ -6872,6 +7779,24 @@ SlowFetch:                               ; the I/O page, an odd PC, past the end
                                          ; 1983, model differences 28 and 30)
   ! goto *(void*)((integer*)a_optable.a)[g_op >> 3];
 
+; ---- UNMAPPED ONLY: the operand address in assembly (tools/mmu_gen.py leaves this block out) ----
+; __eau, what the unmapped handlers reach with "bl" instead of calling EaWord
+; (cpu.pico2, EaFast and MSrcWord; #ASM_EA = 1): the call, the frame and the
+; return of a Basic procedure cost more than the work - EaWord was 52% of the
+; time of a program running with memory management off (the PDP-11 demo,
+; profiled on a Pico 2 W, 2026-10-24). In: r0 = the 6-bit mode and register.
+; Out: r0 = the address, with EaReg, Tmp, Adr and the register left exactly as
+; EaWord leaves them. All seven modes are done here when every access is in
+; RAM below 160000 and even and -(SP) or @-(SP) leaves SP at or above 000400;
+; anything else goes on to EaWord itself with the spec, nothing changed, and lr
+; still the handler's, so EaWord returns straight to the handler. It clobbers
+; r0-r3, r12 and lr only. asm_check.pico2 holds it to EaWord.
+; __eaub is the byte form (EaByte): (R)+ and -(R) stepv by one, by two through
+; SP and PC; the other modes are EaWord's, so it goes on to __eau.
+CompilerIf #ASM_EA = 1
+CompilerEndIf
+; ---- END UNMAPPED ONLY ----
+
 ;-MOV-------------------------------------------------------------------
 InstructionMOV_01:            ; 01SSDD   entries $0200-$03FF
   PcOut()
@@ -6880,7 +7805,7 @@ InstructionMOV_01:            ; 01SSDD   entries $0200-$03FF
   If (Op & $38) = 0
     Reg(Op & 7) = Src
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MWriteWord(Ea, Src)
   EndIf
   FlagNZ = Src
@@ -6897,7 +7822,7 @@ InstructionMOVB_11:           ; 11SSDD   entries $1200-$13FF
   If (Op & $38) = 0
     Reg(Op & 7) = (Src | (0 - (Src & $80))) & $FFFF   ; to a register it is sign-extended
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MWriteByte(Ea, Src)
   EndIf
   FlagNZ = Src << 8
@@ -6915,7 +7840,7 @@ InstructionCMP_02:            ; 02SSDD   entries $0400-$05FF
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
   EndIf
   Res = Src - Dst                        ; src - dst, the other way round from SUB
@@ -6934,7 +7859,7 @@ InstructionCMPB_12:           ; 12SSDD   entries $1400-$15FF
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
   EndIf
   Res = Src - Dst
@@ -6954,7 +7879,7 @@ InstructionBIT_03:            ; 03SSDD   entries $0600-$07FF
   If (Op & $38) = 0
     Dst = Reg(Op & 7)
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
   EndIf
   FlagNZ = Src & Dst
@@ -6971,7 +7896,7 @@ InstructionBITB_13:           ; 13SSDD   entries $1600-$17FF
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
   EndIf
   FlagNZ = (Src & Dst) << 8
@@ -6990,7 +7915,7 @@ InstructionBIC_04:            ; 04SSDD   entries $0800-$09FF
     Res = Reg(Op & 7) & ~Src & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Res, Ea)
     Res = Res & ~Src & $FFFF
     MWriteWord(Ea, Res)
@@ -7010,7 +7935,7 @@ InstructionBICB_14:           ; 14SSDD   entries $1800-$19FF
     Res = Reg(Op & 7) & ~Src & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Res, Ea)
     Res = Res & ~Src & $FF
     MWriteByte(Ea, Res)
@@ -7031,7 +7956,7 @@ InstructionBIS_05:            ; 05SSDD   entries $0A00-$0BFF
     Res = Reg(Op & 7) | Src
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Res, Ea)
     Res = Res | Src
     MWriteWord(Ea, Res)
@@ -7051,7 +7976,7 @@ InstructionBISB_15:           ; 15SSDD   entries $1A00-$1BFF
     Res = (Reg(Op & 7) | Src) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Res, Ea)
     Res = Res | Src
     MWriteByte(Ea, Res)
@@ -7073,7 +7998,7 @@ InstructionADD_06:            ; 06SSDD   entries $0C00-$0DFF
     Res = Src + Dst
     Reg(Op & 7) = Res & $FFFF
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = Src + Dst
     MWriteWord(Ea, Res)
@@ -7096,7 +8021,7 @@ InstructionSUB_16:            ; 16SSDD   entries $1C00-$1DFF
     Res = Dst - Src
     Reg(Op & 7) = Res & $FFFF
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = Dst - Src
     MWriteWord(Ea, Res)
@@ -7121,7 +8046,7 @@ InstructionCLR_0050:          ; 0050DD   entries $0140-$0147
   If (Op & $38) = 0
     Reg(Op & 7) = 0
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MWriteWord(Ea, 0)
   EndIf
   FlagNZ = 0
@@ -7138,7 +8063,7 @@ InstructionCLRB_1050:         ; 1050DD   entries $1140-$1147
   If (Op & $38) = 0
     Reg(Op & 7) = Reg(Op & 7) & $FF00
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MWriteByte(Ea, 0)
   EndIf
   FlagNZ = 0
@@ -7157,7 +8082,7 @@ InstructionCOM_0051:          ; 0051DD   entries $0148-$014F
     Res = Reg(Op & 7) ! $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Res, Ea)
     Res = Res ! $FFFF
     MWriteWord(Ea, Res)
@@ -7177,7 +8102,7 @@ InstructionCOMB_1051:         ; 1051DD   entries $1148-$114F
     Res = (Reg(Op & 7) ! $FF) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Res, Ea)
     Res = Res ! $FF
     MWriteByte(Ea, Res)
@@ -7199,7 +8124,7 @@ InstructionINC_0052:          ; 0052DD   entries $0150-$0157   C unaffected
     Res = (Dst + 1) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst + 1) & $FFFF
     MWriteWord(Ea, Res)
@@ -7222,7 +8147,7 @@ InstructionINCB_1052:         ; 1052DD   entries $1150-$1157
     Res = (Dst + 1) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
     Res = (Dst + 1) & $FF
     MWriteByte(Ea, Res)
@@ -7246,7 +8171,7 @@ InstructionDEC_0053:          ; 0053DD   entries $0158-$015F   C unaffected
     Res = (Dst - 1) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst - 1) & $FFFF
     MWriteWord(Ea, Res)
@@ -7269,7 +8194,7 @@ InstructionDECB_1053:         ; 1053DD   entries $1158-$115F
     Res = (Dst - 1) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
     Res = (Dst - 1) & $FF
     MWriteByte(Ea, Res)
@@ -7292,7 +8217,7 @@ InstructionNEG_0054:          ; 0054DD   entries $0160-$0167
     Res = (0 - Reg(Op & 7)) & $FFFF      ; 100000 negates to itself
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Res, Ea)
     Res = (0 - Res) & $FFFF
     MWriteWord(Ea, Res)
@@ -7318,7 +8243,7 @@ InstructionNEGB_1054:         ; 1054DD   entries $1160-$1167
     Res = (0 - Reg(Op & 7)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Res, Ea)
     Res = (0 - Res) & $FF
     MWriteByte(Ea, Res)
@@ -7346,7 +8271,7 @@ InstructionADC_0055:          ; 0055DD   entries $0168-$016F
     Res = (Dst + ((FlagC >> 16) & 1)) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst + ((FlagC >> 16) & 1)) & $FFFF
     MWriteWord(Ea, Res)
@@ -7372,7 +8297,7 @@ InstructionADCB_1055:         ; 1055DD   entries $1168-$116F
     Res = (Dst + ((FlagC >> 16) & 1)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
     Res = (Dst + ((FlagC >> 16) & 1)) & $FF
     MWriteByte(Ea, Res)
@@ -7402,7 +8327,7 @@ InstructionSBC_0056:          ; 0056DD   entries $0170-$0177
     Res = (Dst - ((FlagC >> 16) & 1)) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst - ((FlagC >> 16) & 1)) & $FFFF
     MWriteWord(Ea, Res)
@@ -7428,7 +8353,7 @@ InstructionSBCB_1056:         ; 1056DD   entries $1170-$1177
     Res = (Dst - ((FlagC >> 16) & 1)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
     Res = (Dst - ((FlagC >> 16) & 1)) & $FF
     MWriteByte(Ea, Res)
@@ -7453,7 +8378,7 @@ InstructionTST_0057:          ; 0057DD   entries $0178-$017F
   If (Op & $38) = 0
     FlagNZ = Reg(Op & 7)
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(FlagNZ, Ea)
   EndIf
   FlagV = 0
@@ -7469,7 +8394,7 @@ InstructionTSTB_1057:         ; 1057DD   entries $1178-$117F
   If (Op & $38) = 0
     FlagNZ = (Reg(Op & 7) & $FF) << 8
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(FlagNZ, Ea)
     FlagNZ = FlagNZ << 8
   EndIf
@@ -7493,7 +8418,7 @@ InstructionROR_0060:          ; 0060DD   entries $0180-$0187
     Res = (Dst >> 1) | ((FlagC >> 1) & $8000)
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst >> 1) | ((FlagC >> 1) & $8000)
     MWriteWord(Ea, Res)
@@ -7514,7 +8439,7 @@ InstructionRORB_1060:         ; 1060DD   entries $1180-$1187
     Res = (Dst >> 1) | ((FlagC >> 9) & $80)
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
     Res = (Dst >> 1) | ((FlagC >> 9) & $80)
     MWriteByte(Ea, Res)
@@ -7536,7 +8461,7 @@ InstructionROL_0061:          ; 0061DD   entries $0188-$018F
     Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FFFF
     MWriteWord(Ea, Res)
@@ -7557,7 +8482,7 @@ InstructionROLB_1061:         ; 1061DD   entries $1188-$118F
     Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
     Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FF
     MWriteByte(Ea, Res)
@@ -7579,7 +8504,7 @@ InstructionASR_0062:          ; 0062DD   entries $0190-$0197
     Res = (Dst >> 1) | (Dst & $8000)
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst >> 1) | (Dst & $8000)
     MWriteWord(Ea, Res)
@@ -7600,7 +8525,7 @@ InstructionASRB_1062:         ; 1062DD   entries $1190-$1197
     Res = (Dst >> 1) | (Dst & $80)
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
     Res = (Dst >> 1) | (Dst & $80)
     MWriteByte(Ea, Res)
@@ -7622,7 +8547,7 @@ InstructionASL_0063:          ; 0063DD   entries $0198-$019F
     Res = (Dst << 1) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = (Dst << 1) & $FFFF
     MWriteWord(Ea, Res)
@@ -7643,7 +8568,7 @@ InstructionASLB_1063:         ; 1063DD   entries $1198-$119F
     Res = (Dst << 1) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Dst, Ea)
     Res = (Dst << 1) & $FF
     MWriteByte(Ea, Res)
@@ -7665,7 +8590,7 @@ InstructionSWAB_0003:         ; 0003DD   entries $0018-$001F
     Res = ((Dst >> 8) | (Dst << 8)) & $FFFF
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Dst, Ea)
     Res = ((Dst >> 8) | (Dst << 8)) & $FFFF
     MWriteWord(Ea, Res)
@@ -7689,7 +8614,7 @@ InstructionSXT_0067:          ; 0067DD   entries $01B8-$01BF   N unaffected
   If (Op & $38) = 0
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MWriteWord(Ea, Res)
   EndIf
   SetNZ(FlagN(), 1 - FlagN())
@@ -7707,7 +8632,7 @@ InstructionMFPS_1067:         ; 1067DD   entries $11B8-$11BF
   If (Op & $38) = 0
     Reg(Op & 7) = (Res | (0 - (Res & $80))) & $FFFF   ; sign-extended into a register
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MWriteByte(Ea, Res)
   EndIf
   FlagNZ = Res << 8
@@ -7723,7 +8648,7 @@ InstructionMTPS_1064:         ; 1064SS   entries $11A0-$11A7   the T bit is not 
   If (Op & $38) = 0
     Src = Reg(Op & 7) & $FF
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
     MReadByte(Src, Ea)
   EndIf
   If PswHigh & $C000                     ; outside kernel mode only the condition codes
@@ -7748,7 +8673,7 @@ InstructionMFPI_0065:         ; 0065SS   entries $01A8-$01AF
       Src = ModeSp((PswHigh >> 12) & 3)
     EndIf
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Src, Ea)
   EndIf
   If TrapVector = 0                      ; a read that failed (bus error, MMU abort) aborts
@@ -7772,7 +8697,7 @@ InstructionMTPI_0066:         ; 0066DD   entries $01B0-$01B7
       Reg(Op & 7) = Src
     EndIf
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MWriteWord(Ea, Src)
   EndIf
   FlagNZ = Src
@@ -7981,7 +8906,7 @@ InstructionJSR_004:           ; 004RDD   entries $0100-$013F
   If (Op & $38) = 0
     TrapVector = #VEC_BUS                ; JSR to a register is illegal
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     Push(Reg((Op >> 6) & 7))
     Reg((Op >> 6) & 7) = Reg(7)
     Reg(7) = Ea
@@ -8047,7 +8972,7 @@ InstructionMUL_070:           ; 070RSS   entries $0E00-$0E3F
   If (Op & $38) = 0
     Src = Reg(Op & 7)
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Src, Ea)
   EndIf
   Src = Src - ((Src & $8000) << 1)                        ; signed 16
@@ -8078,7 +9003,7 @@ InstructionDIV_071:           ; 071RSS   entries $0E40-$0E7F
   If (Op & $38) = 0
     Src = Reg(Op & 7)
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Src, Ea)
   EndIf
   Src = Src - ((Src & $8000) << 1)
@@ -8116,7 +9041,7 @@ InstructionASH_072:           ; 072RSS   entries $0E80-$0EBF
   If (Op & $38) = 0
     Src = Reg(Op & 7) & $3F
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Src, Ea)
     Src = Src & $3F
   EndIf
@@ -8154,7 +9079,7 @@ InstructionASHC_073:          ; 073RSS   entries $0EC0-$0EFF
   If (Op & $38) = 0
     Src = Reg(Op & 7) & $3F
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Src, Ea)
     Src = Src & $3F
   EndIf
@@ -8194,7 +9119,7 @@ InstructionXOR_074:           ; 074RDD   entries $0F00-$0F3F
     Res = Reg(Op & 7) ! Reg((Op >> 6) & 7)
     Reg(Op & 7) = Res
   Else
-    Ea = EaWord(Op & $3F)
+    EaFast()
     MReadWord(Res, Ea)
     Res = Res ! Reg((Op >> 6) & 7)
     MWriteWord(Ea, Res)
@@ -8833,7 +9758,7 @@ InstructionBITB_13_IR:           ; 1327DD  BITB #n,Rd, the source an immediate
 ; ======================================================================
 InstructionMOV_01_RM:            ; 010SDD  MOV Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MWriteWord(Ea, Src)
   FlagNZ = Src
@@ -8842,7 +9767,7 @@ InstructionMOV_01_RM:            ; 010SDD  MOV Rs,memory
 
 InstructionCMP_02_RM:            ; 020SDD  CMP Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MReadWord(Dst, Ea)
   Res = Src - Dst
@@ -8853,7 +9778,7 @@ InstructionCMP_02_RM:            ; 020SDD  CMP Rs,memory
 
 InstructionBIT_03_RM:            ; 030SDD  BIT Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MReadWord(Dst, Ea)
   FlagNZ = Src & Dst
@@ -8862,7 +9787,7 @@ InstructionBIT_03_RM:            ; 030SDD  BIT Rs,memory
 
 InstructionBIC_04_RM:            ; 040SDD  BIC Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MReadWord(Res, Ea)
   Res = Res & ~Src & $FFFF
@@ -8873,7 +9798,7 @@ InstructionBIC_04_RM:            ; 040SDD  BIC Rs,memory
 
 InstructionBIS_05_RM:            ; 050SDD  BIS Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MReadWord(Res, Ea)
   Res = Res | Src
@@ -8884,7 +9809,7 @@ InstructionBIS_05_RM:            ; 050SDD  BIS Rs,memory
 
 InstructionADD_06_RM:            ; 060SDD  ADD Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MReadWord(Dst, Ea)
   Res = Src + Dst
@@ -8896,7 +9821,7 @@ InstructionADD_06_RM:            ; 060SDD  ADD Rs,memory
 
 InstructionSUB_16_RM:            ; 160SDD  SUB Rs,memory
   PcOut()
-  Ea = EaWord(Op & $3F)
+  EaFast()
   Src = Reg((Op >> 6) & 7)
   MReadWord(Dst, Ea)
   Res = Dst - Src
@@ -8908,7 +9833,7 @@ InstructionSUB_16_RM:            ; 160SDD  SUB Rs,memory
 
 InstructionMOVB_11_RM:           ; 110SDD  MOVB Rs,memory
   PcOut()
-  Ea = EaByte(Op & $3F)
+  EaFastB()
   Src = Reg((Op >> 6) & 7) & $FF
   MWriteByte(Ea, Src)
   FlagNZ = Src << 8
@@ -8917,7 +9842,7 @@ InstructionMOVB_11_RM:           ; 110SDD  MOVB Rs,memory
 
 InstructionCMPB_12_RM:           ; 120SDD  CMPB Rs,memory
   PcOut()
-  Ea = EaByte(Op & $3F)
+  EaFastB()
   Src = Reg((Op >> 6) & 7) & $FF
   MReadByte(Dst, Ea)
   Res = Src - Dst
@@ -8928,7 +9853,7 @@ InstructionCMPB_12_RM:           ; 120SDD  CMPB Rs,memory
 
 InstructionBITB_13_RM:           ; 130SDD  BITB Rs,memory
   PcOut()
-  Ea = EaByte(Op & $3F)
+  EaFastB()
   Src = Reg((Op >> 6) & 7) & $FF
   MReadByte(Dst, Ea)
   FlagNZ = (Src & Dst) << 8
@@ -8937,7 +9862,7 @@ InstructionBITB_13_RM:           ; 130SDD  BITB Rs,memory
 
 InstructionBICB_14_RM:           ; 140SDD  BICB Rs,memory
   PcOut()
-  Ea = EaByte(Op & $3F)
+  EaFastB()
   Src = Reg((Op >> 6) & 7) & $FF
   MReadByte(Res, Ea)
   Res = Res & ~Src & $FF
@@ -8948,7 +9873,7 @@ InstructionBICB_14_RM:           ; 140SDD  BICB Rs,memory
 
 InstructionBISB_15_RM:           ; 150SDD  BISB Rs,memory
   PcOut()
-  Ea = EaByte(Op & $3F)
+  EaFastB()
   Src = Reg((Op >> 6) & 7) & $FF
   MReadByte(Res, Ea)
   Res = Res | Src

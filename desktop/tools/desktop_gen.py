@@ -66,16 +66,17 @@ OUT = os.path.join(REPO, "desktop", "gen", "core.pbi")
 # goes in (disk.pico2's place).
 FILES = ["cpu.pico2", "fp11.pico2", "instructions_mmu.pico2", "instructions.pico2",
          "@disk", "kw11.pico2", "rk11.pico2", "rp11.pico2"]
-# Host addresses stay 64-bit: the fast windows' memory (MapHost), the fetch
-# window (Fw, FwSave), the FPU's operand in a window (FrwA), and the label tables with the parameter that fills
-# them (a label's address is a host address).
-KEEP_I = {"MapHost", "Fw", "FwSave", "FrwA", "OpTable", "OpTableM", "OpAsmM", "OpRefM", "target"}
+# Host addresses stay 64-bit: the fast windows' memory (MapHost, now a field of the one array MapF, so
+# MapF stays 64-bit whole), the fetch window (Fw, FwSave), the FPU's operand in a window (FrwA), the
+# assembly's base (GBase = @Reg(0)), and the label tables with the parameter that fills them (a label's
+# address is a host address).
+KEEP_I = {"MapHost", "MapF", "GBase", "Fw", "FwSave", "FrwA", "OpTable", "OpTableM", "OpAsmM", "OpRefM", "target"}
 # Core procedures whose names are PureBasic commands (the File library): renamed
 # everywhere, consistently.
 RENAME = {"ReadWord": "PdpReadWord", "WriteWord": "PdpWriteWord", "ReadByte": "PdpReadByte",
           "WriteByte": "PdpWriteByte",
           "step": "stepv"}       # a local named like PureBasic's Step keyword (case-sensitive: the keyword is Step)
-KEEP_PROC_IF = re.compile(r"\bMapHost\b|\bFw\(|\bFwSave\(|@")   # a procedure using one keeps its .i
+KEEP_PROC_IF = re.compile(r"\bMapHost\b|\bMapF\(|\bFw\(|\bFwSave\(|@")   # a procedure using one keeps its .i
 
 
 def fail(msg):
