@@ -11,6 +11,10 @@ else is the Pico 2 W build as it is - the same packs (V6 from the Pico 2 W image
 port. Like demo_build.py and psram_build.py it writes a copy beside diag.pico2 and removes it afterwards;
 the source's #TERM_PANEL = 0 keeps the terminal out of every other build.
 
+COMPILER: PureMetal Forge of 2026-10-25 (341fd5aca) or later. With the 19 Oct release the build is 2 KB short of
+SRAM (its code copied to SRAM is 4 KB bigger, and the swap RAM disk's 57 KB then finds no free run); the
+Unix firmware without the panel builds with either.
+
 OUTPUT (in --out, default build_term/ at the repository root)
     term_firmware.uf2   the firmware (the packs stay on the board: flash the Pico 2 W image first)
     term_firmware.bin   the flat image
