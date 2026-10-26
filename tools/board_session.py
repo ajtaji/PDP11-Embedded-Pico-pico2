@@ -4,6 +4,9 @@ board_session.py - type a list of commands at a board's Unix prompt over
 its USB serial port, on ONE open of the port, time each from the host and
 keep the transcript.
 
+--json-out FILE also records every timed command's completion, elapsed time,
+and reply with its terminal echo removed, for output validation.
+
     python tools/board_session.py (--hub-port N | --usb-serial TEXT) --script FILE
                                   [--out TRANSCRIPT] [--max-seconds 240] [--prompt "# "]
 
@@ -42,6 +45,7 @@ Exit 0: every step ran and every !expect was met. Exit 1: a prompt did not
 come back in time, or an !expect failed. Exit 2: --max-seconds ran out.
 """
 import argparse
+import json
 import os
 import sys
 import time
@@ -57,6 +61,7 @@ def main():
     g.add_argument("--usb-serial")
     ap.add_argument("--script", required=True)
     ap.add_argument("--out")
+    ap.add_argument("--json-out", help="write timed command replies and completion status as JSON")
     ap.add_argument("--max-seconds", type=float, default=240.0)
     ap.add_argument("--prompt", default="# ")
     a = ap.parse_args()
@@ -73,6 +78,7 @@ def main():
     s = serial.Serial(port, 115200, timeout=0.05, write_timeout=10)
     log = []
     text = [""]
+    commands = []
 
     def emit(t):
         log.append(t)
@@ -82,13 +88,14 @@ def main():
     def pump(seconds, until=None):
         """Read for `seconds`, or until the text so far ends with `until`. True if it did."""
         end = time.time() + seconds
+        initial_size = len(text[0])
         while True:
             d = s.read(s.in_waiting or 1)
             if d:
                 t = d.decode("ascii", "replace").replace("\r", "")
                 text[0] += t
                 emit(t)
-            if until is not None and text[0].endswith(until):
+            if until is not None and len(text[0]) > initial_size and text[0].endswith(until):
                 return True
             if time.time() > end:
                 return False
@@ -156,9 +163,17 @@ def main():
                 break
         else:
             t0 = time.time()
+            start = len(text[0])
             s.write(line.encode("ascii") + b"\r")
             ok = pump(timeout, prompt)
             dt = time.time() - t0
+            reply = text[0][start:]
+            output = reply[:-len(prompt)] if ok else reply
+            parts = output.lstrip("\n").split("\n", 1)
+            if parts[0].upper() == line.upper():
+                output = parts[1] if len(parts) > 1 else ""
+            commands.append(dict(command=line, seconds=dt, completed=ok,
+                                 output=output.strip("\n"), raw=reply))
             if not ok:
                 emit("\n[board_session: no prompt within %.0f s of: %s]\n" % (timeout, line))
                 rc = 1
@@ -168,6 +183,9 @@ def main():
     emit("\n[board_session: exit %d]\n" % rc)
     if a.out:
         open(a.out, "w", encoding="utf-8", newline="\n").write("".join(log))
+    if a.json_out:
+        with open(a.json_out, "w", encoding="utf-8") as f:
+            json.dump(dict(exit_code=rc, commands=commands), f, indent=2)
     return rc
 
 
