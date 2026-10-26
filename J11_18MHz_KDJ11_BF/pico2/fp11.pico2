@@ -280,7 +280,7 @@ ProcedureRAM.i FpRoundPack(p.i, ex.i, f.i, r.i)
   ProcedureReturn 0
 EndProcedure
 
-Procedure.i FpRound(p.i)                      ; roundfp11: to F, in place
+ProcedureRAM.i FpRound(p.i)                      ; roundfp11: to F, in place
   Define oh.i, ol.i
   oh = PH(p) : ol = PL(p)
   FpCopy(#P_T, p)
@@ -318,7 +318,7 @@ ProcedureRAM.i FpNormalize(f.i, ex.i, big.i)
 EndProcedure
 
 ; ---- the arithmetic (results in #P_FAC) ----------------------------------
-ProcedureRAM.i FpAddOp()                         ; addfp11(fac, fsrc)
+ProcedureRAM.i FpAddOpRef()                      ; addfp11(fac, fsrc): the plain version (FpAddOpAsm)
   Define fe.i, se.i, ed.i, hf.i, hs.i
   hf = PH(#P_FAC) & ~#FP_SIGN : hs = PH(#P_SRC) & ~#FP_SIGN
   If ULt(hf, hs) Or (hf = hs And ULt(PL(#P_FAC), PL(#P_SRC)))   ; |fac| < |fsrc|: swap
@@ -365,6 +365,231 @@ ProcedureRAM.i FpAddOp()                         ; addfp11(fac, fsrc)
     EndIf
   EndIf
   ProcedureReturn FpRoundPack(#P_FAC, fe, #P_FF, 1)
+EndProcedure
+
+; addfp11 in assembly (#ASM_FP = 1): FpAddOpRef's arithmetic with the two
+; operands in registers - FF in r1:r0, SF in r3:r2, the exponent in r12, the
+; alignment shift in lr, FAC's high word (its sign) at [sp] - instead of
+; pairs reached through PH()/PL() by index. The same steps: |fac| < |fsrc|
+; swaps them, a zero, an exponent difference of 60 or more, the guarded
+; fractions, the aligning right shift, the add (and the carry's one-bit
+; shift) or the subtract and the normalize - a count of leading zeros, which
+; lands where FpNormalize's 24/12/6 steps and single shifts land, as each
+; step only shifts while the fraction's top bit stays below bit 58 - then
+; FpRoundPack's rounding (unless FPS T), the shift out of the guard bits and
+; the pack. Overflow and underflow call FpNoTrap as FpRoundPack does. The
+; result is #P_FAC and FaRet (#FPS_V or 0). FpAddOpRef leaves the swapped
+; operand in #P_SRC and its working pairs in #P_T, #P_FF and #P_SF; nothing
+; reads them after it, and this leaves them alone. asm_check.pico2 holds it
+; to FpAddOpRef (ASMCHECK fpadd).
+Global FaRet.i
+ProcedureRAM FpAddOpAsm()
+  ASM
+    push {r6, lr}
+    sub sp, sp, #8
+    ldr r3, =global_ph
+    ldr r1, [r3, #0]
+    ldr r3, [r3, #4]
+    ldr r2, =global_pl
+    ldr r0, [r2, #0]
+    ldr r2, [r2, #4]
+    bic.w r12, r1, #0x80000000
+    bic.w lr, r3, #0x80000000
+    cmp r12, lr
+    bhi __fao_noswap
+    blo __fao_swap
+    cmp r0, r2
+    bhs __fao_noswap
+__fao_swap:
+    mov r12, r1
+    movs r1, r3
+    mov r3, r12
+    mov r12, r0
+    movs r0, r2
+    mov r2, r12
+__fao_noswap:
+    ubfx r12, r1, #23, #8
+    cmp.w r12, #0
+    beq __fao_fe0
+    ubfx lr, r3, #23, #8
+    cmp.w lr, #0
+    beq __fao_keep
+    sub.w lr, r12, lr
+    cmp.w lr, #60
+    bge __fao_keep
+    str r1, [sp]
+    teq r1, r3
+    ubfx r1, r1, #0, #23
+    orr.w r1, r1, #0x800000
+    lsl.w r1, r1, #3
+    orr.w r1, r1, r0, lsr #29
+    lsl.w r0, r0, #3
+    ubfx r3, r3, #0, #23
+    orr.w r3, r3, #0x800000
+    lsl.w r3, r3, #3
+    orr.w r3, r3, r2, lsr #29
+    lsl.w r2, r2, #3
+    bmi __fao_sub
+    cmp.w lr, #32
+    bge __fao_asr32
+    rsb.w r6, lr, #32
+    lsr.w r2, r2, lr
+    lsl.w r6, r3, r6
+    orr.w r2, r2, r6
+    lsr.w r3, r3, lr
+    b __fao_add
+__fao_asr32:
+    sub.w r6, lr, #32
+    lsr.w r2, r3, r6
+    movs r3, #0
+__fao_add:
+    adds r0, r0, r2
+    adc.w r1, r1, r3
+    tst r1, #0x8000000
+    beq __fao_round
+    lsrs r0, r0, #1
+    orr.w r0, r0, r1, lsl #31
+    lsrs r1, r1, #1
+    add.w r12, r12, #1
+    b __fao_round
+__fao_sub:
+    cmp.w lr, #32
+    bge __fao_ssr32
+    rsb.w r6, lr, #32
+    lsr.w r2, r2, lr
+    lsl.w r6, r3, r6
+    orr.w r2, r2, r6
+    lsr.w r3, r3, lr
+    b __fao_dosub
+__fao_ssr32:
+    sub.w r6, lr, #32
+    lsr.w r2, r3, r6
+    movs r3, #0
+__fao_dosub:
+    subs r0, r0, r2
+    sbc.w r1, r1, r3
+    orrs.w r6, r0, r1
+    beq __fao_zero
+    cmp r1, #0
+    beq __fao_hi0
+    clz r6, r1
+    subs r6, r6, #5
+    beq __fao_round
+    b __fao_shl
+__fao_hi0:
+    clz r6, r0
+    adds r6, r6, #27
+__fao_shl:
+    sub.w r12, r12, r6
+    cmp r6, #32
+    bge __fao_shl32
+    lsl.w r1, r1, r6
+    rsb.w lr, r6, #32
+    lsr.w lr, r0, lr
+    orr.w r1, r1, lr
+    lsl.w r0, r0, r6
+    b __fao_round
+__fao_shl32:
+    sub.w lr, r6, #32
+    lsl.w r1, r0, lr
+    movs r0, #0
+__fao_round:
+    ldr r6, =global_fps
+    ldr r6, [r6]
+    tst r6, #0x20
+    bne __fao_g3
+    tst r6, #0x80
+    beq __fao_rf
+    adds r0, r0, #4
+    adc.w r1, r1, #0
+    b __fao_rc
+__fao_rf:
+    adds r1, r1, #4
+__fao_rc:
+    tst r1, #0x8000000
+    beq __fao_g3
+    lsrs r0, r0, #1
+    orr.w r0, r0, r1, lsl #31
+    lsrs r1, r1, #1
+    add.w r12, r12, #1
+__fao_g3:
+    lsrs r0, r0, #3
+    orr.w r0, r0, r1, lsl #29
+    lsrs r1, r1, #3
+    ldr r6, [sp]
+    and.w r6, r6, #0x80000000
+    and.w lr, r12, #0xff
+    orr.w r6, r6, lr, lsl #23
+    ubfx r1, r1, #0, #23
+    orr.w r6, r6, r1
+    ldr r2, =global_ph
+    str r6, [r2, #0]
+    ldr r2, =global_pl
+    str r0, [r2, #0]
+    cmp.w r12, #0xff
+    bgt __fao_ovf
+    cmp.w r12, #0
+    ble __fao_unf
+    movs r0, #0
+    b __fao_ret
+__fao_ovf:
+    movs r0, #8
+    bl fpnotrap
+    cmp r0, #0
+    beq __fao_v
+    movs r0, #0
+    ldr r2, =global_ph
+    str r0, [r2, #0]
+    ldr r2, =global_pl
+    str r0, [r2, #0]
+__fao_v:
+    movs r0, #2
+    b __fao_ret
+__fao_unf:
+    movs r0, #10
+    bl fpnotrap
+    cmp r0, #0
+    beq __fao_r0
+    movs r0, #0
+    ldr r2, =global_ph
+    str r0, [r2, #0]
+    ldr r2, =global_pl
+    str r0, [r2, #0]
+__fao_r0:
+    movs r0, #0
+    b __fao_ret
+__fao_fe0:
+    ubfx lr, r3, #23, #8
+    cmp.w lr, #0
+    bne __fao_takesrc
+__fao_zero:
+    movs r0, #0
+    movs r1, #0
+    b __fao_keep
+__fao_takesrc:
+    movs r1, r3
+    movs r0, r2
+__fao_keep:
+    ldr r2, =global_ph
+    str r1, [r2, #0]
+    ldr r2, =global_pl
+    str r0, [r2, #0]
+    movs r0, #0
+__fao_ret:
+    ldr r2, =global_faret
+    str r0, [r2]
+    add sp, sp, #8
+    pop {r6, lr}
+  EndASM
+EndProcedure
+
+ProcedureRAM.i FpAddOp()                         ; addfp11(fac, fsrc)
+CompilerIf #ASM_FP = 1
+  FpAddOpAsm()
+  ProcedureReturn FaRet
+CompilerElse
+  ProcedureReturn FpAddOpRef()
+CompilerEndIf
 EndProcedure
 
 ; frac_mulfp11: #P_FF = the top 64 bits of #P_FF * (#P_SF guarded), shift and add.
@@ -563,7 +788,7 @@ ProcedureRAM.i FpMulOp()                         ; mulfp11
   ProcedureReturn FpRoundPack(#P_FAC, fe, #P_FF, 1)
 EndProcedure
 
-Procedure.i FpModOp()                         ; modfp11: integer to #P_FAC, fraction to #P_MOD
+ProcedureRAM.i FpModOp()                         ; modfp11: integer to #P_FAC, fraction to #P_MOD
   Define fe.i, se.i, v.i
   fe = FpExpOf(PH(#P_FAC))
   se = FpExpOf(PH(#P_SRC))
@@ -674,7 +899,7 @@ EndProcedure
 
 ; The yellow stack limit for an FP specifier's -(SP): the address the
 ; instruction will use, kernel mode only (simh set_stack_trap).
-Procedure FpStackCheck(adr.i)
+ProcedureRAM FpStackCheck(adr.i)
   If adr < #STACK_LIMIT
     If (PswHigh & $C000) = 0
       StackYellow = 1
@@ -849,14 +1074,364 @@ ProcedureRAM FpWriteF(p.i, spec.i, ln.i)        ; WriteFP from pair p
   EndIf
 EndProcedure
 
-Procedure.i FpReadI(spec.i, ln.i)             ; ReadI: the integer in the HIGH 16 or all 32 bits
+; THE OPERAND IN ONE PASS (#ASM_FP = 1). FpOpAsm forms an F or D operand's
+; address (modes 1-7; not mode 0, an accumulator, and not 027, an immediate)
+; and reads the operand into pair FrP (FrWr = 0) or writes pair FrP to it
+; (FrWr = 1), FrLn bytes (4 or 8), all through the current mode's fast
+; windows, with memory management on. It is FpEa followed by FpReadF or
+; FpWriteF when every word it touches - an X(R)'s index word, a deferred
+; mode's pointer, the operand - is in its window: the same address, the same
+; space, the same register change (the PC's at once, any other's left in
+; FpChgReg/FpChgVal/FpChgOn for the end of the instruction). Anything else -
+; memory management off, an odd address, a word outside a window, -(R)/@-(R)
+; of SP near the stack limit, (R)+/-(R)/@-(R) of the PC - and it changes no
+; register and nothing in FpChg*, sets FrwFast = 0, and the caller goes on to
+; the plain procedures, which do it all again. FrwFast = 1: done. (Before it,
+; FpEa, FpReadF, FpRdW and FpWriteF were 27% of Whetstone's time, 2026-10-25.)
+; FpSrc and FpDst are what the instructions call; asm_check.pico2 holds them to
+; FpEa with FpReadF / FpWriteF (ASMCHECK fpop). Free here: r0-r3, r12, and r6
+; and lr saved.
+Global FrDs.i, FrLn.i, FrP.i, FrWr.i
+ProcedureRAM FpOpAsm()
+  ASM
+    push {r6, lr}
+    ldr r3, =global_mmuon
+    ldr r3, [r3]
+    cmp r3, #0
+    beq __fpo_slow
+    ldr r3, =global_frds
+    ldr r0, [r3]
+    ldr r3, =global_frln
+    ldr r1, [r3]
+    and.w r12, r0, #7
+    ubfx r3, r0, #3, #3
+    ldr r2, =global_reg
+    movs r6, #0
+    mov lr, r6
+    cmp r3, #6
+    beq __fpo_m6
+    cmp r3, #1
+    beq __fpo_m1
+    cmp r3, #2
+    beq __fpo_m2
+    cmp r3, #4
+    beq __fpo_m4
+    cmp r3, #7
+    beq __fpo_m7
+    cmp r3, #3
+    beq __fpo_m3
+    cmp r3, #5
+    beq __fpo_m5
+    b __fpo_slow
+__fpo_m1:
+    ldr.w r0, [r2, r12, lsl #2]
+    cmp.w r12, #7
+    bne __fpo_have
+    movs r6, #1
+    b __fpo_have
+__fpo_m2:
+    cmp.w r12, #7
+    beq __fpo_slow
+    ldr.w r0, [r2, r12, lsl #2]
+    mov lr, r1
+    b __fpo_have
+__fpo_m4:
+    cmp.w r12, #7
+    beq __fpo_slow
+    ldr.w r0, [r2, r12, lsl #2]
+    subs r0, r0, r1
+    uxth r0, r0
+    movs r3, #0
+    subs r3, r3, r1
+    mov lr, r3
+    cmp.w r12, #6
+    bne __fpo_have
+    cmp.w r0, #0x100
+    blt __fpo_slow
+    b __fpo_have
+__fpo_m3:
+    ldr.w r0, [r2, r12, lsl #2]
+    movs r3, #2
+    mov lr, r3
+    ldr r3, =global_curd
+    cmp.w r12, #7
+    bne __fpo_m3d
+    ldr r3, =global_curi
+__fpo_m3d:
+    ldr r3, [r3]
+    add.w r3, r3, r0, lsr #13
+    lsls r3, r3, #5
+    ldr r2, =global_mapf
+    adds r3, r3, r2
+    lsls r2, r0, #31
+    bne __fpo_slow
+    ldr r2, [r3, #0]
+    cmp r0, r2
+    blt __fpo_slow
+    ldr r2, [r3, #4]
+    cmp r0, r2
+    bge __fpo_slow
+    ldr r2, [r3, #16]
+    ldrh r0, [r2, r0]
+    b __fpo_have
+__fpo_m5:
+    cmp.w r12, #7
+    beq __fpo_slow
+    ldr.w r0, [r2, r12, lsl #2]
+    subs r0, r0, #2
+    uxth r0, r0
+    movs r3, #0
+    subs r3, r3, #2
+    mov lr, r3
+    cmp.w r12, #6
+    bne __fpo_m5r
+    subs r3, r0, #2
+    cmp.w r3, #0x100
+    blt __fpo_slow
+__fpo_m5r:
+    ldr r3, =global_curd
+    ldr r3, [r3]
+    add.w r3, r3, r0, lsr #13
+    lsls r3, r3, #5
+    ldr r2, =global_mapf
+    adds r3, r3, r2
+    lsls r2, r0, #31
+    bne __fpo_slow
+    ldr r2, [r3, #0]
+    cmp r0, r2
+    blt __fpo_slow
+    ldr r2, [r3, #4]
+    cmp r0, r2
+    bge __fpo_slow
+    ldr r2, [r3, #16]
+    ldrh r0, [r2, r0]
+    b __fpo_have
+__fpo_m6:
+    ldr r0, [r2, #28]
+    ldr r3, =global_curi
+    ldr r3, [r3]
+    add.w r3, r3, r0, lsr #13
+    lsls r3, r3, #5
+    ldr r2, =global_mapf
+    adds r3, r3, r2
+    lsls r2, r0, #31
+    bne __fpo_slow
+    ldr r2, [r3, #0]
+    cmp r0, r2
+    blt __fpo_slow
+    ldr r2, [r3, #4]
+    cmp r0, r2
+    bge __fpo_slow
+    ldr r2, [r3, #16]
+    ldrh r0, [r2, r0]
+    ldr r2, =global_reg
+    ldr.w r3, [r2, r12, lsl #2]
+    adds r0, r0, r3
+    cmp.w r12, #7
+    bne __fpo_m6n
+    adds r0, r0, #2
+__fpo_m6n:
+    uxth r0, r0
+    mov.w r12, #7
+    movs r3, #2
+    mov lr, r3
+    b __fpo_have
+__fpo_m7:
+    ldr r0, [r2, #28]
+    ldr r3, =global_curi
+    ldr r3, [r3]
+    add.w r3, r3, r0, lsr #13
+    lsls r3, r3, #5
+    ldr r2, =global_mapf
+    adds r3, r3, r2
+    lsls r2, r0, #31
+    bne __fpo_slow
+    ldr r2, [r3, #0]
+    cmp r0, r2
+    blt __fpo_slow
+    ldr r2, [r3, #4]
+    cmp r0, r2
+    bge __fpo_slow
+    ldr r2, [r3, #16]
+    ldrh r0, [r2, r0]
+    ldr r2, =global_reg
+    ldr.w r3, [r2, r12, lsl #2]
+    adds r0, r0, r3
+    cmp.w r12, #7
+    bne __fpo_m7n
+    adds r0, r0, #2
+__fpo_m7n:
+    uxth r0, r0
+    mov.w r12, #7
+    movs r3, #2
+    mov lr, r3
+    ldr r3, =global_curd
+    ldr r3, [r3]
+    add.w r3, r3, r0, lsr #13
+    lsls r3, r3, #5
+    ldr r2, =global_mapf
+    adds r3, r3, r2
+    lsls r2, r0, #31
+    bne __fpo_slow
+    ldr r2, [r3, #0]
+    cmp r0, r2
+    blt __fpo_slow
+    ldr r2, [r3, #4]
+    cmp r0, r2
+    bge __fpo_slow
+    ldr r2, [r3, #16]
+    ldrh r0, [r2, r0]
+__fpo_have:
+    lsls r3, r0, #31
+    bne __fpo_slow
+    ldr r3, =global_fpadr
+    str r0, [r3]
+    ldr r3, =global_fpspace
+    str r6, [r3]
+    ldr r3, =global_curd
+    cmp r6, #0
+    beq __fpo_hd
+    ldr r3, =global_curi
+__fpo_hd:
+    ldr r3, [r3]
+    add.w r3, r3, r0, lsr #13
+    lsls r3, r3, #5
+    ldr r2, =global_mapf
+    adds r3, r3, r2
+    adds r2, r0, r1
+    subs r2, r2, #2
+    ldr r6, =global_frwr
+    ldr r6, [r6]
+    cmp r6, #0
+    bne __fpo_w
+    ldr r6, [r3, #0]
+    cmp r0, r6
+    blt __fpo_slow
+    ldr r6, [r3, #4]
+    cmp r2, r6
+    bge __fpo_slow
+    ldr r3, [r3, #16]
+    adds r3, r3, r0
+    ldr r6, =global_frp
+    ldr r6, [r6]
+    lsls r6, r6, #2
+    ldrh r0, [r3, #0]
+    ldrh r2, [r3, #2]
+    orr.w r0, r2, r0, lsl #16
+    ldr r2, =global_ph
+    str r0, [r2, r6]
+    movs r0, #0
+    cmp r1, #8
+    bne __fpo_rl
+    ldrh r0, [r3, #4]
+    ldrh r2, [r3, #6]
+    orr.w r0, r2, r0, lsl #16
+__fpo_rl:
+    ldr r2, =global_pl
+    str r0, [r2, r6]
+    b __fpo_commit
+__fpo_w:
+    ldr r6, [r3, #8]
+    cmp r0, r6
+    blt __fpo_slow
+    ldr r6, [r3, #12]
+    cmp r2, r6
+    bge __fpo_slow
+    ldr r3, [r3, #16]
+    adds r3, r3, r0
+    ldr r6, =global_frp
+    ldr r6, [r6]
+    lsls r6, r6, #2
+    ldr r2, =global_ph
+    ldr r0, [r2, r6]
+    strh r0, [r3, #2]
+    lsrs r0, r0, #16
+    strh r0, [r3, #0]
+    cmp r1, #8
+    bne __fpo_commit
+    ldr r2, =global_pl
+    ldr r0, [r2, r6]
+    strh r0, [r3, #6]
+    lsrs r0, r0, #16
+    strh r0, [r3, #4]
+__fpo_commit:
+    mov r0, lr
+    cmp r0, #0
+    beq __fpo_done
+    cmp.w r12, #7
+    bne __fpo_defer
+    ldr r2, =global_reg
+    ldr r1, [r2, #28]
+    adds r1, r1, r0
+    uxth r1, r1
+    str r1, [r2, #28]
+    b __fpo_done
+__fpo_defer:
+    ldr r2, =global_fpchgreg
+    str.w r12, [r2]
+    ldr r2, =global_fpchgval
+    str r0, [r2]
+    ldr r2, =global_fpchgon
+    movs r1, #1
+    str r1, [r2]
+__fpo_done:
+    movs r0, #1
+    b __fpo_out
+__fpo_slow:
+    movs r0, #0
+__fpo_out:
+    ldr r2, =global_frwfast
+    str r0, [r2]
+    pop {r6, lr}
+  EndASM
+EndProcedure
+
+; A floating operand into pair p (FpEa then FpReadF); 0 = the instruction is NOP'd.
+ProcedureRAM.i FpSrc(p.i, spec.i, ln.i)
+CompilerIf #ASM_FP = 1
+  If spec > 7
+    FrDs = spec : FrLn = ln : FrP = p : FrWr = 0
+    FpOpAsm()
+    If FrwFast
+      If (PH(p) & #FP_SIGN) <> 0 And FpExpOf(PH(p)) = 0
+        If FpNoTrap(#FEC_UNDFV) = 0
+          ProcedureReturn 0
+        EndIf
+      EndIf
+      ProcedureReturn 1
+    EndIf
+  EndIf
+CompilerEndIf
+  FpEa(spec, ln)
+  If FpQuit
+    ProcedureReturn 0
+  EndIf
+  ProcedureReturn FpReadF(p, spec, ln)
+EndProcedure
+
+; Pair p to a floating operand (FpEa then FpWriteF).
+ProcedureRAM FpDst(p.i, spec.i, ln.i)
+CompilerIf #ASM_FP = 1
+  If spec > 7 And FpQuit = 0
+    FrDs = spec : FrLn = ln : FrP = p : FrWr = 1
+    FpOpAsm()
+    If FrwFast
+      ProcedureReturn
+    EndIf
+  EndIf
+CompilerEndIf
+  FpEa(spec, ln)
+  FpWriteF(p, spec, ln)
+EndProcedure
+
+ProcedureRAM.i FpReadI(spec.i, ln.i)             ; ReadI: the integer in the HIGH 16 or all 32 bits
   If ln = 2 Or spec = $17
     ProcedureReturn FpRdW(FpAdr, FpSpace) << 16
   EndIf
   ProcedureReturn (FpRdW(FpAdr, FpSpace) << 16) | (FpRdW(FpAdr + 2, FpSpace) & $FFFF)
 EndProcedure
 
-Procedure FpWriteI(v.i, spec.i, ln.i)
+ProcedureRAM FpWriteI(v.i, spec.i, ln.i)
   If FpQuit
     ProcedureReturn
   EndIf
@@ -901,7 +1476,7 @@ EndProcedure
 
 ; ---- the instruction -----------------------------------------------------
 ; Op is the instruction, Reg(7) the PC after it (the handler synced it).
-Procedure FpExec()
+ProcedureRAM FpExec()
   If FpReady = 0
     FpInit()
   EndIf
@@ -965,23 +1540,18 @@ Procedure FpExec()
     Case 1
       Select FxAc
         Case 0                                ; CLRf
-          FpEa(FxDs, FxLenf)
-          FpWriteF(#P_ZERO, FxDs, FxLenf)
+          FpDst(#P_ZERO, FxDs, FxLenf)
           If FpQuit = 0
             Fps = (Fps & ~#FPS_CC) | #FPS_Z
           EndIf
         Case 1                                ; TSTf
-          FpEa(FxDs, FxLenf)
-          If FpQuit = 0
-            If FpReadF(#P_SRC, FxDs, FxLenf)
-              Fps = FpSetCc(Fps, PH(#P_SRC), 0)
-            ElseIf FpQuit = 0 And Fec = #FEC_UNDFV
-              Fps = FpSetCc(Fps, PH(#P_SRC), 0)   ; -0 with FIUV: the FPA sets N Z (V C clear) as it flags
-            EndIf                                 ; it - DEC's JFPBA0 test 32 (simh leaves the codes)
-          EndIf
+          If FpSrc(#P_SRC, FxDs, FxLenf)
+            Fps = FpSetCc(Fps, PH(#P_SRC), 0)
+          ElseIf FpQuit = 0 And Fec = #FEC_UNDFV
+            Fps = FpSetCc(Fps, PH(#P_SRC), 0)     ; -0 with FIUV: the FPA sets N Z (V C clear) as it flags
+          EndIf                                   ; it - DEC's JFPBA0 test 32 (simh leaves the codes)
         Default                               ; 2 ABSf, 3 NEGf
-          FpEa(FxDs, FxLenf)
-          If FpQuit = 0 And FpReadF(#P_SRC, FxDs, FxLenf)
+          If FpSrc(#P_SRC, FxDs, FxLenf)
             If FpExpOf(PH(#P_SRC)) = 0
               FpCopy(#P_SRC, #P_ZERO)
             ElseIf FxAc = 2
@@ -996,18 +1566,15 @@ Procedure FpExec()
           EndIf
       EndSelect
     Case 5                                    ; LDf
-      FpEa(FxDs, FxLenf)
-      If FpQuit = 0 And FpReadF(#P_SRC, FxDs, FxLenf)
+      If FpSrc(#P_SRC, FxDs, FxLenf)
         FpStoreAc(FxAc, #P_SRC, FxQd)
         Fps = FpSetCc(Fps, PH(#P_SRC), 0)
       EndIf
     Case 8                                    ; STf
       FpLoadAc(#P_FAC, FxAc, FxQd)
-      FpEa(FxDs, FxLenf)
-      FpWriteF(#P_FAC, FxDs, FxLenf)
+      FpDst(#P_FAC, FxDs, FxLenf)
     Case $F                                   ; LDCff'
-      FpEa(FxDs, 12 - FxLenf)
-      If FpQuit = 0 And FpReadF(#P_SRC, FxDs, 12 - FxLenf)
+      If FpSrc(#P_SRC, FxDs, 12 - FxLenf)
         If FpExpOf(PH(#P_SRC)) = 0
           FpCopy(#P_SRC, #P_ZERO)
         EndIf
@@ -1027,14 +1594,12 @@ Procedure FpExec()
       If (Fps & (#FPS_D | #FPS_T)) = #FPS_D
         FxNewv = FpRound(#P_FAC)
       EndIf
-      FpEa(FxDs, 12 - FxLenf)
-      FpWriteF(#P_FAC, FxDs, 12 - FxLenf)
+      FpDst(#P_FAC, FxDs, 12 - FxLenf)
       If FpQuit = 0
         Fps = FpSetCc(Fps, PH(#P_FAC), FxNewv)
       EndIf
     Case 7                                    ; CMPf
-      FpEa(FxDs, FxLenf)
-      If FpQuit = 0 And FpReadF(#P_SRC, FxDs, FxLenf)
+      If FpSrc(#P_SRC, FxDs, FxLenf)
         FpLoadAc(#P_FAC, FxAc, FxQd)
         If FpExpOf(PH(#P_SRC)) = 0
           FpCopy(#P_SRC, #P_ZERO)
@@ -1193,8 +1758,7 @@ Procedure FpExec()
         FpWriteI(FxDst, FxDs, FxLeni)
       EndIf
     Default                                   ; 2 MULf, 3 MODf, 4 ADDf, 6 SUBf, 9 DIVf (every other code has its Case)
-      FpEa(FxDs, FxLenf)
-      If FpQuit = 0 And FpReadF(#P_SRC, FxDs, FxLenf)
+      If FpSrc(#P_SRC, FxDs, FxLenf)
         FpLoadAc(#P_FAC, FxAc, FxQd)
         FxC = (Op >> 8) & $F
         If FxC = 2

@@ -777,6 +777,246 @@ Procedure FpEdges()
   Next
 EndProcedure
 
+; ---- the floating operand in one pass (fp11.pico2, FpOpAsm) -----------------
+; FpSrc and FpDst (the assembly first) against FpEa followed by FpReadF or
+; FpWriteF, from the same state: the kernel's random map, random registers
+; (as the ea check's), random specs - mostly modes 1-7, some of every spec -
+; F and D lengths, reads and writes, the index word of X(R) and @X(R) mostly
+; pointing into a window, a deferred mode's pointer mostly in one too, a
+; random FPS (FIUV sometimes, so an undefined variable can trap). Compared:
+; the registers, the pair, FpAdr, FpSpace, the register change left for the
+; end, FpQuit, the trap, FEC and FPS, MMR0/1, the CPU error, the yellow
+; stack, and memory (what a write changed, against the shadow copy).
+Global FoChecks.i, FoFast.i, FoFailures.i, FoFirst.i, FoField.i
+Global FoSpec.i, FoLn.i, FoWr.i, Fq.i, Fv.i, Fm.i, Fn.i, Fh.i, Fl.i, Fps0.i
+Global Dim FoA.i(28)
+Global Dim FoB.i(28)
+
+Procedure FoSnap(*s.i)
+  GS = *s
+  PokeL(GS, GK)
+  For GI = 0 To 7 : PokeL(GS + 4 + GI * 4, Reg(GI)) : Next
+  PokeL(GS + 36, PH(#P_SRC))
+  PokeL(GS + 40, PL(#P_SRC))
+  PokeL(GS + 44, FpAdr)
+  PokeL(GS + 48, FpSpace)
+  PokeL(GS + 52, FpChgOn)
+  PokeL(GS + 56, FpChgOn * FpChgReg)
+  PokeL(GS + 60, FpChgOn * FpChgVal)
+  PokeL(GS + 64, FpQuit)
+  PokeL(GS + 68, TrapVector)
+  PokeL(GS + 72, Fec)
+  PokeL(GS + 76, Fps)
+  PokeL(GS + 80, Mmr0)
+  PokeL(GS + 84, Mmr1)
+  PokeL(GS + 88, CpuErr)
+  PokeL(GS + 92, StackYellow)
+  GN2 = 0 : GK2 = 0
+  If FoWr
+    For GI = 0 To #RAM_WORDS - 1
+      If Mem(GI) <> Shadow(GI)
+        GN2 = GN2 + 1
+        GK2 = GK2 * 31 + (GI << 16) + Mem(GI)
+        Mem(GI) = Shadow(GI)
+      EndIf
+    Next
+  EndIf
+  PokeL(GS + 96, GN2)
+  PokeL(GS + 100, GK2)
+EndProcedure
+
+Procedure FoPoke(va.i, base.i, v.i)     ; v at va if va is in base's read window
+  va = va & $FFFF
+  Fn = base + (va >> 13)
+  If (va & 1) = 0 And va >= MapRLo(Fn) And va < MapRHi(Fn)
+    PokeU(va + MapHost(Fn), v & $FFFF)
+  EndIf
+EndProcedure
+
+Procedure FoPrep()
+  Fps = Fps0 : Fec = 0 : FpQuit = 0 : FpChgOn = 0 : FpChgReg = 0 : FpChgVal = 0
+  FrwFast = 0 : FpAdr = 0 : FpSpace = 0
+  PH(#P_SRC) = Fh : PL(#P_SRC) = Fl
+EndProcedure
+
+Procedure FpOpOne()
+  PswSet($00E0)
+  RandomMap()
+  For Fq = 0 To 6 : Reg(Fq) = RndReg() : Next
+  Reg(7) = RndReg()
+  FoSpec = RndN(64)
+  If RndN(4) <> 0
+    If RndN(7) = 0
+      Fm = 5
+    Else
+      Fm = PickMode()
+    EndIf
+    FoSpec = (FoSpec & 7) | (Fm << 3)
+  EndIf
+  Fm = (FoSpec >> 3) & 7
+  Fn = FoSpec & 7
+  FoLn = 4 + 4 * RndN(2)
+  FoWr = RndN(2)
+  If (Fm = 6 Or Fm = 7) And RndN(4) <> 0
+    Fq = PickPc()
+    If Fq >= 0
+      Reg(7) = Fq
+      If Fn = 7
+        Fv = Fq + 2
+      Else
+        Fv = Reg(Fn)
+      EndIf
+      Fl = RndMapped()                  ; the address X(R) forms
+      PokeU(Fq + MapHost(CurI + (Fq >> 13)), (Fl - Fv) & $FFFF)
+      If Fm = 7 And RndN(4) <> 0
+        FoPoke(Fl, CurD, RndMapped())
+      EndIf
+    EndIf
+  ElseIf Fm = 3 And RndN(4) <> 0
+    If Fn = 7
+      FoPoke(Reg(7), CurI, RndMapped())
+    Else
+      FoPoke(Reg(Fn), CurD, RndMapped())
+    EndIf
+  ElseIf Fm = 5 And RndN(4) <> 0
+    FoPoke(Reg(Fn) - 2, CurD, RndMapped())
+  EndIf
+  Fps0 = RndN($10000) & #FPS_RW
+  Fh = RndW() : Fl = RndW()
+  If RndN(8) = 0
+    Fh = Fh & ~#FP_EXP                  ; a zero, or (the sign set) the undefined variable
+  EndIf
+  If FoWr
+    For Fq = 0 To #RAM_WORDS - 1 : Shadow(Fq) = Mem(Fq) : Next
+  EndIf
+  SaveState()
+  LoadState()
+  FoPrep()
+  If FoWr
+    FpDst(#P_SRC, FoSpec, FoLn)
+    GK = 0
+  Else
+    GK = FpSrc(#P_SRC, FoSpec, FoLn)
+  EndIf
+  Fv = FrwFast
+  FoSnap(@FoA(0))
+  LoadState()
+  FoPrep()
+  FpEa(FoSpec, FoLn)
+  If FoWr
+    FpWriteF(#P_SRC, FoSpec, FoLn)
+    GK = 0
+  ElseIf FpQuit
+    GK = 0
+  Else
+    GK = FpReadF(#P_SRC, FoSpec, FoLn)
+  EndIf
+  FoSnap(@FoB(0))
+  FoChecks = FoChecks + 1
+  FoFast = FoFast + Fv
+  FoField = -1
+  For Fq = 0 To 25
+    If FoA(Fq) <> FoB(Fq) And FoField < 0
+      FoField = Fq
+    EndIf
+  Next
+  If FoField >= 0
+    FoFailures = FoFailures + 1
+    If FoFirst < 0
+      FoFirst = FoChecks
+      Say("FPOP FIRST FAIL spec=") : Oct(FoSpec) : Say(" ln=") : Num(FoLn) : Say(" wr=") : Num(FoWr)
+      Say(" field=") : Num(FoField) : Say(" asm=") : Num(FoA(FoField)) : Say(" plain=") : Num(FoB(FoField))
+      Say(" fast=") : Num(Fv) : Eol()
+    EndIf
+  EndIf
+EndProcedure
+
+; ---- addfp11 (fp11.pico2, FpAddOpAsm) -----------------------------------------
+; FpAddOpAsm against FpAddOpRef on the same operands and FPS: random signs,
+; exponents mostly close together (the subtract's cancellation, the add's
+; carry), sometimes equal magnitudes, a zero, exponents 60 or more apart, or
+; at the top and the bottom of the range (overflow, underflow); F operands
+; (the low word 0) and D; FPS D, T and the overflow and underflow enables at
+; random, FID sometimes. Compared: #P_FAC, the result (V), FPS, FEC, FEA and
+; the trap.
+Global FaChecks.i, FaFailures.i, FaFirst.i, FaH.i, FaL.i, FbH.i, FbL.i, FaFps.i, FaK.i
+Global Dim FaA.i(8)
+Global Dim FaB.i(8)
+
+Procedure.i FaExp()
+  FaK = RndN(10)
+  If FaK = 0
+    ProcedureReturn 0
+  ElseIf FaK = 1
+    ProcedureReturn 250 + RndN(6)
+  ElseIf FaK = 2
+    ProcedureReturn 1 + RndN(4)
+  EndIf
+  ProcedureReturn 100 + RndN(56)
+EndProcedure
+
+Procedure FaSnap(*s.i, r.i)
+  GS = *s
+  PokeL(GS, PH(#P_FAC))
+  PokeL(GS + 4, PL(#P_FAC))
+  PokeL(GS + 8, r)
+  PokeL(GS + 12, Fps)
+  PokeL(GS + 16, Fec)
+  PokeL(GS + 20, Fea)
+  PokeL(GS + 24, TrapVector)
+EndProcedure
+
+Procedure FaPrep()
+  PH(#P_FAC) = FaH : PL(#P_FAC) = FaL
+  PH(#P_SRC) = FbH : PL(#P_SRC) = FbL
+  Fps = FaFps : Fec = 0 : Fea = 0 : TrapVector = 0
+EndProcedure
+
+Procedure FpAddOne()
+  FaFps = RndN($10000) & #FPS_RW
+  FaH = (RndW() & ~#FP_EXP) | (FaExp() << 23)
+  FaK = RndN(8)
+  If FaK = 0                            ; the same magnitude
+    FbH = FaH ! (RndN(2) << 31)
+  ElseIf FaK < 5                        ; close exponents
+    FbH = (RndW() & ~#FP_EXP) | (((((FaH >> 23) & $FF) + RndN(5) - 2) & $FF) << 23)
+  Else
+    FbH = (RndW() & ~#FP_EXP) | (FaExp() << 23)
+  EndIf
+  If FaFps & #FPS_D
+    FaL = RndW()
+    If FaK = 0
+      FbL = FaL
+      If RndN(2)
+        FbL = FaL ! (1 << RndN(32))
+      EndIf
+    Else
+      FbL = RndW()
+    EndIf
+  Else
+    FaL = 0 : FbL = 0
+  EndIf
+  FpBackupPc = RndN($10000)
+  FaPrep()
+  FpAddOpAsm()
+  FaSnap(@FaA(0), FaRet)
+  FaPrep()
+  FaK = FpAddOpRef()
+  FaSnap(@FaB(0), FaK)
+  FaChecks = FaChecks + 1
+  For FaK = 0 To 6
+    If FaA(FaK) <> FaB(FaK)
+      FaFailures = FaFailures + 1
+      If FaFirst < 0
+        FaFirst = FaChecks
+        Say("FPADD FIRST FAIL fac=") : Num(FaH) : Ch(32) : Num(FaL) : Say(" src=") : Num(FbH) : Ch(32) : Num(FbL)
+        Say(" fps=") : Oct(FaFps) : Say(" field=") : Num(FaK) : Say(" asm=") : Num(FaA(FaK)) : Say(" plain=") : Num(FaB(FaK)) : Eol()
+      EndIf
+      Break
+    EndIf
+  Next
+EndProcedure
+
 ; ---- JSR, RTS and DIV (tools/mmu_gen.py, pico2_ops) -------------------------
 ; Each assembly handler (OpAsmM) against its plain one (OpRefM), from the same
 ; random state as the MOV check: JSR of every mode (0, illegal, too), RTS of
@@ -1003,6 +1243,8 @@ Procedure Main()
   EaFirst = -1
   EuFirst = -1
   FpFirst = -1
+  FoFirst = -1
+  FaFirst = -1
   OpFirst = -1
   EdgeW(0) = 0 : EdgeW(1) = $FFFF : EdgeW(2) = $7FFF : EdgeW(3) = $8000
   EdgeW(4) = 1 : EdgeW(5) = 2 : EdgeW(6) = $FFFE : EdgeW(7) = $8001
@@ -1094,6 +1336,32 @@ Procedure Main()
       Say(" PASS")
     Else
       Say(" FAIL first=") : Num(FpFirst)
+    EndIf
+    Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
+    Mt0 = Micros()
+    For Mr = 1 To #ROUND * 2
+      FpOpOne()
+      UsbSerialTask()
+      SafetyPet()
+    Next
+    Say("ASMCHECK fpop checks=") : Num(FoChecks) : Say(" fast=") : Num(FoFast) : Say(" failures=") : Num(FoFailures)
+    If FoFailures = 0
+      Say(" PASS")
+    Else
+      Say(" FAIL first=") : Num(FoFirst)
+    EndIf
+    Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
+    Mt0 = Micros()
+    For Mr = 1 To #ROUND * 10
+      FpAddOne()
+      UsbSerialTask()
+      SafetyPet()
+    Next
+    Say("ASMCHECK fpadd checks=") : Num(FaChecks) : Say(" failures=") : Num(FaFailures)
+    If FaFailures = 0
+      Say(" PASS")
+    Else
+      Say(" FAIL first=") : Num(FaFirst)
     EndIf
     Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
     Mt0 = Micros()
