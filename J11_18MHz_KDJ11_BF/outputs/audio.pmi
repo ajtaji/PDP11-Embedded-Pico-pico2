@@ -1,0 +1,138 @@
+; Signed mono PCM at 48 kHz. One producer and one consumer, all on core 1.
+; 0 discards sound without a ring or radio; 1 uses the SDK A2DP sink;
+; 2 includes audio_plugin.pmi, implementing OutputSinkBegin/OutputSinkPoll.
+CompilerIf #OUTPUT_AUDIO_DRIVER = 1
+#OUTPUT_PCM_SIZE = 2048
+CompilerElse
+#OUTPUT_PCM_SIZE = 1024
+CompilerEndIf
+Global OutputAudioRc.i, OutputAudioRunning.i, OutputAudioSamples.i, OutputBells.i
+Global OutputMaster.i = 15, OutputEnabled.i
+Global Dim OutputFreq.i(4)
+Global Dim OutputVol.i(4)
+Global Dim OutputWave.i(4)
+Global OutputAudioAt.i, OutputAudioLate.i, OutputPcmRead.i, OutputPcmLost.i
+Global OutputBellLeft.i, OutputBellPhase.i, OutputAudioLastPoll.i
+Global OutputSinkSamples.i, OutputSinkNonzero.i, OutputSinkPeak.i
+Global OutputPcmCount.l
+CompilerIf #OUTPUT_AUDIO_DRIVER > 0
+Global Dim OutputPcm.w(#OUTPUT_PCM_SIZE)
+Global Dim OutputPhase.i(4)
+Global OutputNoise.i = $ACE1
+CompilerEndIf
+
+; Custom sinks copy up to n samples. Slow readers are counted and resynchronized.
+Procedure.i OutputAudioRead(dst.i, n.i)
+CompilerIf #OUTPUT_AUDIO_DRIVER > 0
+  Define available.i, i.i, v.i
+  If n <= 0 Or dst = 0 : ProcedureReturn 0 : EndIf
+  available = OutputPcmCount - OutputPcmRead
+  If available > #OUTPUT_PCM_SIZE
+    OutputPcmLost = OutputPcmLost + available - #OUTPUT_PCM_SIZE
+    OutputPcmRead = OutputPcmCount - #OUTPUT_PCM_SIZE : available = #OUTPUT_PCM_SIZE
+  EndIf
+  If n > available : n = available : EndIf
+  For i = 0 To n - 1
+    v = OutputPcm((OutputPcmRead + i) & (#OUTPUT_PCM_SIZE - 1))
+    PokeW(dst + i * 2, v)
+    If v <> 0 : OutputSinkNonzero = OutputSinkNonzero + 1 : EndIf
+    If v < 0 : v = -v : EndIf
+    If v > OutputSinkPeak : OutputSinkPeak = v : EndIf
+  Next
+  OutputSinkSamples = OutputSinkSamples + n
+  OutputPcmRead = OutputPcmRead + n
+  ProcedureReturn n
+CompilerElse
+  ProcedureReturn 0
+CompilerEndIf
+EndProcedure
+
+CompilerIf #OUTPUT_AUDIO_DRIVER = 2
+XIncludeFile "audio_plugin.pmi"
+CompilerEndIf
+
+Procedure OutputAudioBegin()
+  OutputAudioRc = 0 : OutputAudioRunning = 0
+  If OutputAudio = 0 : ProcedureReturn : EndIf
+  If OutputAudio <> #OUTPUT_AUDIO_DRIVER
+    OutputAudioRc = -2 : ProcedureReturn
+  EndIf
+CompilerIf #OUTPUT_AUDIO_DRIVER = 1
+  BtAudioStereo(1)
+  OutputAudioRc = BtAudioBegin(@OutputPeer(0))
+  If OutputAudioRc = 0
+    BtAudioSource(@OutputPcm(0), #OUTPUT_PCM_SIZE, @OutputPcmCount)
+    BtAudioLead(30000) : BtAudioPumps(0)
+    OutputAudioRunning = 1
+  EndIf
+CompilerElseIf #OUTPUT_AUDIO_DRIVER = 2
+  OutputAudioRc = OutputSinkBegin()
+  If OutputAudioRc = 0 : OutputAudioRunning = 1 : EndIf
+CompilerEndIf
+  OutputAudioAt = Micros()
+EndProcedure
+
+Procedure OutputBell()
+  OutputBells = OutputBells + 1
+  OutputBellLeft = 4800                  ; 100 ms at 880 Hz
+EndProcedure
+
+; General four-voice synthesis, also used by the guest demo sound registers.
+; The null backend compiles this body out. No guest/program recognition.
+Procedure OutputAudioPoll()
+CompilerIf #OUTPUT_AUDIO_DRIVER > 0
+  Define now.i, elapsed.i, n.i, i.i, v.i, s.i, t.i, val.i, at.i
+  If OutputAudioRunning = 0 : ProcedureReturn : EndIf
+  now = Micros() : elapsed = now - OutputAudioAt
+  If elapsed >= 1000
+    n = (elapsed / 1000) * 48
+    OutputAudioAt = OutputAudioAt + (elapsed / 1000) * 1000
+    If n > 192
+      OutputAudioLate = OutputAudioLate + n - 192 : n = 192
+    EndIf
+    at = OutputPcmCount
+    For i = 0 To n - 1
+      s = 0
+      If OutputEnabled
+        For v = 0 To 3
+          If OutputFreq(v) > 0 And OutputVol(v) > 0
+            t = OutputPhase(v) + OutputFreq(v) * 89478
+            If OutputWave(v) = 3 And ((t ! OutputPhase(v)) & $80000000) <> 0 And (t & $80000000) = 0
+              OutputNoise = ((OutputNoise >> 1) | (((OutputNoise ! (OutputNoise >> 2) ! (OutputNoise >> 3) ! (OutputNoise >> 5)) & 1) << 15)) & $FFFF
+            EndIf
+            OutputPhase(v) = t : t = (t >> 16) & $FFFF
+            If OutputWave(v) = 0
+              If t < 32768 : val = 32767 : Else : val = -32767 : EndIf
+            ElseIf OutputWave(v) = 1
+              If t < 32768 : val = t * 2 - 32767 : Else : val = (65535 - t) * 2 - 32767 : EndIf
+            ElseIf OutputWave(v) = 2
+              val = t - 32768
+            Else
+              If OutputNoise & 1 : val = 32767 : Else : val = -32767 : EndIf
+            EndIf
+            s = s + val * OutputVol(v)
+          EndIf
+        Next
+        s = (s * OutputMaster) >> 11
+      EndIf
+      If OutputBellLeft > 0
+        OutputBellLeft = OutputBellLeft - 1
+        OutputBellPhase = (OutputBellPhase + 880) % 48000
+        If OutputBellPhase < 24000 : s = s + 4000 : Else : s = s - 4000 : EndIf
+      EndIf
+      If s > 32767 : s = 32767 : ElseIf s < -32768 : s = -32768 : EndIf
+      OutputPcm((at + i) & (#OUTPUT_PCM_SIZE - 1)) = s
+    Next
+    SmpBarrier() : OutputPcmCount = at + n
+    OutputAudioSamples = OutputAudioSamples + n
+  EndIf
+CompilerIf #OUTPUT_AUDIO_DRIVER = 1
+  If now - OutputAudioLastPoll >= 150
+    OutputAudioLastPoll = now : BtAudioPoll()
+    If BtAudioLive() = 0 : OutputAudioRc = BtAudioError() : OutputAudioRunning = 0 : EndIf
+  EndIf
+CompilerElseIf #OUTPUT_AUDIO_DRIVER = 2
+  OutputSinkPoll()
+CompilerEndIf
+CompilerEndIf
+EndProcedure

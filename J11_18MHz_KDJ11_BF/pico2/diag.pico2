@@ -73,7 +73,8 @@ CompilerEndIf
 #PSRAM_SRAM_KB = 224         ; with PSRAM: how much of the PDP-11 memory is in SRAM (cpu.pico2, #RAM_BYTES); the rest is in the PSRAM. 224: with CpuRun in SRAM too (psram_build.py), the most that leaves OpTable its 32 KB in one piece
 #SRAM_MEM_KB = 152           ; the PDP-11 memory without PSRAM, in SRAM (cpu.pico2, #RAM_BYTES): 152 KB, the rest of the SRAM going to the file-write overlay (disk.pico2)
 #DEMO_DEV = 0                ; 1 = the demo display and tone generator (demo_dev.pico2): only tools/demo_build.py sets it
-#TERM_PANEL = 0              ; 1 = the console as a terminal on the LAFVIN panel (term_panel.pico2): only tools/term_build.py sets it
+#OUTPUT_AUDIO_DRIVER = 0     ; 0 silent, 1 Bluetooth, 2 custom PCM sink
+#TERM_PANEL = 1              ; standard modular panel console; settings select the controller
 #PS_DISK_UNCACHED = 1        ; the packs in PSRAM: 1 = through the uncached window, 0 = through the XIP cache
 #PS_MEM_UNCACHED = 0         ; the PDP-11 memory in PSRAM: the same choice (psram_pdp11.pico2, WHICH WINDOW)
 EnableExplicit
@@ -82,6 +83,23 @@ XIncludeFile "RP2350/Lib/timer.pico2"
 XIncludeFile "RP2350/Lib/uart.pico2"
 XIncludeFile "RP2350/Lib/usb_serial.pico2"
 XIncludeFile "RP2350/Lib/safety.pico2"
+CompilerIf #OUTPUT_AUDIO_DRIVER = 1
+XIncludeFile "RP2350/Lib/cyw43_nvram.pico2"
+XIncludeFile "RP2350/Lib/bits.pico2"
+XIncludeFile "RP2350/Lib/wiring.pico2"
+XIncludeFile "RP2350/Lib/string_out.pico2"
+XIncludeFile "RP2350/Lib/cyw43.pico2"
+XIncludeFile "RP2350/Lib/cyw43_btfw.pico2"
+XIncludeFile "RP2350/Lib/bluetooth.pico2"
+XIncludeFile "Shared/Bluetooth/sbc.pmi"
+XIncludeFile "Shared/Bluetooth/bt_audio.pmi"
+CompilerEndIf
+CompilerIf #TERM_PANEL = 1
+XIncludeFile "RP2350/Lib/bits.pico2"
+XIncludeFile "RP2350/Lib/wiring.pico2"
+XIncludeFile "RP2350/Lib/spi.pico2"
+XIncludeFile "RP2350/Lib/st7796.pico2"
+CompilerEndIf
 XIncludeFile "RP2350/Lib/multicore_smp.pico2"
 XIncludeFile "cpu.pico2"
 XIncludeFile "fp11.pico2"
@@ -99,6 +117,15 @@ XIncludeFile "rp11.pico2"
 XIncludeFile "store.pico2"
 XIncludeFile "tape_image.pico2"
 XIncludeFile "tapeload.pico2"
+CompilerIf #TERM_PANEL = 1
+XIncludeFile "../outputs/config.pmi"
+XIncludeFile "../outputs/panel.pmi"
+XIncludeFile "../outputs/audio.pmi"
+XIncludeFile "../outputs/truetype_assets.pmi"
+XIncludeFile "../outputs/truetype.pmi"
+XIncludeFile "../outputs/terminal.pmi"
+XIncludeFile "../outputs/font_capture.pmi"
+CompilerEndIf
 
 #CLOCK_KHZ = 150000
 ; USB IS SERVICED AT LEAST EVERY MILLISECOND, IN EVERY STATE. The USB
@@ -184,9 +211,15 @@ Procedure Service()
     EndIf
   CompilerEndIf
   UsbSerialTask()
+  CompilerIf #TERM_PANEL = 1 And #OUTPUT_AUDIO_DRIVER > 0
+    OutputAudioPoll()
+  CompilerEndIf
 EndProcedure
 
 Procedure Ch(c.i)
+  CompilerIf #TERM_PANEL = 1 And #OUTPUT_AUDIO_DRIVER > 0
+    OutputAudioPoll()
+  CompilerEndIf
   UsbSerialWrite(c)
 EndProcedure
 
@@ -365,6 +398,24 @@ Global ConStallAt.i                      ; when the port last took a character
 Procedure DrainConsole()
   Define c.i
   Define room.i
+CompilerIf #TERM_PANEL = 1
+  TermConsume()
+  If TpOn And UsbSerialReady() = 0
+    While ConOutTail <> TpTail
+      c = ConOut(ConOutTail & (#CON_SIZE - 1)) & $7F
+      ConOutTail = ConOutTail + 1
+      If FromDisk
+        If AutoPending <> 0 And c = 64
+          AutoBootType()
+        ElseIf AutoStage = 2 And c = AutoThenCh
+          AutoThenType()
+        EndIf
+      EndIf
+      If c = 7 : Bells = Bells + 1 : EndIf
+    Wend
+    ProcedureReturn
+  EndIf
+CompilerEndIf
   room = UsbSerialWriteRoom()
   If ConOutTail = ConOutHead Or room >= 3
     ConStallAt = Micros()
@@ -766,13 +817,18 @@ Procedure StatsBlock()
     Say(", interrupts off")
   EndIf
   CompilerIf #TERM_PANEL = 1
-    StatLine("panel   the console as an 80 x 24 terminal: ") : Num(TpFrames) : Say(" frames, ") : Num(TpRowsSent)
-    Say(" rows sent; ") : Num(TpFps) : Say(" frames in the last second (60 at most: a frame only when the screen changed); SPI ")
-    Num(SpiHz(0) / 1000) : Say(" kHz")
+    StatLine("panel   profile ") : Num(OutputPanel) : Say(" grid ") : Num(TpCols) : Say(" x ") : Num(TpRows)
+    Say(" frames ") : Num(TpFrames) : Say(" rows ") : Num(TpRowsSent) : Say(" errors ") : Num(PanelErrors)
+    Say(" config ") : Num(OutputConfigState)
+    StatLine("font    face ") : Num(TtFace) : Say(" size ") : Num(TtSize) : Say(" ready ") : Num(TtReady) : Say(" building ") : Num(TtBuilding) : Say(" error ") : Num(TtError) : Say(" cache ") : Num(TtCacheUsed) : Say(" renders ") : Num(TtRenders) : Say(" edges ") : Num(TtMaxEdges) : Say(" change ") : Num(TpFontRc)
+    StatLine("audio   requested ") : Num(OutputAudio) : Say(" linked ") : Num(#OUTPUT_AUDIO_DRIVER) : Say(" status ") : Num(OutputAudioRc) : Say(" samples ") : Num(OutputAudioSamples) : Say(" bells ") : Num(OutputBells)
+  CompilerIf #OUTPUT_AUDIO_DRIVER = 2
+    StatLine("pcm     consumed ") : Num(OutputSinkSamples) : Say(" nonzero ") : Num(OutputSinkNonzero) : Say(" peak ") : Num(OutputSinkPeak) : Say(" lost ") : Num(OutputPcmLost) : Say(" late ") : Num(OutputAudioLate)
+  CompilerEndIf
   CompilerEndIf
   CompilerIf #DEMO_DEV = 1
     StatLine("display 164000: DPCSR ") : Oct(DdCsr & $C1) : Say(", DPBASE ") : Oct(DdBase) : Say(", ")
-    Num(DdFrames) : Say(" frames seen by the PDP-11, ") : Num(DvShown) : Say(" sent to the panel, ") : Num(DdSeq) : Say(" vertical blanks, SPI ") : Num(SpiHz(0) / 1000) : Say(" kHz; sound ") : If AudioRunning : Say("playing to the speaker") : Else : Say("not playing (") : Num(AudioRc) : Say(")") : EndIf
+    Num(DdFrames) : Say(" frames seen by the PDP-11, ") : Num(DvShown) : Say(" sent to the panel, ") : Num(DdSeq) : Say(" vertical blanks, SPI ") : Num(SpiHz(0) / 1000) : Say(" kHz; sound ") : If OutputAudioRunning : Say("PCM backend active") : Else : Say("not playing (") : Num(OutputAudioRc) : Say(")") : EndIf
   CompilerEndIf
   StatLine("uptime  ") : Num(up / 3600) : Ch(58) : Num((up / 600) % 6) : Num((up / 60) % 10) : Ch(58)
   Num((up / 10) % 6) : Num(up % 10) : Say(" since power-up, ") : Num(UpSec - ProgUpSec) : Say(" s since BOOT")
@@ -1314,6 +1370,18 @@ Procedure InByte(c.i)
   EndIf
   If FrameState = 0 And EscPending <> 0   ; Ctrl-] then a key: the firmware's, not Unix's
     EscPending = 0
+    CompilerIf #TERM_PANEL = 1
+      If c = 102 Or c = 70 Or c = 43 Or c = 45
+        TermFontControl(c)
+        SayHost("font change queued") : Eol()
+        ProcedureReturn
+      EndIf
+    CompilerEndIf
+    CompilerIf #TERM_PANEL = 1
+      If c = 116 Or c = 84
+        FontCapture() : ProcedureReturn
+      EndIf
+    CompilerEndIf
     If c = 115 Or c = 83                 ; s: the stats block
       StatsBlock()
       ProcedureReturn
@@ -1720,6 +1788,9 @@ Procedure Core1Main()
   KwNext = Micros() + #KW_PERIOD_US       ; the line clock's time is core 1's
   t0 = Micros()                          ; the port opened, or 30 s
   While UsbSerialReady() = 0 And (Micros() - t0) < 30000000
+CompilerIf #TERM_PANEL = 1
+    If TpOn : Break : EndIf
+CompilerEndIf
     Service()
     DkServe()
     KwTick()
@@ -1933,7 +2004,7 @@ Procedure Main()
   CompilerEndIf
   CompilerIf #DEMO_DEV = 1
     DvBegin()                            ; the LAFVIN ST7796 panel (demo_dev.pico2), before core 1 owns it
-    DdAudioBegin()                       ; the Bluetooth speaker, when the build has one (core 1 not started: the link key may be written)
+
   CompilerEndIf
   SmpBarrier()                           ; all of the above, before core 1 starts
   McCore1ReleaseHold()                   ; a stale hold from a previous program

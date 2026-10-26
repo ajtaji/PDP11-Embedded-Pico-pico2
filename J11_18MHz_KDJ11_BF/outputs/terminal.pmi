@@ -1,0 +1,402 @@
+; Controller-independent VT52/ANSI console; at most 80x24 cells.
+; TrueType outlines stay in flash; bounded cached glyphs and one RGB565 scanline.
+Global TpCh.i, TpCw.i, TpFontBits.i, TpFontAdvance.i, TpFontLeft.i
+#TP_FRAME_US = 16667
+#TP_BLINK_US = 533333
+Global Dim TpScr.a(80 * 24)
+Global Dim TpDirty.a(24)
+Global Dim TpLut.i(16)
+Global Dim TpStrip.u(480)
+Global TpFontLive.i
+Global TpFontPending.i, TpFontFace.i, TpFontSize.i
+Global TpFontRc.i, TpFontWasReady.i, TpLineFeeds.i
+Global TpGraphicsWas.i
+Global TpCols.i, TpRows.i, TpX0.i, TpY0.i
+Global TpTop.i, TpX.i, TpY.i, TpEsc.i, TpP1.i, TpP2.i, TpNP.i, TpTail.i, TpOn.i
+Global TpNext.i, TpRow.i = -1, TpScan.i, TpCurOn.i, TpBlinkAt.i, TpCurX.i, TpCurY.i
+Global TpFrames.i, TpRowsSent.i, TpBells.i, TpFps.i, TpFpsFrames.i, TpFpsAt.i, TpSkipped.i
+
+Procedure TtYield()
+  Service()
+  If TpFontLive
+    KwTick() : DkServe()
+  EndIf
+EndProcedure
+
+Procedure TpClearRow(r.i, x0.i)       ; screen row r from column x0 to its end
+  Define i.i
+  Define a.i
+  a = ((TpTop + r) % TpRows) * TpCols
+  For i = x0 To TpCols - 1
+    TpScr(a + i) = 32
+  Next
+  TpDirty(r) = 1
+EndProcedure
+
+Procedure TpLineFeed()
+  Define i.i
+  TpLineFeeds = TpLineFeeds + 1
+  If TpY < TpRows - 1
+    TpY = TpY + 1
+  Else                                   ; the foot: the screen moves up a row
+    TpTop = (TpTop + 1) % TpRows
+    TpClearRow(TpRows - 1, 0)
+    For i = 0 To TpRows - 1
+      TpDirty(i) = 1
+    Next
+  EndIf
+EndProcedure
+
+Procedure TpCsi(c.i)                  ; an ANSI CSI's final character
+  Define n.i
+  Define i.i
+  n = TpP1
+  If n < 1
+    n = 1
+  EndIf
+  If c = 72 Or c = 102                   ; H, f: row ; col, from 1
+    TpY = TpP1 - 1
+    TpX = TpP2 - 1
+  ElseIf c = 74                          ; J: 0 the rest of the screen, 2 all of it
+    If TpP1 = 2
+      For i = 0 To TpRows - 1
+        TpClearRow(i, 0)
+      Next
+    Else
+      TpClearRow(TpY, TpX)
+      For i = TpY + 1 To TpRows - 1
+        TpClearRow(i, 0)
+      Next
+    EndIf
+  ElseIf c = 75                          ; K: the rest of the line
+    TpClearRow(TpY, TpX)
+  ElseIf c = 65
+    TpY = TpY - n
+  ElseIf c = 66
+    TpY = TpY + n
+  ElseIf c = 67
+    TpX = TpX + n
+  ElseIf c = 68
+    TpX = TpX - n
+  EndIf
+EndProcedure
+
+; One character from the console.
+Procedure.i TpPixelX(r.i, col.i)
+  Define i.i, pos.i, start.i
+  pos = 0 : start = ((TpTop + r) % TpRows) * TpCols
+  For i = 0 To col - 1
+    pos = pos + PeekA(TpFontAdvance + TpScr(start + i) - 32)
+  Next
+  ProcedureReturn pos
+EndProcedure
+
+Procedure TermPut(c.i)
+  Define a.i
+  If TpEsc = 1                           ; after ESC
+    TpEsc = 0
+    If c = 91                            ; [ : ANSI
+      TpEsc = 2 : TpP1 = 0 : TpP2 = 0 : TpNP = 0
+    ElseIf c = 89                        ; Y: VT52's row, then column
+      TpEsc = 3
+    ElseIf c = 65
+      TpY = TpY - 1
+    ElseIf c = 66
+      TpY = TpY + 1
+    ElseIf c = 67
+      TpX = TpX + 1
+    ElseIf c = 68
+      TpX = TpX - 1
+    ElseIf c = 72
+      TpX = 0 : TpY = 0
+    ElseIf c = 74
+      TpCsi(74)
+    ElseIf c = 75
+      TpCsi(75)
+    EndIf
+  ElseIf TpEsc = 2                       ; inside ESC [
+    If c >= 48 And c <= 57
+      If TpNP = 0
+        TpP1 = TpP1 * 10 + c - 48
+      Else
+        TpP2 = TpP2 * 10 + c - 48
+      EndIf
+    ElseIf c = 59
+      TpNP = 1
+    ElseIf c >= 64
+      TpEsc = 0
+      TpCsi(c)
+    EndIf
+  ElseIf TpEsc = 3
+    TpY = c - 32
+    TpEsc = 4
+  ElseIf TpEsc = 4
+    TpX = c - 32
+    TpEsc = 0
+  ElseIf c = 27
+    TpEsc = 1
+  ElseIf c = 13
+    TpX = 0
+  ElseIf c = 10
+    TpLineFeed()
+  ElseIf c = 8
+    If TpX > 0
+      TpX = TpX - 1
+    EndIf
+  ElseIf c = 9
+    TpX = (TpX / 8 + 1) * 8
+  ElseIf c = 7
+    TpBells = TpBells + 1
+    OutputBell()
+  ElseIf c >= 32 And c < 127
+    If TpX >= TpCols Or TpPixelX(TpY, TpX) + PeekA(TpFontAdvance + c - 32) > PanelWidth - 4
+      TpX = 0
+      TpLineFeed()
+    EndIf
+    a = ((TpTop + TpY) % TpRows) * TpCols + TpX
+    TpScr(a) = c
+    TpDirty(TpY) = 1
+    TpX = TpX + 1
+  EndIf
+  If TpX < 0                             ; the cursor stays on the screen (TpX = 80: pending)
+    TpX = 0
+  ElseIf TpX > TpCols
+    TpX = TpCols
+  EndIf
+  If TpY < 0
+    TpY = 0
+  ElseIf TpY >= TpRows
+    TpY = TpRows - 1
+  EndIf
+EndProcedure
+
+Procedure TermHost(*text.i)
+  Define p.i, c.i
+  p = *text
+  c = PeekA(p) & 255
+  While c
+    TermPut(c) : p = p + 1 : c = PeekA(p) & 255
+  Wend
+EndProcedure
+
+Procedure TermBegin()
+  Define i.i, v.i
+  OutputLoadConfig()
+  PanelBegin()
+  OutputAudioBegin()
+  TpOn = PanelReady
+  If TpOn = 0 : ProcedureReturn : EndIf
+  i = 14 : If OutputFont : i = 11 : EndIf
+  If TtSelect(0, i) = 0 : TpOn = 0 : ProcedureReturn : EndIf
+  TpFontAdvance = @TtAdvance(0)
+  TpCh = TtLine
+  TpCols = 80 : TpRows = PanelHeight / TpCh
+  If TpCols > 80 : TpCols = 80 : EndIf
+  If TpRows > 24 : TpRows = 24 : EndIf
+  TpX0 = 2
+  TpY0 = (PanelHeight - TpRows * TpCh) / 2
+  For i = 0 To 15
+    v = i * 17
+    TpLut(i) = ((v >> 3) << 11) | ((v >> 2) << 5) | (v >> 3)
+  Next
+  For i = 0 To 80 * 24 - 1 : TpScr(i) = 32 : Next
+  For i = 0 To TpRows - 1 : TpDirty(i) = 1 : Next
+  TpTail = ConOutHead
+  TermHost("PDP-11 emulator") : TermPut(13) : TermPut(10)
+  TermHost("USB console available") : TermPut(13) : TermPut(10)
+EndProcedure
+
+Procedure TermConsume()
+  Define behind.i, c.i, budget.i
+  budget = 128
+  behind = ConOutHead - TpTail
+  If behind < 0
+    TpTail = ConOutTail
+  ElseIf behind > #CON_SIZE
+    TpSkipped = TpSkipped + behind - #CON_SIZE
+    TpTail = ConOutHead - #CON_SIZE
+  EndIf
+  While TpTail <> ConOutHead And budget > 0
+    SmpBarrier()
+    c = ConOut(TpTail & (#CON_SIZE - 1)) & $7F
+    If TpOn
+      TermPut(c)
+    ElseIf c = 7
+      OutputBell()
+    EndIf
+    TpTail = TpTail + 1 : budget = budget - 1
+    If (budget & 15) = 0 And TpFontLive : TtYield() : EndIf
+  Wend
+EndProcedure
+
+Procedure TpRenderLine()
+  Define x.i, g.i, a.i, col.i, packed.i, level.i, xpos.i, px.i, glyph.i, curAt.i, curW.i, scan.i
+  a = ((TpTop + TpRow) % TpRows) * TpCols
+  For col = 0 To PanelWidth - 1 : TpStrip(col) = 0 : Next
+  xpos = TpX0 : curAt = -1 : curW = 0
+  For x = 0 To TpCols - 1
+    glyph = TpScr(a + x) - 32
+    If TpCurOn And TpRow = TpCurY And x = TpCurX
+      curAt = xpos : curW = TtAdvance(glyph)
+    EndIf
+    scan = TpScan - TtTop(glyph)
+    If scan >= 0 And scan < TtHeight(glyph)
+      g = @TtCache(0) + TtOffset(glyph) + scan * ((TtWidth(glyph)+3)/4)
+      px = xpos + TtLeft(glyph)
+      For col = 0 To TtWidth(glyph) - 1
+        packed = PeekA(g + (col >> 2)) & 255
+        level = (packed >> ((col & 3)*2)) & 3
+        If level And px + col >= 0 And px + col < PanelWidth
+          TpStrip(px + col) = TpLut(level * 5)
+        EndIf
+      Next
+    EndIf
+    xpos = xpos + TtAdvance(glyph)
+    If xpos >= PanelWidth : Break : EndIf
+  Next
+  If curAt >= 0
+    For col = curAt To curAt + curW - 1
+      If col < PanelWidth : TpStrip(col) = TpStrip(col) ! $FFFF : EndIf
+    Next
+  EndIf
+EndProcedure
+
+; Reflow visible text through the new face/size. The cache doubles as temporary
+; text storage before rasterization starts, so resize needs no second screen.
+Procedure TpApplyFont(face.i, size.i)
+  Define oldFace.i, oldSize.i, oldRows.i, oldX.i, oldY.i, i.i, r.i, col.i, last.i, endRow.i
+  Define cursorLine.i, cursorX.i, visibleTop.i, c.i
+  If TpOn = 0 Or TtBuilding : TpFontRc = -30 : ProcedureReturn : EndIf
+  If PanelPoll() = 0 : TpFontRc = -31 : ProcedureReturn : EndIf
+  oldFace = TtFace : oldSize = TtSize : oldRows = TpRows : oldX = TpX : oldY = TpY
+  If TtSelect(face,size) = 0
+    TpFontRc = TtError
+    TtSelect(oldFace,oldSize) : TpFontWasReady = 0 : TpRow = -1
+    ProcedureReturn
+  EndIf
+  TpFontRc = 0
+  For r = 0 To oldRows - 1
+    For col = 0 To TpCols - 1
+      TtCache(r*TpCols+col) = TpScr(((TpTop+r)%oldRows)*TpCols+col)
+    Next
+  Next
+  TpCh = TtLine : TpRows = PanelHeight / TpCh : If TpRows > 24 : TpRows = 24 : EndIf
+  TpY0 = (PanelHeight - TpRows*TpCh)/2
+  TpTop = 0 : TpX = 0 : TpY = 0 : TpEsc = 0 : TpLineFeeds = 0
+  For i = 0 To 80*24-1 : TpScr(i) = 32 : Next
+  endRow = oldY
+  For r = 0 To oldRows - 1
+    For col = 0 To TpCols - 1
+      If TtCache(r*TpCols+col) <> 32 And r > endRow : endRow = r : EndIf
+    Next
+  Next
+  cursorLine = 0 : cursorX = 0
+  For r = 0 To endRow
+    last = -1
+    For col = 0 To TpCols - 1
+      If TtCache(r*TpCols+col) <> 32 : last = col : EndIf
+    Next
+    If r = oldY And oldX > last : last = oldX - 1 : EndIf
+    For col = 0 To last
+      If (col & 7) = 0 : TtYield() : EndIf
+      c = TtCache(r*TpCols+col)
+      TermPut(c)
+      If r = oldY And col + 1 = oldX : cursorLine = TpLineFeeds : cursorX = TpX : EndIf
+    Next
+    If r = oldY And oldX = 0 : cursorLine = TpLineFeeds : cursorX = 0 : EndIf
+    If r < endRow : TermPut(13) : TermPut(10) : EndIf
+  Next
+  visibleTop = TpLineFeeds - TpRows + 1 : If visibleTop < 0 : visibleTop = 0 : EndIf
+  TpY = cursorLine - visibleTop : If TpY < 0 : TpY = 0 : EndIf
+  If TpY >= TpRows : TpY = TpRows - 1 : EndIf
+  TpX = cursorX : TpCurX = TpX : TpCurY = TpY
+  TpFontWasReady = 0 : TpRow = -1
+  For i = 0 To TpRows - 1 : TpDirty(i) = 1 : Next
+EndProcedure
+
+Procedure TermFontControl(c.i)
+  If TpFontPending = 0 : TpFontFace = TtFace : TpFontSize = TtSize : EndIf
+  If c = 102 Or c = 70
+    TpFontFace = 1 - TpFontFace
+  ElseIf c = 43
+    TpFontSize = TpFontSize + 1
+  Else
+    TpFontSize = TpFontSize - 1
+  EndIf
+  TpFontPending = 1
+EndProcedure
+
+Procedure.i TpNextDirty(from.i)
+  Define r.i
+  For r = from To TpRows - 1
+    If TpDirty(r) : ProcedureReturn r : EndIf
+  Next
+  ProcedureReturn -1
+EndProcedure
+
+; One bounded scanline per turn. USB, clock, storage and sound keep running.
+Procedure.i TermStep()
+  Define now.i, i.i
+  OutputAudioPoll()
+  If TpOn = 0 : ProcedureReturn 0 : EndIf
+  TpFontLive = 1
+  TermConsume()
+  If TpFontPending And TtBuilding = 0
+    If PanelPoll() = 0 : ProcedureReturn 0 : EndIf
+    TpFontPending = 0 : TpApplyFont(TpFontFace, TpFontSize)
+    ProcedureReturn 1
+  EndIf
+  If TtBuilding
+    TtStep() : ProcedureReturn 1
+  EndIf
+  If TtReady = 0 : ProcedureReturn 0 : EndIf
+  If TpFontWasReady = 0
+    If PanelPoll() = 0 : ProcedureReturn 0 : EndIf
+    TpFontWasReady = 1 : TpRow = -1
+    For i = 0 To TpRows - 1 : TpDirty(i) = 1 : Next
+  EndIf
+  If OutputGraphics
+    TpGraphicsWas = 1 : ProcedureReturn 0
+  EndIf
+  If TpGraphicsWas
+    If PanelPoll() = 0 : ProcedureReturn 0 : EndIf
+    TpGraphicsWas = 0 : TpRow = -1
+    For i = 0 To TpRows - 1 : TpDirty(i) = 1 : Next
+  EndIf
+  now = Micros()
+  If now - TpBlinkAt >= #TP_BLINK_US
+    TpBlinkAt = now : TpCurOn = 1 - TpCurOn : TpDirty(TpCurY) = 1
+  EndIf
+  If TpCurX <> TpX Or TpCurY <> TpY
+    TpDirty(TpCurY) = 1 : TpCurX = TpX
+    If TpCurX >= TpCols : TpCurX = TpCols - 1 : EndIf
+    TpCurY = TpY : TpDirty(TpCurY) = 1
+  EndIf
+  If now - TpFpsAt >= 1000000
+    TpFps = TpFrames - TpFpsFrames : TpFpsFrames = TpFrames : TpFpsAt = now
+  EndIf
+  If TpRow >= 0
+    If PanelPoll() = 0 : ProcedureReturn 0 : EndIf
+    TpScan = TpScan + 1
+    If TpScan >= TpCh
+      TpRowsSent = TpRowsSent + 1 : TpScan = 0
+      TpRow = TpNextDirty(TpRow + 1)
+      If TpRow < 0
+        TpFrames = TpFrames + 1 : ProcedureReturn 1
+      EndIf
+      TpDirty(TpRow) = 0
+    EndIf
+  Else
+    If now - TpNext < 0 : ProcedureReturn 0 : EndIf
+    TpNext = now + #TP_FRAME_US
+    TpRow = TpNextDirty(0)
+    If TpRow < 0 : ProcedureReturn 0 : EndIf
+    TpDirty(TpRow) = 0 : TpScan = 0
+  EndIf
+  TpRenderLine()
+  If PanelStart(0, TpY0 + TpRow * TpCh + TpScan, PanelWidth, 1, @TpStrip(0)) = 0
+    TpDirty(TpRow) = 1 : TpRow = -1
+  EndIf
+  ProcedureReturn 1
+EndProcedure
+

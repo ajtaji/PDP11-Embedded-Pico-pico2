@@ -1,34 +1,20 @@
 #!/usr/bin/env python3
 """
-term_build.py - build the Pico 2 W's PDP-11 firmware with the console on the LAFVIN ST7796 panel.
+Compatibility wrapper for the RP2350 standard panel-enabled Unix build.
 
-    python tools/term_build.py [--compiler EXE] [--out DIR] [--port COMnn] [--keep]
+    python tools/term_build.py --compiler EXE [--out DIR] [--port COMnn]
 
-The firmware is the emulator's own (J11_18MHz_KDJ11_BF/pico2/diag.pico2) with #TERM_PANEL = 1: core 1
-also shows the PDP-11's console as an 80 x 24 terminal on the kit's 480 x 320 panel at up to 60 frames a
-second (pico2/term_panel.pico2, the glyphs in pico2/term_font.pico2 from tools/term_font.py). Everything
-else is the Pico 2 W build as it is - the same packs (V6 from the Pico 2 W image), the keyboard on the USB
-port. Like demo_build.py and psram_build.py it writes a copy beside diag.pico2 and removes it afterwards;
-the source's #TERM_PANEL = 0 keeps the terminal out of every other build.
-
-COMPILER: PureMetal Forge of 2026-10-25 (341fd5aca) or later. With the 19 Oct release the build is 2 KB short of
-SRAM (its code copied to SRAM is 4 KB bigger, and the swap RAM disk's 57 KB then finds no free run); the
-Unix firmware without the panel builds with either.
-
-OUTPUT (in --out, default build_term/ at the repository root)
-    term_firmware.uf2   the firmware (the packs stay on the board: flash the Pico 2 W image first)
-    term_firmware.bin   the flat image
+Panel output is now standard on both processors. This wrapper retains the
+term_firmware.uf2/.bin filenames. Use output_build.py for either processor
+and optional audio, and output_config.py to choose a resident screen driver.
+The normal 152 KB guest memory and 248-block file overlay are preserved.
 """
 import argparse, os, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 SRC = os.path.join(REPO, "J11_18MHz_KDJ11_BF", "pico2")
-EDITS = [("#TERM_PANEL = 0 ", "#TERM_PANEL = 1 "),
-         ('XIncludeFile "rk11.pico2"', 'XIncludeFile "rk11.pico2"\n'
-                                      'XIncludeFile "RP2350/Lib/spi.pico2"       ; the terminal build: the panel (term_panel.pico2)\n'
-                                      'XIncludeFile "RP2350/Lib/st7796.pico2"\n'
-                                      'XIncludeFile "term_panel.pico2"')]
+EDITS = []  # Panel output is standard; runtime settings select the controller.
 
 
 def run(cmd, **kw):
@@ -55,7 +41,6 @@ def main():
                 sys.exit("term_build: diag.pico2 does not hold exactly one '%s' - it has moved; "
                          "update EDITS here to match." % old.strip())
             text = text.replace(old, new)
-        text = text.rstrip() + '\nXIncludeFile "term_font.pico2"          ; the glyphs (a DataSection): last\n'
         open(tmp, "wb").write(text.encode("utf-8"))
         uf2 = os.path.join(out, "term_firmware.uf2")
         cmd = [a.compiler, "--compile", tmp, "-t", "rp2350", "-o", uf2]

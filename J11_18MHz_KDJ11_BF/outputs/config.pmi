@@ -1,0 +1,42 @@
+; Output settings are data, independent of the emulator and panel drivers.
+; P11O v1: panel at byte 5, audio at 6, Bluetooth peer at 8..13,
+; FNV-1a of bytes 0..23 at 24..27. The rest of the sector is reserved.
+; Legacy/erased sectors use the standard LAFVIN panel and silent audio.
+CompilerIf #STAT_CHIP = 2350
+#OUTPUT_CONFIG_AT = $4F000
+CompilerElse
+#OUTPUT_CONFIG_AT = $3F000
+CompilerEndIf
+#OUTPUT_CONFIG_BYTES = 4096
+FlashRegion "PDP11 outputs", #OUTPUT_CONFIG_AT, #OUTPUT_CONFIG_BYTES, "raw"
+
+Global OutputPanel.i = 1, OutputAudio.i, OutputConfigState.i, OutputGraphics.i, OutputFont.i
+Global Dim OutputPeer.a(6)
+
+Procedure.i OutputConfigHash(p.i)
+  Define h.i, i.i
+  h = $811C9DC5
+  For i = 0 To 23
+    h = (h ! (PeekA(p + i) & 255)) * 16777619
+  Next
+  ProcedureReturn h
+EndProcedure
+
+Procedure OutputLoadConfig()
+  Define p.i, i.i
+  p = $10000000 + #OUTPUT_CONFIG_AT
+  OutputPanel = 1 : OutputAudio = 0 : OutputFont = 0 : OutputConfigState = 0
+  If PeekL(p) <> $4F313150
+    ProcedureReturn
+  EndIf
+  OutputPanel = 0 : OutputConfigState = -1
+  If PeekA(p + 4) <> 1 Or PeekA(p + 5) > 4 Or PeekA(p + 6) > 2 Or PeekA(p + 7) > 1
+    ProcedureReturn
+  EndIf
+  If PeekL(p + 24) <> OutputConfigHash(p)
+    ProcedureReturn
+  EndIf
+  OutputPanel = PeekA(p + 5) : OutputAudio = PeekA(p + 6) : OutputFont = PeekA(p + 7)
+  For i = 0 To 5 : OutputPeer(i) = PeekA(p + 8 + i) : Next
+  OutputConfigState = 1
+EndProcedure

@@ -290,11 +290,13 @@ CompilerIf #DESK_PROBE = 1                ; the desk's measurement build carries
 #DK_OV_SLOTS  = 40                         ; it gives 8 overlay blocks for them
 CompilerElseIf #PSRAM = 1                  ; the PSRAM boards (psram.pico2): their bring-up code needs
 #DK_OV_SLOTS  = 36                         ; SRAM, and the overlay serves only their fallback
-CompilerElseIf #TERM_PANEL = 1             ; the panel terminal's build (term_panel.pico2): its band
-#DK_OV_SLOTS  = 230                        ; buffers and screen take 12 KB of the overlay's SRAM
+CompilerElseIf #OUTPUT_AUDIO_DRIVER = 2
+#DK_OV_SLOTS  = 242                        ; optional custom PCM ring and staging
+CompilerElseIf #OUTPUT_AUDIO_DRIVER = 1
+#DK_OV_SLOTS  = 208                        ; optional radio/PCM and live font workspace; normal builds keep 254
 CompilerElse
-#DK_OV_SLOTS  = 254                        ; the file-write overlay, 512 bytes a block (see THE SWAP RAM DISK):
-                                           ; 127 KB, as many as DkOvIdx's bytes can number. It was 38 while the
+#DK_OV_SLOTS  = 248                        ; live TrueType workspace, 512 bytes per overlay block:
+                                           ; 124 KB; six former overlay blocks now hold the runtime font workspace. It was 38 while the
                                            ; unmapped loop's table took 256 KB (instructions.pico2, THE TABLE);
                                            ; 38 blocks could not hold cc's temporary files, so V6's cc failed
                                            ; on the Pico 2 W with writes refused (2026-10-21)

@@ -1,0 +1,11 @@
+; Example custom sink: bounded silent drain. Replace this module with a
+; PWM/I2S/USB/DAC transport using OutputAudioRead(dst, sample_count).
+; OutputAudioRead maintains consumption/energy counters for any custom sink.
+Global Dim OutputSinkBuffer.w(192)
+Procedure.i OutputSinkBegin()
+  ProcedureReturn 0
+EndProcedure
+Procedure OutputSinkPoll()
+  Define n.i
+  n = OutputAudioRead(@OutputSinkBuffer(0), 192)
+EndProcedure

@@ -1,0 +1,343 @@
+; Bounded TrueType quadratic-outline rasterizer for the panel console.
+; Actual sfnt/cmap/hmtx/loca/glyf tables are read at runtime. Font preparation
+; only subsets ASCII and decomposes components; it does not generate pixels.
+; Unhinted outlines, 4x4 coverage quantized to four grey levels. All workspace
+; is fixed; invalid/oversized fonts fail loudly instead of writing past it.
+#TT_CACHE_BYTES = 4096
+#TT_POINTS = 128
+#TT_EDGES = 128
+Global Dim TtCache.a(#TT_CACHE_BYTES)
+Global Dim TtOffset.u(95)
+Global Dim TtWidth.a(95)
+Global Dim TtHeight.a(95)
+Global Dim TtAdvance.a(95)
+Global Dim TtLeft.b(95)
+Global Dim TtTop.b(95)
+Global Dim TtWork.a(704)
+Global Dim TtEdges.w(#TT_EDGES * 4)
+Global TtBase.i, TtEnd.i, TtError.i, TtFace.i, TtSize.i, TtLine.i
+Global TtHead.i, TtHhea.i, TtHmtx.i, TtLoca.i, TtGlyf.i, TtCmap.i
+Global TtUpm.i, TtAscent.i, TtLocLong.i, TtMetrics.i, TtGlyphs.i
+Global TtEdgeCount.i, TtCacheUsed.i, TtBuilding.i, TtChar.i, TtScan.i, TtReady.i
+Global TtGlyphAt.i, TtGlyphEnd.i, TtOriginY.i, TtNeed.i
+Global TtMaxEdges.i, TtRenders.i
+
+Declare TtYield()
+
+Procedure.i TtU8(p.i)
+  If p < TtBase Or p >= TtEnd : TtError = -10 : ProcedureReturn 0 : EndIf
+  ProcedureReturn PeekA(p) & 255
+EndProcedure
+Procedure.i TtU16(p.i)
+  ProcedureReturn (TtU8(p) << 8) | TtU8(p + 1)
+EndProcedure
+Procedure.i TtS16(p.i)
+  Define v.i
+  v = TtU16(p) : If v & $8000 : v = v - $10000 : EndIf
+  ProcedureReturn v
+EndProcedure
+Procedure.i TtU32(p.i)
+  ProcedureReturn (TtU16(p) << 16) | TtU16(p + 2)
+EndProcedure
+Procedure.i TtTable(tag.i)
+  Define i.i, n.i, p.i, off.i, bytes.i
+  n = TtU16(TtBase + 4)
+  If n > 64 : TtError = -11 : ProcedureReturn 0 : EndIf
+  For i = 0 To n - 1
+    p = TtBase + 12 + i * 16
+    If TtU32(p) = tag
+      off = TtU32(p + 8) : bytes = TtU32(p + 12)
+      If off < 0 Or bytes < 0 Or off > TtEnd - TtBase Or bytes > TtEnd - TtBase - off
+        TtError = -11 : ProcedureReturn 0
+      EndIf
+      ProcedureReturn TtBase + off
+    EndIf
+  Next
+  TtError = -12 : ProcedureReturn 0
+EndProcedure
+Procedure.i TtGlyph(code.i)
+  Define n.i, i.i, ep.i, sp.i, dp.i, rp.i, delta.i, off.i, glyph.i
+  n = TtU16(TtCmap + 6) / 2
+  If n < 1 Or n > 128 : TtError = -13 : ProcedureReturn 0 : EndIf
+  ep = TtCmap + 14 : sp = ep + n * 2 + 2 : dp = sp + n * 2 : rp = dp + n * 2
+  For i = 0 To n - 1
+    If code <= TtU16(ep + i * 2)
+      If code < TtU16(sp + i * 2) : ProcedureReturn 0 : EndIf
+      delta = TtS16(dp + i * 2) : off = TtU16(rp + i * 2)
+      If off = 0
+        glyph = (code + delta) & $FFFF
+      Else
+        glyph = TtU16(rp + i * 2 + off + (code - TtU16(sp + i * 2)) * 2)
+        If glyph : glyph = (glyph + delta) & $FFFF : EndIf
+      EndIf
+      If glyph >= TtGlyphs : TtError = -14 : ProcedureReturn 0 : EndIf
+      ProcedureReturn glyph
+    EndIf
+  Next
+  ProcedureReturn 0
+EndProcedure
+Procedure.i TtLocate(glyph.i)
+  Define off.i, finish.i
+  If TtLocLong
+    off = TtU32(TtLoca + glyph * 4) : finish = TtU32(TtLoca + (glyph + 1) * 4)
+  Else
+    off = TtU16(TtLoca + glyph * 2) * 2 : finish = TtU16(TtLoca + (glyph + 1) * 2) * 2
+  EndIf
+  If off < 0 Or finish < off Or finish > TtEnd - TtGlyf
+    TtError = -15 : ProcedureReturn 0
+  EndIf
+  TtGlyphAt = TtGlyf + off : TtGlyphEnd = TtGlyf + finish
+  ProcedureReturn finish - off
+EndProcedure
+Procedure.i TtFloor(v.i)
+  If v < 0 : ProcedureReturn -((-v + TtUpm - 1) / TtUpm) : EndIf
+  ProcedureReturn v / TtUpm
+EndProcedure
+Procedure.i TtCeil(v.i)
+  ProcedureReturn -TtFloor(-v)
+EndProcedure
+
+; Preflight all glyph metrics before replacing the current font/cache.
+Procedure.i TtSelect(face.i, size.i)
+  Define p.i, bytes.i, i.i, n.i, off.i, maxp.i, glyph.i, count.i, w.i, h.i, xmin.i, ymax.i, adv.i
+  TtError = 0 : TtReady = 0 : TtBuilding = 0
+  If size < 8 Or size > 20 Or face < 0 Or face > 1 : TtError = -1 : ProcedureReturn 0 : EndIf
+  If face = 0
+    TtBase = ?TtTerminalSans : bytes = #TT_TERMINALSANS_BYTES
+  Else
+    TtBase = ?TtTerminalMono : bytes = #TT_TERMINALMONO_BYTES
+  EndIf
+  TtEnd = TtBase + bytes
+  If TtU32(TtBase) <> $10000 : TtError = -2 : ProcedureReturn 0 : EndIf
+  TtHead = TtTable($68656164) : TtHhea = TtTable($68686561) : TtHmtx = TtTable($686D7478)
+  TtLoca = TtTable($6C6F6361) : TtGlyf = TtTable($676C7966) : p = TtTable($636D6170)
+  maxp = TtTable($6D617870)
+  If TtError : ProcedureReturn 0 : EndIf
+  TtUpm = TtU16(TtHead + 18) : TtLocLong = TtU16(TtHead + 50)
+  TtMetrics = TtU16(TtHhea + 34) : TtGlyphs = TtU16(maxp + 4)
+  TtAscent = TtS16(TtHhea + 4)
+  If TtUpm < 16 Or TtUpm > 16384 Or TtMetrics < 1 Or TtMetrics > TtGlyphs Or TtLocLong > 1
+    TtError = -3 : ProcedureReturn 0
+  EndIf
+  n = TtU16(p + 2) : TtCmap = 0
+  If n > 32 : TtError = -13 : ProcedureReturn 0 : EndIf
+  For i = 0 To n - 1
+    off = TtU32(p + 4 + i * 8 + 4)
+    If off >= 0 And off < TtEnd - p
+      If TtU16(p + off) = 4 : TtCmap = p + off : Break : EndIf
+    EndIf
+  Next
+  If TtCmap = 0 : TtError = -13 : ProcedureReturn 0 : EndIf
+  TtNeed = 0 : TtSize = size : TtFace = face
+  TtLine = TtCeil((TtAscent - TtS16(TtHhea + 6) + TtS16(TtHhea + 8)) * size) + 2
+  If TtLine < size : TtLine = size + 2 : EndIf
+  If TtLine > 32 : TtError = -4 : ProcedureReturn 0 : EndIf
+  For count = 0 To 94
+    TtYield()
+    glyph = TtGlyph(count + 32) : n = TtLocate(glyph)
+    w = 0 : h = 0
+    If n > 0
+      If n < 10 Or TtS16(TtGlyphAt) < 0 : TtError = -16 : ProcedureReturn 0 : EndIf
+      xmin = TtFloor(TtS16(TtGlyphAt + 2) * size) - 1
+      ymax = TtCeil(TtS16(TtGlyphAt + 8) * size) + 1
+      w = TtCeil(TtS16(TtGlyphAt + 6) * size) - xmin + 1
+      h = ymax - TtFloor(TtS16(TtGlyphAt + 4) * size) + 1
+      If w > 32 Or h > 32 Or w < 0 Or h < 0 : TtError = -4 : ProcedureReturn 0 : EndIf
+      TtNeed = TtNeed + ((w + 3) / 4) * h
+    EndIf
+  Next
+  If TtError : ProcedureReturn 0 : EndIf
+  If TtNeed > #TT_CACHE_BYTES : TtError = -5 : ProcedureReturn 0 : EndIf
+  TtCacheUsed = 0
+  For count = 0 To 94
+    TtYield()
+    glyph = TtGlyph(count + 32) : n = TtLocate(glyph)
+    TtOffset(count) = TtCacheUsed : TtWidth(count) = 0 : TtHeight(count) = 0
+    If n > 0
+      xmin = TtFloor(TtS16(TtGlyphAt + 2) * size) - 1
+      ymax = TtCeil(TtS16(TtGlyphAt + 8) * size) + 1
+      w = TtCeil(TtS16(TtGlyphAt + 6) * size) - xmin + 1
+      h = ymax - TtFloor(TtS16(TtGlyphAt + 4) * size) + 1
+      TtWidth(count) = w : TtHeight(count) = h : TtLeft(count) = xmin
+      TtTop(count) = TtCeil(TtAscent * size) + 1 - ymax
+      TtCacheUsed = TtCacheUsed + ((w + 3) / 4) * h
+    EndIf
+    i = glyph : If i >= TtMetrics : i = TtMetrics - 1 : EndIf
+    adv = (TtU16(TtHmtx + i * 4) * size + TtUpm / 2) / TtUpm
+    If adv < 1 : adv = 1 : EndIf
+    If adv > 32 : TtError = -4 : ProcedureReturn 0 : EndIf
+    TtAdvance(count) = adv
+  Next
+  TtChar = 0 : TtScan = -1 : TtBuilding = 1
+  ProcedureReturn 1
+EndProcedure
+
+Procedure TtEdge(x0.i, y0.i, x1.i, y1.i)
+  Define at.i
+  If y0 = y1 : ProcedureReturn : EndIf
+  If TtEdgeCount >= #TT_EDGES : TtError = -20 : ProcedureReturn : EndIf
+  at = TtEdgeCount * 4
+  TtEdges(at) = x0 : TtEdges(at + 1) = y0 : TtEdges(at + 2) = x1 : TtEdges(at + 3) = y1
+  TtEdgeCount = TtEdgeCount + 1
+EndProcedure
+Procedure TtCurve(x0.i, y0.i, cx.i, cy.i, x1.i, y1.i)
+  Define i.i, n.i, px.i, py.i, qx.i, qy.i, dx.i, dy.i, t.i
+  dx = x0 - 2 * cx + x1 : If dx < 0 : dx = -dx : EndIf
+  dy = y0 - 2 * cy + y1 : If dy < 0 : dy = -dy : EndIf
+  n = 1 : If dx + dy > 128 : n = 2 : EndIf
+  If dx + dy > 512 : n = 4 : EndIf
+  px = x0 : py = y0
+  For i = 1 To n
+    t = n - i
+    qx = (t*t*x0 + 2*t*i*cx + i*i*x1) / (n*n)
+    qy = (t*t*y0 + 2*t*i*cy + i*i*y1) / (n*n)
+    TtEdge(px, py, qx, qy) : px = qx : py = qy
+  Next
+EndProcedure
+
+; Decode one simple TrueType glyph into directed line edges in 8.8 pixels.
+Procedure TtOutline(code.i)
+  Define p.i, n.i, contours.i, i.i, j.i, flags.i, runLength.i, value.i, delta.i, x.i, y.i
+  Define first.i, last.i, at.i, nextPoint.i, sx.i, sy.i, cx.i, cy.i, ex.i, ey.i, controlx.i, controly.i
+  TtEdgeCount = 0
+  n = TtLocate(TtGlyph(code + 32)) : If n = 0 : ProcedureReturn : EndIf
+  contours = TtS16(TtGlyphAt)
+  If contours < 0 Or contours > 16 : TtError = -16 : ProcedureReturn : EndIf
+  If contours = 0 : ProcedureReturn : EndIf
+  p = TtGlyphAt + 10 : last = -1
+  For i = 0 To contours - 1
+    value = TtU16(p) : p = p + 2
+    If value <= last Or value >= #TT_POINTS : TtError = -17 : ProcedureReturn : EndIf
+    PokeW(@TtWork(640) + i*2, value) : last = value
+  Next
+  n = last + 1 : p = p + 2 + TtU16(p)
+  i = 0
+  While i < n
+    flags = TtU8(p) : p = p + 1 : runLength = 0
+    If flags & 8 : runLength = TtU8(p) : p = p + 1 : EndIf
+    If i + runLength >= n : TtError = -17 : ProcedureReturn : EndIf
+    For j = 0 To runLength : TtWork(512 + i) = flags : i = i + 1 : Next
+  Wend
+  x = 0
+  For i = 0 To n - 1
+    flags = TtWork(512 + i) : delta = 0
+    If flags & 2
+      delta = TtU8(p) : p = p + 1 : If (flags & 16) = 0 : delta = -delta : EndIf
+    ElseIf (flags & 16) = 0
+      delta = TtS16(p) : p = p + 2
+    EndIf
+    x = x + delta
+    value = (x * TtSize * 256) / TtUpm - TtLeft(code) * 256
+    If value < -32768 Or value > 32767 : TtError = -18 : ProcedureReturn : EndIf
+    PokeW(@TtWork(0) + i * 2, value)
+  Next
+  y = 0
+  value = TtCeil(TtAscent * TtSize) + 1 - TtTop(code)
+  TtOriginY = value * 256
+  For i = 0 To n - 1
+    flags = TtWork(512 + i) : delta = 0
+    If flags & 4
+      delta = TtU8(p) : p = p + 1 : If (flags & 32) = 0 : delta = -delta : EndIf
+    ElseIf (flags & 32) = 0
+      delta = TtS16(p) : p = p + 2
+    EndIf
+    y = y + delta
+    value = TtOriginY - (y * TtSize * 256) / TtUpm
+    If value < -32768 Or value > 32767 : TtError = -18 : ProcedureReturn : EndIf
+    PokeW(@TtWork(256) + i * 2, value)
+  Next
+  If p > TtGlyphEnd Or TtError : TtError = -19 : ProcedureReturn : EndIf
+  first = 0
+  For j = 0 To contours - 1
+    TtYield()
+    last = PeekU(@TtWork(640) + j*2)
+    If TtWork(512 + first) & 1
+      sx = PeekW(@TtWork(0) + first*2) : sy = PeekW(@TtWork(256) + first*2) : at = first + 1
+    ElseIf TtWork(512 + last) & 1
+      sx = PeekW(@TtWork(0) + last*2) : sy = PeekW(@TtWork(256) + last*2) : at = first
+    Else
+      sx = (PeekW(@TtWork(0) + first*2) + PeekW(@TtWork(0) + last*2)) / 2
+      sy = (PeekW(@TtWork(256) + first*2) + PeekW(@TtWork(256) + last*2)) / 2 : at = first
+    EndIf
+    cx = sx : cy = sy
+    While at <= last
+      x = PeekW(@TtWork(0) + at*2) : y = PeekW(@TtWork(256) + at*2)
+      If TtWork(512 + at) & 1
+        TtEdge(cx,cy,x,y) : cx = x : cy = y : at = at + 1
+      Else
+        controlx = x : controly = y : nextPoint = at + 1
+        If nextPoint > last
+          ex = sx : ey = sy : at = at + 1
+        ElseIf TtWork(512 + nextPoint) & 1
+          ex = PeekW(@TtWork(0) + nextPoint*2) : ey = PeekW(@TtWork(256) + nextPoint*2) : at = at + 2
+        Else
+          ex = (x + PeekW(@TtWork(0) + nextPoint*2)) / 2
+          ey = (y + PeekW(@TtWork(256) + nextPoint*2)) / 2 : at = at + 1
+        EndIf
+        TtCurve(cx,cy,controlx,controly,ex,ey) : cx = ex : cy = ey
+      EndIf
+    Wend
+    TtEdge(cx,cy,sx,sy) : first = last + 1
+  Next
+  If TtEdgeCount > TtMaxEdges : TtMaxEdges = TtEdgeCount : EndIf
+EndProcedure
+
+; Non-zero winding fill; four horizontal and four vertical subpixel samples.
+Procedure TtRasterRow()
+  Define sub.i, y.i, i.i, j.i, n.i, x0.i, y0.i, x1.i, y1.i, hit.i, dir.i
+  Define winding.i, sample.i, x.i, k.i, coverage.i, packed.i, dst.i, stride.i
+  For i = 0 To 31 : TtWork(672 + i) = 0 : Next
+  For sub = 0 To 3
+    y = TtScan*256 + sub*64 + 32 : n = 0
+    For i = 0 To TtEdgeCount - 1
+      x0 = TtEdges(i*4) : y0 = TtEdges(i*4+1) : x1 = TtEdges(i*4+2) : y1 = TtEdges(i*4+3)
+      dir = 0
+      If y0 <= y And y < y1 : dir = 1 : ElseIf y1 <= y And y < y0 : dir = -1 : EndIf
+      If dir
+        hit = x0 + ((y-y0)*(x1-x0))/(y1-y0)
+        j = n
+        While j > 0
+          If PeekW(@TtWork(0)+(j-1)*2) <= hit : Break : EndIf
+          PokeW(@TtWork(0)+j*2, PeekW(@TtWork(0)+(j-1)*2))
+          TtWork(384+j) = TtWork(384+j-1) : j = j - 1
+        Wend
+        PokeW(@TtWork(0)+j*2, hit) : TtWork(384+j) = dir & 255 : n = n + 1
+      EndIf
+    Next
+    winding = 0 : j = 0
+    For x = 0 To TtWidth(TtChar) - 1
+      For k = 0 To 3
+        sample = x*256 + k*64 + 32
+        While j < n
+          If PeekW(@TtWork(0)+j*2) > sample : Break : EndIf
+          dir = TtWork(384+j) : If dir > 127 : dir = dir - 256 : EndIf
+          winding = winding + dir : j = j + 1
+        Wend
+        If winding : TtWork(672 + x) = TtWork(672 + x) + 1 : EndIf
+      Next
+    Next
+  Next
+  stride = (TtWidth(TtChar)+3)/4 : dst = TtOffset(TtChar) + TtScan*stride
+  For x = 0 To stride - 1 : TtCache(dst+x) = 0 : Next
+  For x = 0 To TtWidth(TtChar) - 1
+    coverage = (TtWork(672 + x)*3+8)/16
+    TtCache(dst+(x>>2)) = TtCache(dst+(x>>2)) | (coverage << ((x&3)*2))
+  Next
+EndProcedure
+
+; One glyph scanline per turn; callers continue USB/disk/clock service between.
+Procedure TtStep()
+  If TtBuilding = 0 : ProcedureReturn : EndIf
+  If TtScan < 0
+    TtOutline(TtChar)
+    If TtError : TtBuilding = 0 : ProcedureReturn : EndIf
+    TtScan = 0
+  EndIf
+  If TtScan < TtHeight(TtChar) : TtRasterRow() : TtScan = TtScan + 1 : EndIf
+  If TtScan >= TtHeight(TtChar)
+    TtChar = TtChar + 1 : TtScan = -1
+    If TtChar >= 95
+      TtBuilding = 0 : TtReady = 1 : TtRenders = TtRenders + 1
+    EndIf
+  EndIf
+EndProcedure

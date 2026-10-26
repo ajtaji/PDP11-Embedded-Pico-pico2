@@ -1,0 +1,23 @@
+; Diagnostic snapshot for reviewing the actual glyphs produced on the board.
+; It services guest clock/disk/USB while exporting; no guest instructions change.
+Procedure FontHex(n.i)
+  If n < 10 : Ch(48+n) : Else : Ch(55+n) : EndIf
+EndProcedure
+Procedure FontCapture()
+  Define i.i, b.i
+  If TtReady = 0 : Say("FONT_BUSY") : Eol() : ProcedureReturn : EndIf
+  Say("FONT ") : Num(TtFace) : Ch(32) : Num(TtSize) : Ch(32) : Num(TtLine) : Ch(32) : Num(TtCacheUsed) : Eol()
+  For i = 0 To 94
+    Say("G ") : Num(i) : Ch(32) : Num(TtWidth(i)) : Ch(32) : Num(TtHeight(i)) : Ch(32)
+    Num(TtLeft(i)) : Ch(32) : Num(TtTop(i)) : Ch(32) : Num(TtAdvance(i)) : Ch(32) : Num(TtOffset(i)) : Eol()
+    Service() : KwTick() : DkServe()
+  Next
+  For i = 0 To TtCacheUsed - 1
+    If (i & 63) = 0 : Say("B ") : EndIf
+    b = TtCache(i) : FontHex(b >> 4) : FontHex(b & 15)
+    If (i & 63) = 63 Or i = TtCacheUsed - 1
+      Eol() : Service() : KwTick() : DkServe()
+    EndIf
+  Next
+  Say("END_FONT") : Eol()
+EndProcedure

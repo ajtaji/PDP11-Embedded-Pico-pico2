@@ -1,0 +1,194 @@
+; Shared asynchronous RGB565 rectangle interface, using the NES panel wiring.
+; Profiles: 0 serial only, 1 LAFVIN ST7796, 2 Display Pack 2 ST7789,
+; 3 ILI9341 SPI1, 4 HX8357D SPI1. The terminal and graphics know no controller.
+; ILI9341/HX8357D initialization follows the NES's Adafruit-derived BSD drivers.
+CompilerIf #STAT_CHIP = 2350
+#PANEL_DMA_TREQ_SHIFT = 17
+CompilerElse
+#PANEL_DMA_TREQ_SHIFT = 15
+CompilerEndIf
+Global PanelWidth.i, PanelHeight.i, PanelSpi.i, PanelCs.i, PanelDc.i, PanelReset.i
+Global PanelBase.i, PanelReady.i, PanelBusy.i, PanelRects.i, PanelErrors.i
+Global PanelSlowCr0.i, PanelSlowDiv.i, PanelSlowHz.i
+Global PanelFastCr0.i, PanelFastDiv.i, PanelFastHz.i
+
+Procedure PanelPin(pin.i, value.i)
+  If pin < 0 : ProcedureReturn : EndIf
+CompilerIf #STAT_CHIP = 2350
+  If value : PokeL($D0000018, 1 << pin) : Else : PokeL($D0000020, 1 << pin) : EndIf
+CompilerElse
+  If value : PokeL($D0000014, 1 << pin) : Else : PokeL($D0000018, 1 << pin) : EndIf
+CompilerEndIf
+EndProcedure
+
+Procedure PanelClock(fast.i)
+  If OutputPanel <> 4 : ProcedureReturn : EndIf
+  PokeL(PanelBase + 4, 0)
+  If fast
+    PokeL(PanelBase + 16, PanelFastDiv) : PokeL(PanelBase, PanelFastCr0)
+    spi_hz[1] = PanelFastHz
+  Else
+    PokeL(PanelBase + 16, PanelSlowDiv) : PokeL(PanelBase, PanelSlowCr0)
+    spi_hz[1] = PanelSlowHz
+  EndIf
+  PokeL(PanelBase + 4, #SPI_CR1_SSE)
+EndProcedure
+
+Procedure PanelCommand(command.i)
+  PanelPin(PanelCs, 0) : PanelPin(PanelDc, 0)
+  SpiWrite8(PanelSpi, command) : PanelPin(PanelDc, 1)
+EndProcedure
+
+Procedure PanelSetting(command.i, value.i)
+  PanelCommand(command) : SpiWrite8(PanelSpi, value) : PanelPin(PanelCs, 1)
+EndProcedure
+
+Procedure PanelInitTable(p.i)
+  Define command.i, count.i, i.i
+  Repeat
+    command = PeekA(p) & 255 : p = p + 1
+    If command = 0 : Break : EndIf
+    count = PeekA(p) & 255 : p = p + 1
+    If count & 128
+      If command <> 255 : PanelCommand(command) : PanelPin(PanelCs, 1) : EndIf
+      delay((count & 127) * 5)
+    Else
+      PanelCommand(command)
+      For i = 0 To count - 1
+        SpiWrite8(PanelSpi, PeekA(p) & 255) : p = p + 1
+      Next
+      PanelPin(PanelCs, 1)
+    EndIf
+  ForEver
+EndProcedure
+
+Procedure PanelWindow(x.i, y.i, w.i, h.i)
+  Define x1.i, y1.i
+  x1 = x + w - 1 : y1 = y + h - 1
+  PanelClock(0)
+  PanelCommand($2A)
+  SpiWrite8(PanelSpi, x >> 8) : SpiWrite8(PanelSpi, x)
+  SpiWrite8(PanelSpi, x1 >> 8) : SpiWrite8(PanelSpi, x1)
+  PanelCommand($2B)
+  SpiWrite8(PanelSpi, y >> 8) : SpiWrite8(PanelSpi, y)
+  SpiWrite8(PanelSpi, y1 >> 8) : SpiWrite8(PanelSpi, y1)
+  PanelCommand($2C) : PanelClock(1)
+EndProcedure
+
+Procedure PanelBegin()
+  Define khz.i
+  PanelReady = 0 : PanelBusy = 0
+  If OutputPanel = 0 : ProcedureReturn : EndIf
+  SpiPeriFromSys(ClockSysConfigKhz())
+  If OutputPanel = 1
+    PanelSpi = 0 : PanelCs = 5 : PanelDc = 6 : PanelReset = 7
+    PanelWidth = 480 : PanelHeight = 320
+    SpiBegin(0, 2, 3, -1, 100000)
+    Tft796DelayCalPerMs = 8000 * ClockSysConfigKhz() / 133000
+    Tft796Begin(0, 5, 6, 7) : Tft796Rotate(1)
+  ElseIf OutputPanel = 2
+    PanelSpi = 0 : PanelCs = 17 : PanelDc = 16 : PanelReset = -1
+    PanelWidth = 320 : PanelHeight = 240
+    pinMode(17, #OUTPUT) : pinMode(16, #OUTPUT) : pinMode(20, #OUTPUT)
+    PanelPin(17, 1) : PanelPin(20, 0)
+    khz = 50000
+    If #STAT_CHIP = 2350 : khz = 75000 : EndIf
+    SpiBegin(0, 18, 19, -1, khz)
+    PanelCommand($01) : PanelPin(17, 1) : delay(150)
+    PanelInitTable(?PanelSt7789Init)
+    PanelCommand($11) : PanelPin(17, 1) : delay(120)
+    PanelSetting($36, $70)
+    PanelCommand($29) : PanelPin(17, 1) : delay(20)
+    PanelPin(20, 1)
+  ElseIf OutputPanel = 3 Or OutputPanel = 4
+    PanelSpi = 1 : PanelCs = 13 : PanelDc = 16 : PanelReset = 17
+    PanelWidth = 320 : PanelHeight = 240
+    If OutputPanel = 4 : PanelWidth = 480 : PanelHeight = 320 : EndIf
+    pinMode(13, #OUTPUT) : pinMode(16, #OUTPUT) : pinMode(17, #OUTPUT)
+    pinMode(12, #INPUT_PULLUP)
+    PanelPin(13, 1) : PanelPin(16, 1) : PanelPin(17, 1)
+    SpiBegin(1, 10, 11, 12, 1000)
+    PanelBase = spi_base[1]
+    PanelSlowCr0 = PeekL(PanelBase) : PanelSlowDiv = PeekL(PanelBase + 16)
+    PanelSlowHz = SpiHz(1)
+    SpiBegin(1, 10, 11, 12, 40000)
+    PanelFastCr0 = PeekL(PanelBase) : PanelFastDiv = PeekL(PanelBase + 16)
+    PanelFastHz = SpiHz(1) : PanelClock(0)
+    PanelPin(17, 0) : delay(20) : PanelPin(17, 1) : delay(150)
+    If OutputPanel = 3
+      PanelInitTable(?PanelIli9341Init)
+      PanelCommand($11) : PanelPin(13, 1) : delay(120)
+      PanelSetting($36, $28)
+      PanelCommand($29) : PanelPin(13, 1) : delay(20)
+    Else
+      PanelInitTable(?PanelHx8357Init) : PanelSetting($36, $A0)
+    EndIf
+  Else
+    PanelErrors = PanelErrors + 1 : ProcedureReturn
+  EndIf
+  PanelBase = spi_base[PanelSpi]
+  PanelWindow(0, 0, PanelWidth, PanelHeight)
+  SpiDmaFill16(PanelSpi, 0, PanelWidth * PanelHeight)
+  PanelPin(PanelCs, 1) : PanelReady = 1
+EndProcedure
+
+; The caller owns pixels until PanelPoll reports completion. No framebuffer.
+Procedure.i PanelStart(x.i, y.i, w.i, h.i, pixels.i)
+  If PanelReady = 0 Or PanelBusy : ProcedureReturn 0 : EndIf
+  If pixels = 0 Or x < 0 Or y < 0 Or x >= PanelWidth Or y >= PanelHeight Or w <= 0 Or h <= 0 Or w > PanelWidth Or h > PanelHeight Or x + w > PanelWidth Or y + h > PanelHeight
+    PanelErrors = PanelErrors + 1 : ProcedureReturn 0
+  EndIf
+  PanelWindow(x, y, w, h)
+  SpiDmaInit() : SpiSetBits(PanelSpi, 16)
+  PokeL(PanelBase + $24, PeekL(PanelBase + $24) | #SPI_SSPDMACR_TXDMAE)
+  PokeL(#SPI_DMA_CH0_READ, pixels)
+  PokeL(#SPI_DMA_CH0_WRITE, PanelBase + 8)
+  PokeL(#SPI_DMA_CH0_COUNT, w * h)
+  PokeL(#SPI_DMA_CH0_CTRL, #SPI_DMA_EN | #SPI_DMA_SIZE_HALF | #SPI_DMA_INCR_READ | (SpiDmaTreq(PanelSpi) << #PANEL_DMA_TREQ_SHIFT))
+  PanelBusy = 1 : ProcedureReturn 1
+EndProcedure
+
+Procedure.i PanelPoll()
+  If PanelBusy = 0 : ProcedureReturn 1 : EndIf
+  If PeekL(#SPI_DMA_CH0_CTRL) & $60000000
+    SpiDmaAbort(PanelSpi) : PanelErrors = PanelErrors + 1
+  ElseIf (PeekL(#SPI_DMA_CH0_CTRL) & #SPI_DMA_BUSY) <> 0 Or (PeekL(PanelBase + $0C) & #SPI_SR_BSY) <> 0
+    ProcedureReturn 0
+  EndIf
+  SpiDmaRestore(PanelSpi) : PanelPin(PanelCs, 1)
+  PanelBusy = 0 : PanelRects = PanelRects + 1
+  ProcedureReturn 1
+EndProcedure
+
+DataSection
+PanelSt7789Init:
+  Data.a $3A,1,$05,$B2,5,$0C,$0C,$00,$33,$33,$C0,1,$2C
+  Data.a $C2,1,$01,$C3,1,$12,$C4,1,$20,$D0,2,$A4,$A1
+  Data.a $C6,1,$0F,$B0,2,$00,$C0,$B7,1,$35,$BB,1,$1F
+  Data.a $E0,14,$D0,$08,$11,$08,$0C,$15,$39,$33,$50,$36,$13,$14,$29,$2D
+  Data.a $E1,14,$D0,$08,$10,$08,$06,$06,$39,$44,$51,$0B,$16,$14,$2F,$31
+  Data.a $21,0,0
+EndDataSection
+
+DataSection
+PanelIli9341Init:
+  Data.a $EF,3,$03,$80,$02,$CF,3,$00,$C1,$30,$ED,4,$64,$03,$12,$81
+  Data.a $E8,3,$85,$00,$78,$CB,5,$39,$2C,$00,$34,$02,$F7,1,$20,$EA,2,$00,$00
+  Data.a $C0,1,$23,$C1,1,$10,$C5,2,$3E,$28,$C7,1,$86
+  Data.a $3A,1,$55,$B1,2,$00,$18,$B6,3,$08,$82,$27,$F2,1,$00,$26,1,$01
+  Data.a $E0,15,$0F,$31,$2B,$0C,$0E,$08,$4E,$F1,$37,$07,$10,$03,$0E,$09,$00
+  Data.a $E1,15,$00,$0E,$14,$03,$11,$07,$31,$C1,$48,$08,$0F,$0C,$31,$36,$0F
+  Data.a 0
+EndDataSection
+
+DataSection
+PanelHx8357Init:
+  Data.a $01,$94,$B9,$03,$FF,$83,$57,$FF,$E4,$B3,$04,$80,$00,$06
+  Data.a $06,$B6,$01,$25,$B0,$01,$68,$CC,$01,$05,$B1,$06,$00,$15
+  Data.a $1C,$1C,$83,$AA,$C0,$06,$50,$50,$01,$3C,$1E,$08,$B4,$07
+  Data.a $02,$40,$00,$2A,$2A,$0D,$78,$E0,$22,$02,$0A,$11,$1D,$23
+  Data.a $35,$41,$4B,$4B,$42,$3A,$27,$1B,$08,$09,$03,$02,$0A,$11
+  Data.a $1D,$23,$35,$41,$4B,$4B,$42,$3A,$27,$1B,$08,$09,$03,$00
+  Data.a $01,$3A,$01,$55,$36,$01,$C0,$35,$01,$00,$44,$02,$00,$02
+  Data.a $11,$9E,$29,$8A,$00
+EndDataSection

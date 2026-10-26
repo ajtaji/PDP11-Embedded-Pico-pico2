@@ -56,12 +56,31 @@
 #DISK_FLASH_MODEL = 0        ; 1 = the desk model of the flash chip (disk.pico)
 #DESK_PROBE = 0            ; 1 = the desk measurement build (see DESK PROBE)
 #STAT_CHIP = 2040            ; for the stats block's title
+#OUTPUT_AUDIO_DRIVER = 0     ; 0 silent, 1 Bluetooth, 2 custom PCM sink
+#TERM_PANEL = 1              ; standard modular panel console
 EnableExplicit
 XIncludeFile "RP2040/Lib/clocks.pico"
 XIncludeFile "RP2040/Lib/timer.pico"
 XIncludeFile "RP2040/Lib/uart.pico"
 XIncludeFile "RP2040/Lib/usb_serial.pico"
 XIncludeFile "RP2040/Lib/safety.pico"
+CompilerIf #OUTPUT_AUDIO_DRIVER = 1
+XIncludeFile "RP2040/Lib/cyw43_nvram.pico"
+XIncludeFile "RP2040/Lib/bits.pico"
+XIncludeFile "RP2040/Lib/wiring.pico"
+XIncludeFile "RP2040/Lib/string_out.pico"
+XIncludeFile "RP2040/Lib/cyw43.pico"
+XIncludeFile "RP2040/Lib/cyw43_btfw.pico"
+XIncludeFile "RP2040/Lib/bluetooth.pico"
+XIncludeFile "Shared/Bluetooth/sbc.pmi"
+XIncludeFile "Shared/Bluetooth/bt_audio.pmi"
+CompilerEndIf
+CompilerIf #TERM_PANEL = 1
+XIncludeFile "RP2040/Lib/bits.pico"
+XIncludeFile "RP2040/Lib/wiring.pico"
+XIncludeFile "RP2040/Lib/spi.pico"
+XIncludeFile "RP2040/Lib/st7796.pico"
+CompilerEndIf
 XIncludeFile "cpu.pico"
 XIncludeFile "instructions_mmu.pico"
 XIncludeFile "instructions.pico"
@@ -70,6 +89,15 @@ XIncludeFile "kw11.pico"
 XIncludeFile "rk11.pico"
 XIncludeFile "tape_image.pico"
 XIncludeFile "tapeload.pico"
+CompilerIf #TERM_PANEL = 1
+XIncludeFile "../outputs/config.pmi"
+XIncludeFile "../outputs/panel.pmi"
+XIncludeFile "../outputs/audio.pmi"
+XIncludeFile "../outputs/truetype_assets.pmi"
+XIncludeFile "../outputs/truetype.pmi"
+XIncludeFile "../outputs/terminal.pmi"
+XIncludeFile "../outputs/font_capture.pmi"
+CompilerEndIf
 
 #CLOCK_KHZ = 200000
 ; USB IS SERVICED AT LEAST EVERY MILLISECOND, IN EVERY STATE. The USB
@@ -154,9 +182,15 @@ Procedure Service()
     EndIf
   CompilerEndIf
   UsbSerialTask()
+  CompilerIf #TERM_PANEL = 1 And #OUTPUT_AUDIO_DRIVER > 0
+    OutputAudioPoll()
+  CompilerEndIf
 EndProcedure
 
 Procedure Ch(c.i)
+  CompilerIf #TERM_PANEL = 1 And #OUTPUT_AUDIO_DRIVER > 0
+    OutputAudioPoll()
+  CompilerEndIf
   UsbSerialWrite(c)
 EndProcedure
 
@@ -297,6 +331,18 @@ Global ConStallAt.i                      ; when the port last took a character
 Procedure DrainConsole()
   Define c.i
   Define room.i
+CompilerIf #TERM_PANEL = 1
+  TermConsume()
+  If TpOn And UsbSerialReady() = 0
+    While ConOutTail <> TpTail
+      c = ConOut(ConOutTail & (#CON_SIZE - 1)) & $7F
+      ConOutTail = ConOutTail + 1
+      If FromDisk And AutoPending <> 0 And c = 64 : AutoBootType() : EndIf
+      If c = 7 : Bells = Bells + 1 : EndIf
+    Wend
+    ProcedureReturn
+  EndIf
+CompilerEndIf
   room = UsbSerialWriteRoom()
   If ConOutTail = ConOutHead Or room >= 3
     ConStallAt = Micros()
@@ -686,6 +732,15 @@ Procedure StatsBlock()
   Else
     Say("start-up (") : Num(GapWhere) : Say(")")
   EndIf
+CompilerIf #TERM_PANEL = 1
+  StatLine("panel   profile ") : Num(OutputPanel) : Say(" grid ") : Num(TpCols) : Say(" x ") : Num(TpRows)
+  Say(" frames ") : Num(TpFrames) : Say(" rows ") : Num(TpRowsSent) : Say(" errors ") : Num(PanelErrors) : Say(" config ") : Num(OutputConfigState)
+    StatLine("font    face ") : Num(TtFace) : Say(" size ") : Num(TtSize) : Say(" ready ") : Num(TtReady) : Say(" building ") : Num(TtBuilding) : Say(" error ") : Num(TtError) : Say(" cache ") : Num(TtCacheUsed) : Say(" renders ") : Num(TtRenders) : Say(" edges ") : Num(TtMaxEdges) : Say(" change ") : Num(TpFontRc)
+  StatLine("audio   requested ") : Num(OutputAudio) : Say(" linked ") : Num(#OUTPUT_AUDIO_DRIVER) : Say(" status ") : Num(OutputAudioRc) : Say(" samples ") : Num(OutputAudioSamples) : Say(" bells ") : Num(OutputBells) : Eol()
+  CompilerIf #OUTPUT_AUDIO_DRIVER = 2
+    StatLine("pcm     consumed ") : Num(OutputSinkSamples) : Say(" nonzero ") : Num(OutputSinkNonzero) : Say(" peak ") : Num(OutputSinkPeak) : Say(" lost ") : Num(OutputPcmLost) : Say(" late ") : Num(OutputAudioLate)
+  CompilerEndIf
+CompilerEndIf
   StatLine("===")
   Eol()
 EndProcedure
@@ -711,6 +766,9 @@ Procedure.i C0Ask(what.i, arg1.i, arg2.i)
   While C0DoneSeq <> C0CmdSeq
     Service()
     DkServe()
+CompilerIf #TERM_PANEL = 1
+    TermStep()
+CompilerEndIf
     KwTick()
     If Micros() - t0 > 5000000
       ProcedureReturn 0
@@ -1094,6 +1152,18 @@ Procedure InByte(c.i)
   EndIf
   If FrameState = 0 And EscPending <> 0   ; Ctrl-] then a key: the firmware's, not Unix's
     EscPending = 0
+    CompilerIf #TERM_PANEL = 1
+      If c = 102 Or c = 70 Or c = 43 Or c = 45
+        TermFontControl(c)
+        SayHost("font change queued") : Eol()
+        ProcedureReturn
+      EndIf
+    CompilerEndIf
+    CompilerIf #TERM_PANEL = 1
+      If c = 116 Or c = 84
+        FontCapture() : ProcedureReturn
+      EndIf
+    CompilerEndIf
     If c = 115 Or c = 83                 ; s: the stats block
       StatsBlock()
       ProcedureReturn
@@ -1269,6 +1339,9 @@ Procedure AutoBootWait()
     Service()
     KwTick()
     DkServe()
+CompilerIf #TERM_PANEL = 1
+    TermStep()
+CompilerEndIf
   Wend
   AutoWindow = 0
   If AutoCancel
@@ -1370,8 +1443,14 @@ Procedure Core1Main()
   KwNext = Micros() + #KW_PERIOD_US       ; the line clock's time is core 1's
   t0 = Micros()                          ; the port opened, or 30 s
   While UsbSerialReady() = 0 And (Micros() - t0) < 30000000
+CompilerIf #TERM_PANEL = 1
+    If TpOn : Break : EndIf
+CompilerEndIf
     Service()
     DkServe()
+CompilerIf #TERM_PANEL = 1
+    TermStep()
+CompilerEndIf
     KwTick()
   Wend
   ClkKhz = ClockSysKhz()                 ; before the banner: its 1 ms is not a gap anyone sees
@@ -1380,6 +1459,9 @@ Procedure Core1Main()
     Service()
     KwTick()
     DkServe()
+CompilerIf #TERM_PANEL = 1
+    TermStep()
+CompilerEndIf
   Wend
   If Mode = #MODE_RUN
     Say("PDP-11 J-11 on Pico: ") : SayName() : Say(" from ") : Oct(#TAPE_START)
@@ -1465,6 +1547,9 @@ Procedure Core1Main()
     Service()
     C1Where = 4
     DkServe()                            ; the disk's storage for core 0's RK11
+CompilerIf #TERM_PANEL = 1
+    TermStep()
+CompilerEndIf
     KwTick()                             ; the line clock's 60 Hz
     C1Where = 6
     CompilerIf #DESK_PROBE = 1
@@ -1483,6 +1568,9 @@ Procedure Core1Main()
       If Micros() - UsbLastSvc > 250     ; nothing to do: USB and the clock every 250 us
         Service()
         KwTick()
+CompilerIf #TERM_PANEL = 1
+        TermStep()
+CompilerEndIf
       EndIf
     Wend
   ForEver
@@ -1526,6 +1614,9 @@ Procedure Main()
     ProbeFeedLoad()
   CompilerEndIf
   PswSnap = PswGet()
+CompilerIf #TERM_PANEL = 1
+  TermBegin()
+CompilerEndIf
   SmpBarrier()                           ; all of the above, before core 1 starts
   If LaunchCore1() = 1                   ; core 1 runs Core1Main
     Core0Loop()                          ; never returns
