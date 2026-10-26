@@ -22,6 +22,10 @@ both processors; Display Pack 2 ST7789, ILI9341 and HX8357D use the same
 firmware with a small [screen settings UF2](images/output-settings/).
 Only the LAFVIN glass has been checked in this update.
 
+The additional assembly pass reduces measured Unix work time by 1.6% on
+Pico W and 2.1% on Pico 2 W against the preceding firmware, with smaller
+program images. Coverage and limits: [BENCHMARKS](docs/BENCHMARKS.md#additional-assembly-pass-2026-10-26).
+
 Lato-derived Terminal Sans at 14 pixels is the default. The Pico rasterizes
 the TrueType outlines itself and uses natural letter spacing. At the USB
 console, press **Ctrl-]**, release it, then **f** to switch faces, **+** to

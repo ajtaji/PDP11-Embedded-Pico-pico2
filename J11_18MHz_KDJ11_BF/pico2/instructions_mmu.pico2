@@ -67,12 +67,10 @@ Macro NextSyncedM()
     bne __ul_cpurunm_slowtailm
     subs.w r11, r11, #1
     beq __ul_cpurunm_runendm
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __ul_cpurunm_slowfetchm
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __ul_cpurunm_slowfetchm
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __ul_cpurunm_slowfetchm
     lsls r1, r0, #31
     bne __ul_cpurunm_slowfetchm
     str r0, [r5, #68]
@@ -98,7 +96,7 @@ Macro NextSyncedM()
     Goto RunEndM
   EndIf
   If PC >= Reg(#CPU_FW + (0))                       ; the fetch, through the fetch window (cpu)
-    If PC < Reg(#CPU_FW + (1))
+    If PC - Reg(#CPU_FW + (0)) < Reg(#CPU_FW + (1))
       If (PC & 1) = 0
         MmuInstrStart(PC)
         Op = PeekU(PC + Reg(#CPU_FW + (2)))
@@ -120,12 +118,10 @@ Macro NextNativeM()
     subs.w r11, r11, #1
     beq __ul_cpurunm_runendm
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __ul_cpurunm_slowfetchm
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __ul_cpurunm_slowfetchm
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __ul_cpurunm_slowfetchm
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -145,7 +141,7 @@ Macro NextNativeM()
     Goto RunEndM
   EndIf
   If PC >= Reg(#CPU_FW + (0))                       ; the fetch, through the fetch window (cpu)
-    If PC < Reg(#CPU_FW + (1))
+    If PC - Reg(#CPU_FW + (0)) < Reg(#CPU_FW + (1))
       MmuInstrStart(PC)
       Op = PeekU(PC + Reg(#CPU_FW + (2)))
       PC = PC + 2
@@ -167,12 +163,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm1_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm1_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm1_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm1_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -216,7 +210,7 @@ RunStartM:
   Goto RunEndM                            ; which lets the devices act, then opens a window
 FetchM:
   If PC >= Reg(#CPU_FW + (0))                       ; the fetch, through the fetch window (cpu)
-    If PC < Reg(#CPU_FW + (1))
+    If PC - Reg(#CPU_FW + (0)) < Reg(#CPU_FW + (1))
       If (PC & 1) = 0
         MmuInstrStart(PC)
         Op = PeekU(PC + Reg(#CPU_FW + (2)))
@@ -247,8 +241,17 @@ __eaw:
     ldr r2, [r5, #72]
     str r2, [r5, #80]
     ubfx r0, r0, #3, #3
-    cmp r0, #6
-    bne __eaw_m4
+    tbb [pc, r0]
+__eaw_modes:
+    .byte (__eaw_slow - __eaw_modes) / 2
+    .byte (__eaw_m1 - __eaw_modes) / 2
+    .byte (__eaw_m2 - __eaw_modes) / 2
+    .byte (__eaw_m3 - __eaw_modes) / 2
+    .byte (__eaw_m4 - __eaw_modes) / 2
+    .byte (__eaw_slow - __eaw_modes) / 2
+    .byte (__eaw_m6 - __eaw_modes) / 2
+    .byte (__eaw_m7 - __eaw_modes) / 2
+__eaw_m6:
     ldr r3, [r5, #28]
     ldr r2, [r5, #76]
     add.w r2, r2, r3, lsr #13
@@ -275,8 +278,6 @@ __eaw:
     uxth r0, r0
     b __eaw_out
 __eaw_m4:
-    cmp r0, #4
-    bne __eaw_m2
     cmp r1, #7
     beq __eaw_slow
     mov.w r2, r5
@@ -295,8 +296,6 @@ __eaw_m4a:
     adds r1, #240
     b __eaw_rec
 __eaw_m2:
-    cmp r0, #2
-    bne __eaw_m1
     mov.w r2, r5
     lsls r3, r1, #2
     adds r2, r2, r3
@@ -314,8 +313,6 @@ __eaw_m2a:
     adds r1, #16
     b __eaw_rec
 __eaw_m1:
-    cmp r0, #1
-    bne __eaw_m3
     cmp r1, #7
     beq __eaw_slow
     mov.w r2, r5
@@ -323,8 +320,6 @@ __eaw_m1:
     ldr r0, [r2, r0]
     b __eaw_out
 __eaw_m3:
-    cmp r0, #3
-    bne __eaw_m7
     mov.w r2, r5
     lsls r3, r1, #2
     ldr r3, [r2, r3]
@@ -360,8 +355,6 @@ __eaw_m3e:
     adds r1, #16
     b __eaw_rec
 __eaw_m7:
-    cmp r0, #7
-    bne __eaw_slow
     ldr r3, [r5, #28]
     lsls r0, r3, #31
     bne __eaw_slow
@@ -699,11 +692,10 @@ CompilerIf #ASM_INDEXED = 1
   ASM Uses PC, Op, FlagNZ, GBase
     mov r2, r9
     ldr r3, [r5, #56]
-    cmp r2, r3
-    blt __ix_clrm_slow
+    subs.w r1, r2, r3
     ldr r3, [r5, #60]
-    cmp r2, r3
-    bge __ix_clrm_slow
+    cmp r1, r3
+    bhs __ix_clrm_slow
     ldr r0, [r5, #64]
     ldrh r0, [r0, r2]
     mov r1, r8
@@ -756,12 +748,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm2_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm2_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm2_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm2_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -791,11 +781,10 @@ CompilerIf #ASM_INDEXED = 1
   ASM Uses PC, Op, FlagNZ, GBase
     mov r2, r9
     ldr r3, [r5, #56]
-    cmp r2, r3
-    blt __ix_tstm_slow
+    subs.w r1, r2, r3
     ldr r3, [r5, #60]
-    cmp r2, r3
-    bge __ix_tstm_slow
+    cmp r1, r3
+    bhs __ix_tstm_slow
     ldr r0, [r5, #64]
     ldrh r0, [r0, r2]
     mov r1, r8
@@ -846,12 +835,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm3_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm3_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm3_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm3_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -881,11 +868,10 @@ CompilerIf #ASM_INDEXED = 1
   ASM Uses PC, Op, FlagNZ, Res, GBase
     mov r2, r9
     ldr r3, [r5, #56]
-    cmp r2, r3
-    blt __ix_incm_slow
+    subs.w r1, r2, r3
     ldr r3, [r5, #60]
-    cmp r2, r3
-    bge __ix_incm_slow
+    cmp r1, r3
+    bhs __ix_incm_slow
     ldr r0, [r5, #64]
     ldrh r0, [r0, r2]
     mov r1, r8
@@ -941,12 +927,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm4_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm4_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm4_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm4_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -976,11 +960,10 @@ CompilerIf #ASM_INDEXED = 1
   ASM Uses PC, Op, FlagNZ, Res, GBase
     mov r2, r9
     ldr r3, [r5, #56]
-    cmp r2, r3
-    blt __ix_decm_slow
+    subs.w r1, r2, r3
     ldr r3, [r5, #60]
-    cmp r2, r3
-    bge __ix_decm_slow
+    cmp r1, r3
+    bhs __ix_decm_slow
     ldr r0, [r5, #64]
     ldrh r0, [r0, r2]
     mov r1, r8
@@ -1036,12 +1019,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm5_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm5_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm5_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm5_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -1071,11 +1052,10 @@ CompilerIf #ASM_INDEXED = 1
   ASM Uses PC, Op, FlagNZ, GBase
     mov r2, r9
     ldr r3, [r5, #56]
-    cmp r2, r3
-    blt __ix_clrbm_slow
+    subs.w r1, r2, r3
     ldr r3, [r5, #60]
-    cmp r2, r3
-    bge __ix_clrbm_slow
+    cmp r1, r3
+    bhs __ix_clrbm_slow
     ldr r0, [r5, #64]
     ldrh r0, [r0, r2]
     mov r1, r8
@@ -1126,12 +1106,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm6_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm6_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm6_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm6_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -1161,11 +1139,10 @@ CompilerIf #ASM_INDEXED = 1
   ASM Uses PC, Op, FlagNZ, GBase
     mov r2, r9
     ldr r3, [r5, #56]
-    cmp r2, r3
-    blt __ix_tstbm_slow
+    subs.w r1, r2, r3
     ldr r3, [r5, #60]
-    cmp r2, r3
-    bge __ix_tstbm_slow
+    cmp r1, r3
+    bhs __ix_tstbm_slow
     ldr r0, [r5, #64]
     ldrh r0, [r0, r2]
     mov r1, r8
@@ -1215,12 +1192,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm7_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm7_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm7_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm7_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -1250,12 +1225,14 @@ CompilerIf #ASM_OPS = 1
   ASM Uses PC, Op, FlagNZ, GBase
     mov r2, r9
     ldr r3, [r5, #56]
-    cmp r2, r3
-    blt __imx_movb_slow
-    adds r3, r2, #2
+    subs r3, r2, r3
     ldr.w r12, [r5, #60]
     cmp r3, r12
-    bge __imx_movb_slow
+    bhs __imx_movb_slow
+    adds r3, #2
+    cmp r3, r12
+    bhs __imx_movb_slow
+    adds r3, r2, #2
     ldr r0, [r5, #64]
     ldrh r1, [r0, r2]
     ldrh r0, [r0, r3]
@@ -1300,12 +1277,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm8_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm8_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm8_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm8_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -1335,12 +1310,14 @@ CompilerIf #ASM_OPS = 1
   ASM Uses PC, Op, FlagNZ, GBase
     mov r2, r9
     ldr r3, [r5, #56]
-    cmp r2, r3
-    blt __imx_mov_slow
-    adds r3, r2, #2
+    subs r3, r2, r3
     ldr.w r12, [r5, #60]
     cmp r3, r12
-    bge __imx_mov_slow
+    bhs __imx_mov_slow
+    adds r3, #2
+    cmp r3, r12
+    bhs __imx_mov_slow
+    adds r3, r2, #2
     ldr r0, [r5, #64]
     ldrh r1, [r0, r2]
     ldrh r0, [r0, r3]
@@ -1386,12 +1363,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm9_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm9_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm9_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm9_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -1421,12 +1396,14 @@ CompilerIf #ASM_OPS = 1
   ASM Uses PC, Op, FlagNZ, Res, GBase
     mov r2, r9
     ldr r3, [r5, #56]
-    cmp r2, r3
-    blt __imx_cmp_slow
-    adds r3, r2, #2
+    subs r3, r2, r3
     ldr.w r12, [r5, #60]
     cmp r3, r12
-    bge __imx_cmp_slow
+    bhs __imx_cmp_slow
+    adds r3, #2
+    cmp r3, r12
+    bhs __imx_cmp_slow
+    adds r3, r2, #2
     ldr r0, [r5, #64]
     ldrh r1, [r0, r2]
     ldrh r0, [r0, r3]
@@ -1478,12 +1455,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm10_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm10_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm10_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm10_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -1513,12 +1488,14 @@ CompilerIf #ASM_OPS = 1
   ASM Uses PC, Op, FlagNZ, Res, GBase
     mov r2, r9
     ldr r3, [r5, #56]
-    cmp r2, r3
-    blt __imx_add_slow
-    adds r3, r2, #2
+    subs r3, r2, r3
     ldr.w r12, [r5, #60]
     cmp r3, r12
-    bge __imx_add_slow
+    bhs __imx_add_slow
+    adds r3, #2
+    cmp r3, r12
+    bhs __imx_add_slow
+    adds r3, r2, #2
     ldr r0, [r5, #64]
     ldrh r1, [r0, r2]
     ldrh r0, [r0, r3]
@@ -1571,12 +1548,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm11_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm11_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm11_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm11_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -1606,12 +1581,14 @@ CompilerIf #ASM_OPS = 1
   ASM Uses PC, Op, FlagNZ, Res, GBase
     mov r2, r9
     ldr r3, [r5, #56]
-    cmp r2, r3
-    blt __imx_sub_slow
-    adds r3, r2, #2
+    subs r3, r2, r3
     ldr.w r12, [r5, #60]
     cmp r3, r12
-    bge __imx_sub_slow
+    bhs __imx_sub_slow
+    adds r3, #2
+    cmp r3, r12
+    bhs __imx_sub_slow
+    adds r3, r2, #2
     ldr r0, [r5, #64]
     ldrh r1, [r0, r2]
     ldrh r0, [r0, r3]
@@ -1664,12 +1641,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm12_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm12_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm12_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm12_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -1699,12 +1674,14 @@ CompilerIf #ASM_OPS = 1
   ASM Uses PC, Op, FlagNZ, GBase
     mov r2, r9
     ldr r3, [r5, #56]
-    cmp r2, r3
-    blt __imx_bit_slow
-    adds r3, r2, #2
+    subs r3, r2, r3
     ldr.w r12, [r5, #60]
     cmp r3, r12
-    bge __imx_bit_slow
+    bhs __imx_bit_slow
+    adds r3, #2
+    cmp r3, r12
+    bhs __imx_bit_slow
+    adds r3, r2, #2
     ldr r0, [r5, #64]
     ldrh r1, [r0, r2]
     ldrh r0, [r0, r3]
@@ -1752,12 +1729,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm13_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm13_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm13_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm13_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -1787,12 +1762,14 @@ CompilerIf #ASM_OPS = 1
   ASM Uses PC, Op, FlagNZ, Res, GBase
     mov r2, r9
     ldr r3, [r5, #56]
-    cmp r2, r3
-    blt __imx_bic_slow
-    adds r3, r2, #2
+    subs r3, r2, r3
     ldr.w r12, [r5, #60]
     cmp r3, r12
-    bge __imx_bic_slow
+    bhs __imx_bic_slow
+    adds r3, #2
+    cmp r3, r12
+    bhs __imx_bic_slow
+    adds r3, r2, #2
     ldr r0, [r5, #64]
     ldrh r1, [r0, r2]
     ldrh r0, [r0, r3]
@@ -1842,12 +1819,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm14_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm14_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm14_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm14_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -1877,12 +1852,14 @@ CompilerIf #ASM_OPS = 1
   ASM Uses PC, Op, FlagNZ, Res, GBase
     mov r2, r9
     ldr r3, [r5, #56]
-    cmp r2, r3
-    blt __imx_bis_slow
-    adds r3, r2, #2
+    subs r3, r2, r3
     ldr.w r12, [r5, #60]
     cmp r3, r12
-    bge __imx_bis_slow
+    bhs __imx_bis_slow
+    adds r3, #2
+    cmp r3, r12
+    bhs __imx_bis_slow
+    adds r3, r2, #2
     ldr r0, [r5, #64]
     ldrh r1, [r0, r2]
     ldrh r0, [r0, r3]
@@ -1932,12 +1909,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm15_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm15_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm15_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm15_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -2011,12 +1986,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm16_e
     lsls r1, r0, #31
     bne __tm16_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm16_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm16_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm16_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -2072,12 +2045,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm17_e
     lsls r1, r0, #31
     bne __tm17_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm17_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm17_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm17_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -2138,12 +2109,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm18_e
     lsls r1, r0, #31
     bne __tm18_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm18_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm18_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm18_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -2199,12 +2168,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm19_e
     lsls r1, r0, #31
     bne __tm19_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm19_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm19_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm19_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -2269,12 +2236,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm20_e
     lsls r1, r0, #31
     bne __tm20_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm20_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm20_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm20_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -2332,12 +2297,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm21_e
     lsls r1, r0, #31
     bne __tm21_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm21_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm21_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm21_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -2405,12 +2368,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm22_e
     lsls r1, r0, #31
     bne __tm22_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm22_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm22_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm22_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -2468,12 +2429,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm23_e
     lsls r1, r0, #31
     bne __tm23_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm23_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm23_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm23_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -2536,12 +2495,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm24_e
     lsls r1, r0, #31
     bne __tm24_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm24_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm24_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm24_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -2597,12 +2554,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm25_e
     lsls r1, r0, #31
     bne __tm25_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm25_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm25_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm25_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -2663,12 +2618,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm26_e
     lsls r1, r0, #31
     bne __tm26_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm26_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm26_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm26_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -2724,12 +2677,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm27_e
     lsls r1, r0, #31
     bne __tm27_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm27_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm27_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm27_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -2799,12 +2750,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm28_e
     lsls r1, r0, #31
     bne __tm28_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm28_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm28_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm28_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -2863,12 +2812,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm29_e
     lsls r1, r0, #31
     bne __tm29_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm29_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm29_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm29_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -2927,12 +2874,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm30_e
     lsls r1, r0, #31
     bne __tm30_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm30_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm30_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm30_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -3000,12 +2945,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm31_e
     lsls r1, r0, #31
     bne __tm31_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm31_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm31_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm31_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -3064,12 +3007,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm32_e
     lsls r1, r0, #31
     bne __tm32_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm32_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm32_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm32_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -3128,12 +3069,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm33_e
     lsls r1, r0, #31
     bne __tm33_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm33_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm33_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm33_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -3210,12 +3149,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm34_e
     lsls r1, r0, #31
     bne __tm34_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm34_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm34_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm34_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -3276,12 +3213,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm35_e
     lsls r1, r0, #31
     bne __tm35_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm35_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm35_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm35_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -3358,12 +3293,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm36_e
     lsls r1, r0, #31
     bne __tm36_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm36_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm36_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm36_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -3424,12 +3357,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm37_e
     lsls r1, r0, #31
     bne __tm37_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm37_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm37_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm37_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -3493,12 +3424,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm38_e
     lsls r1, r0, #31
     bne __tm38_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm38_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm38_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm38_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -3554,12 +3483,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm39_e
     lsls r1, r0, #31
     bne __tm39_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm39_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm39_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm39_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -3618,12 +3545,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm40_e
     lsls r1, r0, #31
     bne __tm40_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm40_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm40_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm40_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -3679,12 +3604,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm41_e
     lsls r1, r0, #31
     bne __tm41_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm41_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm41_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm41_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -3744,12 +3667,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm42_e
     lsls r1, r0, #31
     bne __tm42_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm42_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm42_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm42_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -3808,12 +3729,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm43_e
     lsls r1, r0, #31
     bne __tm43_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm43_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm43_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm43_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -3889,12 +3808,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm44_e
     lsls r1, r0, #31
     bne __tm44_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm44_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm44_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm44_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -3956,12 +3873,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm45_e
     lsls r1, r0, #31
     bne __tm45_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm45_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm45_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm45_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -4023,12 +3938,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm46_e
     lsls r1, r0, #31
     bne __tm46_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm46_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm46_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm46_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -4104,12 +4017,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm47_e
     lsls r1, r0, #31
     bne __tm47_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm47_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm47_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm47_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -4171,12 +4082,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm48_e
     lsls r1, r0, #31
     bne __tm48_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm48_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm48_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm48_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -4238,12 +4147,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm49_e
     lsls r1, r0, #31
     bne __tm49_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm49_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm49_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm49_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -4309,12 +4216,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm50_e
     lsls r1, r0, #31
     bne __tm50_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm50_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm50_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm50_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -4379,12 +4284,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm51_e
     lsls r1, r0, #31
     bne __tm51_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm51_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm51_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm51_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -4450,12 +4353,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm52_e
     lsls r1, r0, #31
     bne __tm52_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm52_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm52_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm52_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -4520,12 +4421,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm53_e
     lsls r1, r0, #31
     bne __tm53_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm53_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm53_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm53_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -4594,12 +4493,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm54_e
     lsls r1, r0, #31
     bne __tm54_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm54_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm54_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm54_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -4664,12 +4561,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm55_e
     lsls r1, r0, #31
     bne __tm55_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm55_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm55_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm55_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -4726,12 +4621,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm56_e
     lsls r1, r0, #31
     bne __tm56_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm56_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm56_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm56_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -4786,12 +4679,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm57_e
     lsls r1, r0, #31
     bne __tm57_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm57_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm57_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm57_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -4849,12 +4740,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm58_e
     lsls r1, r0, #31
     bne __tm58_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm58_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm58_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm58_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -4910,12 +4799,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm59_e
     lsls r1, r0, #31
     bne __tm59_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm59_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm59_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm59_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -4980,12 +4867,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm60_e
     lsls r1, r0, #31
     bne __tm60_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm60_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm60_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm60_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -5045,12 +4930,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm61_e
     lsls r1, r0, #31
     bne __tm61_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm61_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm61_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm61_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -5111,12 +4994,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm62_e
     lsls r1, r0, #31
     bne __tm62_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm62_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm62_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm62_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -5176,12 +5057,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm63_e
     lsls r1, r0, #31
     bne __tm63_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm63_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm63_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm63_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -5242,12 +5121,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm64_e
     lsls r1, r0, #31
     bne __tm64_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm64_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm64_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm64_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -5307,12 +5184,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm65_e
     lsls r1, r0, #31
     bne __tm65_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm65_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm65_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm65_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -5373,12 +5248,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm66_e
     lsls r1, r0, #31
     bne __tm66_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm66_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm66_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm66_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -5438,12 +5311,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm67_e
     lsls r1, r0, #31
     bne __tm67_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm67_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm67_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm67_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -5504,12 +5375,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm68_e
     lsls r1, r0, #31
     bne __tm68_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm68_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm68_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm68_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -5578,12 +5447,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm69_e
     lsls r1, r0, #31
     bne __tm69_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm69_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm69_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm69_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -5642,12 +5509,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm70_e
     lsls r1, r0, #31
     bne __tm70_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm70_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm70_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm70_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -5704,12 +5569,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm71_e
     lsls r1, r0, #31
     bne __tm71_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm71_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm71_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm71_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -5767,12 +5630,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm72_e
     lsls r1, r0, #31
     bne __tm72_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm72_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm72_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm72_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -5838,12 +5699,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm73_e
     lsls r1, r0, #31
     bne __tm73_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm73_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm73_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm73_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -5904,12 +5763,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm74_e
     lsls r1, r0, #31
     bne __tm74_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm74_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm74_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm74_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -5971,12 +5828,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm75_e
     lsls r1, r0, #31
     bne __tm75_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm75_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm75_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm75_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6036,12 +5891,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm76_e
     lsls r1, r0, #31
     bne __tm76_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm76_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm76_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm76_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6099,12 +5952,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm77_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm77_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm77_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm77_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6135,12 +5986,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm78_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm78_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm78_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm78_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6180,12 +6029,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm79_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm79_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm79_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm79_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6218,12 +6065,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm80_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm80_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm80_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm80_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6263,12 +6108,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm81_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm81_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm81_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm81_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6301,12 +6144,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm82_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm82_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm82_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm82_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6349,12 +6190,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm83_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm83_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm83_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm83_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6387,12 +6226,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm84_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm84_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm84_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm84_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6435,12 +6272,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm85_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm85_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm85_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm85_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6473,12 +6308,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm86_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm86_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm86_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm86_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6523,12 +6356,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm87_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm87_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm87_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm87_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6563,12 +6394,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm88_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm88_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm88_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm88_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6613,12 +6442,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm89_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm89_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm89_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm89_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6653,12 +6480,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm90_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm90_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm90_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm90_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6698,12 +6523,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm91_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm91_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm91_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm91_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6736,12 +6559,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm92_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm92_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm92_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm92_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6781,12 +6602,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm93_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm93_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm93_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm93_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6819,12 +6638,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm94_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm94_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm94_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm94_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6867,12 +6684,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm95_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm95_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm95_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm95_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6907,12 +6722,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm96_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm96_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm96_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm96_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6955,12 +6768,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm97_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm97_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm97_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm97_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -6995,12 +6806,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm98_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm98_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm98_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm98_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -7041,12 +6850,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm99_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm99_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm99_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm99_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -7079,12 +6886,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm100_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm100_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm100_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm100_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -7125,12 +6930,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm101_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm101_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm101_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm101_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -7163,12 +6966,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm102_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm102_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm102_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm102_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -7209,12 +7010,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm103_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm103_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm103_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm103_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -7247,12 +7046,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm104_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm104_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm104_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm104_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -7293,12 +7090,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm105_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm105_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm105_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm105_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -7331,12 +7126,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm106_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm106_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm106_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm106_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -7391,12 +7184,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm107_e
     lsls r1, r0, #31
     bne __tm107_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm107_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm107_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm107_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -7460,11 +7251,10 @@ __call_jsrm_fetch:
     lsrs r1, r0, #1
     bcs __call_jsrm_slow
     ldr r3, [r5, #56]
-    cmp r0, r3
-    blt __call_jsrm_slow
-    ldr r3, [r5, #60]
-    cmp r0, r3
-    bge __call_jsrm_slow
+    subs r3, r0, r3
+    ldr r1, [r5, #60]
+    cmp r3, r1
+    bhs __call_jsrm_slow
     ldr r1, [r5, #64]
     ldrh r3, [r1, r0]
     adds r0, #2
@@ -7520,12 +7310,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm108_e
     lsls r1, r0, #31
     bne __tm108_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm108_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm108_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm108_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -7582,12 +7370,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm109_e
     lsls r1, r0, #31
     bne __tm109_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm109_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm109_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm109_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -7642,12 +7428,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm110_e
     lsls r1, r0, #31
     bne __tm110_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm110_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm110_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm110_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -7713,12 +7497,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm111_e
     lsls r1, r0, #31
     bne __tm111_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm111_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm111_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm111_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -7766,12 +7548,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm112_e
     lsls r1, r0, #31
     bne __tm112_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm112_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm112_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm112_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -7812,12 +7592,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm113_e
     lsls r1, r0, #31
     bne __tm113_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm113_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm113_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm113_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -7860,12 +7638,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm114_e
     lsls r1, r0, #31
     bne __tm114_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm114_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm114_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm114_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -7915,12 +7691,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm115_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm115_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm115_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm115_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -7955,12 +7729,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm116_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm116_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm116_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm116_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -7998,12 +7770,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm117_e
     lsls r1, r0, #31
     bne __tm117_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm117_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm117_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm117_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -8077,12 +7847,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm118_e
     lsls r1, r0, #31
     bne __tm118_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm118_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm118_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm118_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -8190,12 +7958,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm119_e
     lsls r1, r0, #31
     bne __tm119_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm119_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm119_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm119_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -8269,12 +8035,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm120_e
     lsls r1, r0, #31
     bne __tm120_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm120_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm120_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm120_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -8353,12 +8117,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm121_e
     lsls r1, r0, #31
     bne __tm121_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm121_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm121_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm121_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -8436,12 +8198,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm122_e
     lsls r1, r0, #31
     bne __tm122_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm122_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm122_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm122_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -8500,12 +8260,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm123_e
     lsls r1, r0, #31
     bne __tm123_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm123_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm123_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm123_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -8548,12 +8306,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm124_e
     lsls r1, r0, #31
     bne __tm124_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm124_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm124_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm124_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -8593,12 +8349,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm125_e
     lsls r1, r0, #31
     bne __tm125_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm125_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm125_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm125_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -8647,12 +8401,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm126_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm126_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm126_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm126_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -8698,12 +8450,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm127_e
     lsls r1, r0, #31
     bne __tm127_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm127_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm127_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm127_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -8743,12 +8493,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm128_e
     lsls r1, r0, #31
     bne __tm128_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm128_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm128_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm128_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -8788,12 +8536,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm129_e
     lsls r1, r0, #31
     bne __tm129_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm129_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm129_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm129_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -8826,12 +8572,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm130_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm130_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm130_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm130_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -8874,12 +8618,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm131_e
     lsls r1, r0, #31
     bne __tm131_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm131_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm131_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm131_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -8912,12 +8654,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm132_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm132_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm132_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm132_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -8951,12 +8691,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm133_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm133_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm133_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm133_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9024,12 +8762,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm134_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm134_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm134_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm134_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9064,12 +8800,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm135_e
     lsls r1, r0, #31
     bne __tm135_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm135_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm135_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm135_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9110,12 +8844,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm136_e
     lsls r1, r0, #31
     bne __tm136_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm136_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm136_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm136_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9199,12 +8931,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm137_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm137_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm137_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm137_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9241,12 +8971,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm138_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm138_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm138_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm138_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9295,12 +9023,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm139_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm139_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm139_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm139_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9338,12 +9064,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm140_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm140_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm140_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm140_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9378,12 +9102,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm141_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm141_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm141_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm141_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9420,12 +9142,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm142_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm142_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm142_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm142_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9462,12 +9182,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm143_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm143_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm143_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm143_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9518,12 +9236,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm144_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm144_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm144_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm144_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9563,12 +9279,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm145_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm145_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm145_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm145_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9605,12 +9319,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm146_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm146_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm146_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm146_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9649,12 +9361,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm147_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm147_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm147_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm147_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9689,12 +9399,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm148_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm148_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm148_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm148_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9731,12 +9439,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm149_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm149_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm149_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm149_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9773,12 +9479,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm150_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm150_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm150_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm150_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9829,12 +9533,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm151_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm151_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm151_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm151_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9874,12 +9576,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm152_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm152_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm152_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm152_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9921,12 +9621,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm153_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm153_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm153_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm153_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -9963,12 +9661,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm154_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm154_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm154_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm154_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10006,12 +9702,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm155_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm155_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm155_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm155_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10059,12 +9753,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm156_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm156_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm156_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm156_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10105,12 +9797,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm157_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm157_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm157_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm157_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10158,12 +9848,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm158_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm158_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm158_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm158_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10204,12 +9892,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm159_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm159_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm159_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm159_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10253,12 +9939,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm160_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm160_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm160_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm160_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10298,12 +9982,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm161_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm161_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm161_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm161_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10339,12 +10021,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm162_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm162_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm162_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm162_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10383,12 +10063,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm163_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm163_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm163_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm163_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10427,12 +10105,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm164_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm164_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm164_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm164_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10471,12 +10147,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm165_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm165_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm165_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm165_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10515,12 +10189,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm166_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm166_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm166_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm166_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10559,12 +10231,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm167_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm167_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm167_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm167_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10601,12 +10271,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm168_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm168_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm168_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm168_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10647,12 +10315,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm169_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm169_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm169_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm169_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10693,12 +10359,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm170_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm170_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm170_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm170_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10734,12 +10398,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm171_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm171_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm171_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm171_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10811,12 +10473,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm172_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm172_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm172_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm172_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10855,12 +10515,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm173_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm173_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm173_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm173_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10929,12 +10587,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm174_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm174_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm174_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm174_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -10974,12 +10630,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm175_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm175_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm175_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm175_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -11042,12 +10696,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm176_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm176_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm176_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm176_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -11085,12 +10737,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm177_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm177_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm177_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm177_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -11130,12 +10780,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm178_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm178_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm178_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm178_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -11175,12 +10823,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm179_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm179_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm179_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm179_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -11251,12 +10897,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm180_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm180_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm180_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm180_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -11298,12 +10942,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm181_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm181_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm181_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm181_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -11374,12 +11016,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm182_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm182_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm182_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm182_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -11421,12 +11061,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm183_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm183_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm183_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm183_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -11465,12 +11103,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm184_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm184_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm184_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm184_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -11511,12 +11147,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm185_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm185_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm185_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm185_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -11554,12 +11188,10 @@ CompilerIf #ASM_TAILS = 1
     subs.w r11, r11, #1
     beq __tm186_e
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm186_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm186_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm186_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -11623,12 +11255,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm187_e
     lsls r1, r0, #31
     bne __tm187_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm187_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm187_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm187_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -11678,12 +11308,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm188_e
     lsls r1, r0, #31
     bne __tm188_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm188_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm188_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm188_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -11731,12 +11359,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm189_e
     lsls r1, r0, #31
     bne __tm189_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm189_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm189_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm189_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -11786,12 +11412,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm190_e
     lsls r1, r0, #31
     bne __tm190_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm190_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm190_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm190_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -11841,12 +11465,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm191_e
     lsls r1, r0, #31
     bne __tm191_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm191_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm191_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm191_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -11897,12 +11519,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm192_e
     lsls r1, r0, #31
     bne __tm192_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm192_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm192_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm192_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -11953,12 +11573,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm193_e
     lsls r1, r0, #31
     bne __tm193_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm193_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm193_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm193_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -12006,12 +11624,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm194_e
     lsls r1, r0, #31
     bne __tm194_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm194_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm194_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm194_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -12061,12 +11677,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm195_e
     lsls r1, r0, #31
     bne __tm195_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm195_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm195_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm195_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -12114,12 +11728,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm196_e
     lsls r1, r0, #31
     bne __tm196_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm196_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm196_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm196_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -12169,12 +11781,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm197_e
     lsls r1, r0, #31
     bne __tm197_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm197_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm197_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm197_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -12224,12 +11834,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm198_e
     lsls r1, r0, #31
     bne __tm198_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm198_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm198_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm198_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -12417,12 +12025,10 @@ __mv04_r9:
     subs.w r11, r11, #1
     beq __ul_cpurunm_runendm
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __ul_cpurunm_slowfetchm
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __ul_cpurunm_slowfetchm
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __ul_cpurunm_slowfetchm
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -12459,12 +12065,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm199_e
     lsls r1, r0, #31
     bne __tm199_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm199_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm199_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm199_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -12558,12 +12162,10 @@ __mv40_r9:
     subs.w r11, r11, #1
     beq __ul_cpurunm_runendm
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __ul_cpurunm_slowfetchm
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __ul_cpurunm_slowfetchm
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __ul_cpurunm_slowfetchm
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -12600,12 +12202,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm200_e
     lsls r1, r0, #31
     bne __tm200_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm200_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm200_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm200_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -12678,6 +12278,7 @@ __mv60_s2:
     beq __ul_cpurunm_instructionmov_01_m60refm
     movs r4, r1
     adds.w r9, r9, #2
+    uxth.w r9, r9
     and.w r0, r8, #7
     mov.w r3, r5
     lsls r0, r0, #2
@@ -12687,12 +12288,10 @@ __mv60_s2:
     subs.w r11, r11, #1
     beq __ul_cpurunm_runendm
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __ul_cpurunm_slowfetchm
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __ul_cpurunm_slowfetchm
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __ul_cpurunm_slowfetchm
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -12727,12 +12326,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm201_e
     lsls r1, r0, #31
     bne __tm201_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm201_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm201_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm201_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -12830,6 +12427,7 @@ __mv64_d1:
     strh r1, [r3, r0]
     movs r4, r1
     adds.w r9, r9, #2
+    uxth.w r9, r9
     and.w r2, r8, #7
     mov.w r3, r5
     lsls r2, r2, #2
@@ -12864,12 +12462,10 @@ __mv64_r9:
     subs.w r11, r11, #1
     beq __ul_cpurunm_runendm
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __ul_cpurunm_slowfetchm
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __ul_cpurunm_slowfetchm
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __ul_cpurunm_slowfetchm
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -12911,12 +12507,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm202_e
     lsls r1, r0, #31
     bne __tm202_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm202_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm202_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm202_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -13003,12 +12597,10 @@ __mv20_r9:
     subs.w r11, r11, #1
     beq __ul_cpurunm_runendm
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __ul_cpurunm_slowfetchm
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __ul_cpurunm_slowfetchm
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __ul_cpurunm_slowfetchm
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -13042,12 +12634,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm203_e
     lsls r1, r0, #31
     bne __tm203_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm203_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm203_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm203_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -13138,17 +12728,16 @@ __mv61_s2:
     strh r1, [r3, r0]
     movs r4, r1
     adds.w r9, r9, #2
+    uxth.w r9, r9
     movs r0, #0
     str r0, [r5, #104]
     subs.w r11, r11, #1
     beq __ul_cpurunm_runendm
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __ul_cpurunm_slowfetchm
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __ul_cpurunm_slowfetchm
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __ul_cpurunm_slowfetchm
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -13185,12 +12774,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm204_e
     lsls r1, r0, #31
     bne __tm204_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm204_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm204_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm204_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -13271,17 +12858,16 @@ __mv06_a9:
     strh r1, [r3, r0]
     movs r4, r1
     adds.w r9, r9, #2
+    uxth.w r9, r9
     movs r0, #0
     str r0, [r5, #104]
     subs.w r11, r11, #1
     beq __ul_cpurunm_runendm
     mov r0, r9
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __ul_cpurunm_slowfetchm
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __ul_cpurunm_slowfetchm
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __ul_cpurunm_slowfetchm
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]
@@ -13316,12 +12902,10 @@ CompilerIf #ASM_TAILS = 1
     beq __tm205_e
     lsls r1, r0, #31
     bne __tm205_s
-    ldr r1, [r5, #56]
-    cmp r0, r1
-    blt __tm205_s
-    ldr r1, [r5, #60]
-    cmp r0, r1
-    bge __tm205_s
+    ldrd r1, r2, [r5, #56]
+    subs r1, r0, r1
+    cmp r1, r2
+    bhs __tm205_s
     str r0, [r5, #68]
     ldr r1, [r5, #64]
     ldrh r2, [r1, r0]

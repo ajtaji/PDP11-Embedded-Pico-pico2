@@ -54,8 +54,8 @@ def generate(preview=False):
  defs='''CompilerIf #DISK_BACKEND = 0
 Global Dim MovAsm.Label(7)
 Global Dim MovRef.Label(7)
-Global Dim FastAsm.Label(42)
-Global Dim FastRef.Label(42)
+Global Dim FastAsm.Label(54)
+Global Dim FastRef.Label(54)
 CompilerEndIf
 '''
  s=defs+s

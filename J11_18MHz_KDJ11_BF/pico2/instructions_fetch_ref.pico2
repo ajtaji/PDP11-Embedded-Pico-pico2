@@ -1,0 +1,2654 @@
+; Generated plain interpreter for fetch-sequence comparisons.
+Global Dim OpTableMFetchRef.Label(8192)
+Global OpTableReadyMFetchRef.i                    ; 0 until the first CpuRun fills OpTable
+Global FillFromMFetchRef.i, FillCountMFetchRef.i           ; Ops() - Globals, cheaper than locals
+
+; OpTable(from) .. OpTable(from + count - 1) = target. A '.Label' can only
+; be taken with ?Name inside the procedure that owns the label, so CpuRun
+; itself passes its labels in; this only stores them.
+Procedure OpsMFetchRef(from.i, count.i, target.Label)
+  FillFromMFetchRef = from
+  FillCountMFetchRef = count
+  While FillCountMFetchRef > 0
+    OpTableMFetchRef(FillFromMFetchRef) = target
+    FillFromMFetchRef = FillFromMFetchRef + 1
+    FillCountMFetchRef = FillCountMFetchRef - 1
+  Wend
+EndProcedure
+
+; Execute up to n instructions. Returns how many ran.
+ProcedureRAM.i CpuRunMFetchRef(n.i)
+; ---- THE EMULATED PC (see PC in cpu) ----------------------------------
+; Between instructions the emulated PC lives in PC, a register; Reg(7)
+; is a stale copy. A handler that reaches Reg(7) through a variable
+; register number, or calls a helper that does (EaWord, FetchWord, Push,
+; Pop, TakeTrap, PswSet is fine), starts with PcOut() and ends with
+; NextSynced(), which takes the PC back. Every other handler - the
+; branches, SOB, and the register forms whose register cannot be R7 -
+; works on PC directly and ends with NextNative().
+Macro PcOutMFetchRef()
+  Reg(7) = PC
+EndMacro
+
+; THE TAIL (see the top of this file), written once as macros and
+; expanded in place at the end of every handler - a macro costs nothing
+; at run time, so every handler still has its own copy of these lines.
+; After a synced handler: take the PC back, take any trap, count, fetch.
+Macro NextSyncedMFetchRef()
+  PC = Reg(7)
+  If Reg(#CPU_TRAPVECTOR)
+    Goto SlowTailM
+  EndIf
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEndM
+  EndIf
+  If PC >= Reg(#CPU_FW + (0))                       ; the fetch, through the fetch window (cpu)
+    If PC - Reg(#CPU_FW + (0)) < Reg(#CPU_FW + (1))
+      If (PC & 1) = 0
+        MmuInstrStart(PC)
+        Op = PeekU(PC + Reg(#CPU_FW + (2)))
+        PC = PC + 2
+        Goto OpTableMFetchRef(Op >> 3)
+      EndIf
+    EndIf
+  EndIf
+  Goto SlowFetchM
+EndMacro
+
+; After a native handler: it cannot trap and the PC it leaves is even (it
+; was even when fetched, and a branch moves it by an even amount), so the
+; only test left is whether it is still in RAM.
+Macro NextNativeMFetchRef()
+  RunLeft = RunLeft - 1
+  If RunLeft = 0
+    Goto RunEndM
+  EndIf
+  If PC >= Reg(#CPU_FW + (0))                       ; the fetch, through the fetch window (cpu)
+    If PC - Reg(#CPU_FW + (0)) < Reg(#CPU_FW + (1))
+      If (PC & 1) = 0
+        MmuInstrStart(PC)
+        Op = PeekU(PC + Reg(#CPU_FW + (2)))
+        PC = PC + 2
+        Goto OpTableMFetchRef(Op >> 3)
+      EndIf
+    EndIf
+  EndIf
+  Goto SlowFetchM
+EndMacro
+
+; After a native handler that read memory (an immediate operand): that
+; read can leave a trap (the I/O page), so take it; otherwise as above.
+Macro NextNativeTrapMFetchRef()
+  If Reg(#CPU_TRAPVECTOR)
+    Goto SlowTailM
+  EndIf
+  NextNativeMFetchRef()
+EndMacro
+
+; A branch taken: the low byte of the instruction, signed, in words.
+; Op << 24 puts the offset's sign in bit 31, and the arithmetic >> 23
+; brings it back down already doubled and sign-extended.
+Macro BranchToMFetchRef()
+  PC = (PC + ((Op << 24) >> 23)) & $FFFF
+EndMacro
+
+  If OpTableReadyMFetchRef = 0
+    Goto BuildTableM
+  EndIf
+RunStartM:
+  If n <= 0 Or Halted <> 0
+    ProcedureReturn 0
+  EndIf
+  PC = Reg(7)                            ; the caller may have set Reg(7)
+  RunFrom = InstrCount
+  RunBank = n
+  RunLeft = 0
+  RunWindow = 0
+  Goto RunEndM                            ; which lets the devices act, then opens a window
+FetchM:
+  If PC >= Reg(#CPU_FW + (0))                       ; the fetch, through the fetch window (cpu)
+    If PC - Reg(#CPU_FW + (0)) < Reg(#CPU_FW + (1))
+      If (PC & 1) = 0
+        MmuInstrStart(PC)
+        Op = PeekU(PC + Reg(#CPU_FW + (2)))
+        PC = PC + 2
+        Goto OpTableMFetchRef(Op >> 3)
+      EndIf
+    EndIf
+  EndIf
+SlowFetchM:                               ; the I/O page, an odd PC, past the end of RAM
+  Reg(7) = PC
+  MmuInstrStart(PC)
+  TrapHeld = Reg(#CPU_TRAPVECTOR)
+  Reg(#CPU_TRAPVECTOR) = 0
+  Op = FetchWordM()
+  PC = Reg(7)
+  If Reg(#CPU_TRAPVECTOR)                          ; the fetch itself failed (odd PC, nothing there):
+    Goto SlowTailM                        ; trap through 4 and execute nothing - it read as
+  EndIf                                  ; 0, a HALT (MAINDEC-11-DFKAB test 100). The PC stays
+                                         ; incremented, as on the J-11 (Architecture Handbook
+                                         ; 1983, model differences 28 and 30)
+  Reg(#CPU_TRAPVECTOR) = TrapHeld
+  Goto OpTableMFetchRef(Op >> 3)
+
+;-MOV-------------------------------------------------------------------
+; ---- INDEXED HANDLERS ----
+; ---- IMX HANDLERS ----
+; ---- MEMORY HELPERS ----
+InstructionMOV_01M:            ; 01SSDD   entries $0200-$03FF
+  PcOutMFetchRef()
+  ;name = "MOV"
+  MMSrcWord()
+  If (Op & $38) = 0
+    Reg(Op & 7) = Reg(#CPU_SRC)
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMWriteWord(Reg(#CPU_EA), Reg(#CPU_SRC))
+  EndIf
+  FlagNZ = Reg(#CPU_SRC)
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("MOV " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionMOVB_11M:           ; 11SSDD   entries $1200-$13FF
+  PcOutMFetchRef()
+  ;name = "MOVB"
+  MMSrcByte()
+  If (Op & $38) = 0
+    Reg(Op & 7) = (Reg(#CPU_SRC) | (0 - (Reg(#CPU_SRC) & $80))) & $FFFF   ; to a register it is sign-extended
+  Else
+    Reg(#CPU_EA) = EaByteM(Op & $3F)
+    MMWriteByte(Reg(#CPU_EA), Reg(#CPU_SRC))
+  EndIf
+  FlagNZ = Reg(#CPU_SRC) << 8
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("MOVB " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-CMP-------------------------------------------------------------------
+InstructionCMP_02M:            ; 02SSDD   entries $0400-$05FF
+  PcOutMFetchRef()
+  ;name = "CMP"
+  MMSrcWord()
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7)
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+  EndIf
+  Res = Reg(#CPU_SRC) - Reg(#CPU_DST)                        ; src - dst, the other way round from SUB
+  Reg(#CPU_FLAGC) = Res
+  Reg(#CPU_FLAGV) = (Reg(#CPU_SRC) ! Reg(#CPU_DST)) & (Reg(#CPU_SRC) ! Res)
+  FlagNZ = Res & $FFFF
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("CMP " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionCMPB_12M:           ; 12SSDD   entries $1400-$15FF
+  PcOutMFetchRef()
+  ;name = "CMPB"
+  MMSrcByte()
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
+  Else
+    Reg(#CPU_EA) = EaByteM(Op & $3F)
+    MMReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+  EndIf
+  Res = Reg(#CPU_SRC) - Reg(#CPU_DST)
+  Reg(#CPU_FLAGC) = Res << 8
+  Reg(#CPU_FLAGV) = ((Reg(#CPU_SRC) ! Reg(#CPU_DST)) & (Reg(#CPU_SRC) ! Res)) << 8
+  FlagNZ = (Res & $FF) << 8
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("CMPB " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-BIT-------------------------------------------------------------------
+InstructionBIT_03M:            ; 03SSDD   entries $0600-$07FF
+  PcOutMFetchRef()
+  ;name = "BIT"
+  MMSrcWord()
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7)
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+  EndIf
+  FlagNZ = Reg(#CPU_SRC) & Reg(#CPU_DST)
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("BIT " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionBITB_13M:           ; 13SSDD   entries $1600-$17FF
+  PcOutMFetchRef()
+  ;name = "BITB"
+  MMSrcByte()
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
+  Else
+    Reg(#CPU_EA) = EaByteM(Op & $3F)
+    MMReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+  EndIf
+  FlagNZ = (Reg(#CPU_SRC) & Reg(#CPU_DST)) << 8
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("BITB " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-BIC-------------------------------------------------------------------
+InstructionBIC_04M:            ; 04SSDD   entries $0800-$09FF
+  PcOutMFetchRef()
+  ;name = "BIC"
+  MMSrcWord()
+  If (Op & $38) = 0
+    Res = Reg(Op & 7) & ~Reg(#CPU_SRC) & $FFFF
+    Reg(Op & 7) = Res
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWord(Res, Reg(#CPU_EA))
+    Res = Res & ~Reg(#CPU_SRC) & $FFFF
+    MMWriteWord(Reg(#CPU_EA), Res)
+  EndIf
+  FlagNZ = Res
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("BIC " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionBICB_14M:           ; 14SSDD   entries $1800-$19FF
+  PcOutMFetchRef()
+  ;name = "BICB"
+  MMSrcByte()
+  If (Op & $38) = 0
+    Res = Reg(Op & 7) & ~Reg(#CPU_SRC) & $FF
+    Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  Else
+    Reg(#CPU_EA) = EaByteM(Op & $3F)
+    MMReadByte(Res, Reg(#CPU_EA))
+    Res = Res & ~Reg(#CPU_SRC) & $FF
+    MMWriteByte(Reg(#CPU_EA), Res)
+  EndIf
+  FlagNZ = Res << 8
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("BICB " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-BIS-------------------------------------------------------------------
+InstructionBIS_05M:            ; 05SSDD   entries $0A00-$0BFF
+  PcOutMFetchRef()
+  ;name = "BIS"
+  MMSrcWord()
+  If (Op & $38) = 0
+    Res = Reg(Op & 7) | Reg(#CPU_SRC)
+    Reg(Op & 7) = Res
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWord(Res, Reg(#CPU_EA))
+    Res = Res | Reg(#CPU_SRC)
+    MMWriteWord(Reg(#CPU_EA), Res)
+  EndIf
+  FlagNZ = Res
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("BIS " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionBISB_15M:           ; 15SSDD   entries $1A00-$1BFF
+  PcOutMFetchRef()
+  ;name = "BISB"
+  MMSrcByte()
+  If (Op & $38) = 0
+    Res = (Reg(Op & 7) | Reg(#CPU_SRC)) & $FF
+    Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  Else
+    Reg(#CPU_EA) = EaByteM(Op & $3F)
+    MMReadByte(Res, Reg(#CPU_EA))
+    Res = Res | Reg(#CPU_SRC)
+    MMWriteByte(Reg(#CPU_EA), Res)
+  EndIf
+  FlagNZ = Res << 8
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("BISB " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-ADD-------------------------------------------------------------------
+InstructionADD_06M:            ; 06SSDD   entries $0C00-$0DFF
+  PcOutMFetchRef()
+  ;name = "ADD"
+  MMSrcWord()
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = Reg(#CPU_SRC) + Reg(#CPU_DST)
+    Reg(Op & 7) = Res & $FFFF
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = Reg(#CPU_SRC) + Reg(#CPU_DST)
+    MMWriteWord(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGC) = Res
+  Reg(#CPU_FLAGV) = ~(Reg(#CPU_SRC) ! Reg(#CPU_DST)) & (Reg(#CPU_SRC) ! Res)
+  FlagNZ = Res & $FFFF
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("ADD " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-SUB-------------------------------------------------------------------
+InstructionSUB_16M:            ; 16SSDD   entries $1C00-$1DFF
+  PcOutMFetchRef()
+  ;name = "SUB"
+  MMSrcWord()
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = Reg(#CPU_DST) - Reg(#CPU_SRC)
+    Reg(Op & 7) = Res & $FFFF
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = Reg(#CPU_DST) - Reg(#CPU_SRC)
+    MMWriteWord(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGC) = Res                ; borrow
+  Reg(#CPU_FLAGV) = (Reg(#CPU_SRC) ! Reg(#CPU_DST)) & (Reg(#CPU_DST) ! Res)
+  FlagNZ = Res & $FFFF
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("SUB " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+; ======================================================================
+;  SINGLE-OPERAND. The destination is fetched at the top and stored at
+;  the bottom, each with register mode inline.
+; ======================================================================
+
+;-CLR-------------------------------------------------------------------
+InstructionCLR_0050M:          ; 0050DD   entries $0140-$0147
+  PcOutMFetchRef()
+  ;name = "CLR"
+  If (Op & $38) = 0
+    Reg(Op & 7) = 0
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMWriteWord(Reg(#CPU_EA), 0)
+  EndIf
+  FlagNZ = 0
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("CLR " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionCLRB_1050M:         ; 1050DD   entries $1140-$1147
+  PcOutMFetchRef()
+  ;name = "CLRB"
+  If (Op & $38) = 0
+    Reg(Op & 7) = Reg(Op & 7) & $FF00
+  Else
+    Reg(#CPU_EA) = EaByteM(Op & $3F)
+    MMWriteByte(Reg(#CPU_EA), 0)
+  EndIf
+  FlagNZ = 0
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("CLRB " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-COM-------------------------------------------------------------------
+InstructionCOM_0051M:          ; 0051DD   entries $0148-$014F
+  PcOutMFetchRef()
+  ;name = "COM"
+  If (Op & $38) = 0
+    Res = Reg(Op & 7) ! $FFFF
+    Reg(Op & 7) = Res
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWord(Res, Reg(#CPU_EA))
+    Res = Res ! $FFFF
+    MMWriteWord(Reg(#CPU_EA), Res)
+  EndIf
+  FlagNZ = Res
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = $10000
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("COM " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionCOMB_1051M:         ; 1051DD   entries $1148-$114F
+  PcOutMFetchRef()
+  ;name = "COMB"
+  If (Op & $38) = 0
+    Res = (Reg(Op & 7) ! $FF) & $FF
+    Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  Else
+    Reg(#CPU_EA) = EaByteM(Op & $3F)
+    MMReadByte(Res, Reg(#CPU_EA))
+    Res = Res ! $FF
+    MMWriteByte(Reg(#CPU_EA), Res)
+  EndIf
+  FlagNZ = Res << 8
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = $10000
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("COMB " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-INC-------------------------------------------------------------------
+InstructionINC_0052M:          ; 0052DD   entries $0150-$0157   C unaffected
+  PcOutMFetchRef()
+  ;name = "INC"
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = (Reg(#CPU_DST) + 1) & $FFFF
+    Reg(Op & 7) = Res
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) + 1) & $FFFF
+    MMWriteWord(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $7FFF
+    Reg(#CPU_FLAGV) = $8000
+  EndIf
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("INC " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionINCB_1052M:         ; 1052DD   entries $1150-$1157
+  PcOutMFetchRef()
+  ;name = "INCB"
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
+    Res = (Reg(#CPU_DST) + 1) & $FF
+    Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  Else
+    Reg(#CPU_EA) = EaByteM(Op & $3F)
+    MMReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) + 1) & $FF
+    MMWriteByte(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $7F
+    Reg(#CPU_FLAGV) = $8000
+  EndIf
+  FlagNZ = Res << 8
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("INCB " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-DEC-------------------------------------------------------------------
+InstructionDEC_0053M:          ; 0053DD   entries $0158-$015F   C unaffected
+  PcOutMFetchRef()
+  ;name = "DEC"
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = (Reg(#CPU_DST) - 1) & $FFFF
+    Reg(Op & 7) = Res
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) - 1) & $FFFF
+    MMWriteWord(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $8000
+    Reg(#CPU_FLAGV) = $8000
+  EndIf
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("DEC " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionDECB_1053M:         ; 1053DD   entries $1158-$115F
+  PcOutMFetchRef()
+  ;name = "DECB"
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
+    Res = (Reg(#CPU_DST) - 1) & $FF
+    Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  Else
+    Reg(#CPU_EA) = EaByteM(Op & $3F)
+    MMReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) - 1) & $FF
+    MMWriteByte(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $80
+    Reg(#CPU_FLAGV) = $8000
+  EndIf
+  FlagNZ = Res << 8
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("DECB " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-NEG-------------------------------------------------------------------
+InstructionNEG_0054M:          ; 0054DD   entries $0160-$0167
+  PcOutMFetchRef()
+  ;name = "NEG"
+  If (Op & $38) = 0
+    Res = (0 - Reg(Op & 7)) & $FFFF      ; 100000 negates to itself
+    Reg(Op & 7) = Res
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWord(Res, Reg(#CPU_EA))
+    Res = (0 - Res) & $FFFF
+    MMWriteWord(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGV) = 0
+  If Res = $8000
+    Reg(#CPU_FLAGV) = $8000
+  EndIf
+  Reg(#CPU_FLAGC) = $10000
+  If Res = 0
+    Reg(#CPU_FLAGC) = 0
+  EndIf
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("NEG " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionNEGB_1054M:         ; 1054DD   entries $1160-$1167
+  PcOutMFetchRef()
+  ;name = "NEGB"
+  If (Op & $38) = 0
+    Res = (0 - Reg(Op & 7)) & $FF
+    Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  Else
+    Reg(#CPU_EA) = EaByteM(Op & $3F)
+    MMReadByte(Res, Reg(#CPU_EA))
+    Res = (0 - Res) & $FF
+    MMWriteByte(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGV) = 0
+  If Res = $80
+    Reg(#CPU_FLAGV) = $8000
+  EndIf
+  Reg(#CPU_FLAGC) = $10000
+  If Res = 0
+    Reg(#CPU_FLAGC) = 0
+  EndIf
+  FlagNZ = Res << 8
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("NEGB " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-ADC-------------------------------------------------------------------
+InstructionADC_0055M:          ; 0055DD   entries $0168-$016F
+  PcOutMFetchRef()
+  ;name = "ADC"
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = (Reg(#CPU_DST) + ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FFFF
+    Reg(Op & 7) = Res
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) + ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FFFF
+    MMWriteWord(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $7FFF And (Reg(#CPU_FLAGC) & $10000) <> 0
+    Reg(#CPU_FLAGV) = $8000
+  EndIf
+  If Reg(#CPU_DST) <> $FFFF Or Reg(#CPU_FLAGC) = 0
+    Reg(#CPU_FLAGC) = 0
+  EndIf
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("ADC " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionADCB_1055M:         ; 1055DD   entries $1168-$116F
+  PcOutMFetchRef()
+  ;name = "ADCB"
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
+    Res = (Reg(#CPU_DST) + ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FF
+    Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  Else
+    Reg(#CPU_EA) = EaByteM(Op & $3F)
+    MMReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) + ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FF
+    MMWriteByte(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $7F And (Reg(#CPU_FLAGC) & $10000) <> 0
+    Reg(#CPU_FLAGV) = $8000
+  EndIf
+  If Reg(#CPU_DST) <> $FF Or Reg(#CPU_FLAGC) = 0
+    Reg(#CPU_FLAGC) = 0
+  EndIf
+  FlagNZ = Res << 8
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("ADCB " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-SBC-------------------------------------------------------------------
+; C: set if the destination was 0 and C was 1, cleared otherwise (the
+; processor handbook's rule; the C core in this repository leaves C set
+; when C was clear - worth checking against a real machine or a test).
+InstructionSBC_0056M:          ; 0056DD   entries $0170-$0177
+  PcOutMFetchRef()
+  ;name = "SBC"
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = (Reg(#CPU_DST) - ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FFFF
+    Reg(Op & 7) = Res
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) - ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FFFF
+    MMWriteWord(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $8000
+    Reg(#CPU_FLAGV) = $8000
+  EndIf
+  If Reg(#CPU_DST) <> 0 Or Reg(#CPU_FLAGC) = 0
+    Reg(#CPU_FLAGC) = 0
+  EndIf
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("SBC " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionSBCB_1056M:         ; 1056DD   entries $1170-$1177
+  PcOutMFetchRef()
+  ;name = "SBCB"
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
+    Res = (Reg(#CPU_DST) - ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FF
+    Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  Else
+    Reg(#CPU_EA) = EaByteM(Op & $3F)
+    MMReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) - ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FF
+    MMWriteByte(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $80
+    Reg(#CPU_FLAGV) = $8000
+  EndIf
+  If Reg(#CPU_DST) <> 0 Or Reg(#CPU_FLAGC) = 0
+    Reg(#CPU_FLAGC) = 0
+  EndIf
+  FlagNZ = Res << 8
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("SBCB " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-TST-------------------------------------------------------------------
+InstructionTST_0057M:          ; 0057DD   entries $0178-$017F
+  PcOutMFetchRef()
+  ;name = "TST"
+  If (Op & $38) = 0
+    FlagNZ = Reg(Op & 7)
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWord(FlagNZ, Reg(#CPU_EA))
+  EndIf
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("TST " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionTSTB_1057M:         ; 1057DD   entries $1178-$117F
+  PcOutMFetchRef()
+  ;name = "TSTB"
+  If (Op & $38) = 0
+    FlagNZ = (Reg(Op & 7) & $FF) << 8
+  Else
+    Reg(#CPU_EA) = EaByteM(Op & $3F)
+    MMReadByte(FlagNZ, Reg(#CPU_EA))
+    FlagNZ = FlagNZ << 8
+  EndIf
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("TSTB " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+; ======================================================================
+;  SHIFTS AND ROTATES. V is N xor C after the operation.
+; ======================================================================
+
+;-ROR-------------------------------------------------------------------
+InstructionROR_0060M:          ; 0060DD   entries $0180-$0187
+  PcOutMFetchRef()
+  ;name = "ROR"
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = (Reg(#CPU_DST) >> 1) | ((Reg(#CPU_FLAGC) >> 1) & $8000)
+    Reg(Op & 7) = Res
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) >> 1) | ((Reg(#CPU_FLAGC) >> 1) & $8000)
+    MMWriteWord(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 16
+  Reg(#CPU_FLAGV) = Res ! (Reg(#CPU_FLAGC) >> 1)
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("ROR " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionRORB_1060M:         ; 1060DD   entries $1180-$1187
+  PcOutMFetchRef()
+  ;name = "RORB"
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
+    Res = (Reg(#CPU_DST) >> 1) | ((Reg(#CPU_FLAGC) >> 9) & $80)
+    Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  Else
+    Reg(#CPU_EA) = EaByteM(Op & $3F)
+    MMReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) >> 1) | ((Reg(#CPU_FLAGC) >> 9) & $80)
+    MMWriteByte(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 16
+  Reg(#CPU_FLAGV) = (Res << 8) ! (Reg(#CPU_FLAGC) >> 1)
+  FlagNZ = Res << 8
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("RORB " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-ROL-------------------------------------------------------------------
+InstructionROL_0061M:          ; 0061DD   entries $0188-$018F
+  PcOutMFetchRef()
+  ;name = "ROL"
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = ((Reg(#CPU_DST) << 1) | ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FFFF
+    Reg(Op & 7) = Res
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = ((Reg(#CPU_DST) << 1) | ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FFFF
+    MMWriteWord(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 1
+  Reg(#CPU_FLAGV) = Res ! (Reg(#CPU_FLAGC) >> 1)
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("ROL " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionROLB_1061M:         ; 1061DD   entries $1188-$118F
+  PcOutMFetchRef()
+  ;name = "ROLB"
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
+    Res = ((Reg(#CPU_DST) << 1) | ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FF
+    Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  Else
+    Reg(#CPU_EA) = EaByteM(Op & $3F)
+    MMReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = ((Reg(#CPU_DST) << 1) | ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FF
+    MMWriteByte(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 9
+  Reg(#CPU_FLAGV) = (Res << 8) ! (Reg(#CPU_FLAGC) >> 1)
+  FlagNZ = Res << 8
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("ROLB " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-ASR-------------------------------------------------------------------
+InstructionASR_0062M:          ; 0062DD   entries $0190-$0197
+  PcOutMFetchRef()
+  ;name = "ASR"
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = (Reg(#CPU_DST) >> 1) | (Reg(#CPU_DST) & $8000)
+    Reg(Op & 7) = Res
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) >> 1) | (Reg(#CPU_DST) & $8000)
+    MMWriteWord(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 16
+  Reg(#CPU_FLAGV) = Res ! (Reg(#CPU_FLAGC) >> 1)
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("ASR " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionASRB_1062M:         ; 1062DD   entries $1190-$1197
+  PcOutMFetchRef()
+  ;name = "ASRB"
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
+    Res = (Reg(#CPU_DST) >> 1) | (Reg(#CPU_DST) & $80)
+    Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  Else
+    Reg(#CPU_EA) = EaByteM(Op & $3F)
+    MMReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) >> 1) | (Reg(#CPU_DST) & $80)
+    MMWriteByte(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 16
+  Reg(#CPU_FLAGV) = (Res << 8) ! (Reg(#CPU_FLAGC) >> 1)
+  FlagNZ = Res << 8
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("ASRB " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-ASL-------------------------------------------------------------------
+InstructionASL_0063M:          ; 0063DD   entries $0198-$019F
+  PcOutMFetchRef()
+  ;name = "ASL"
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = (Reg(#CPU_DST) << 1) & $FFFF
+    Reg(Op & 7) = Res
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) << 1) & $FFFF
+    MMWriteWord(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 1
+  Reg(#CPU_FLAGV) = Res ! (Reg(#CPU_FLAGC) >> 1)
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("ASL " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionASLB_1063M:         ; 1063DD   entries $1198-$119F
+  PcOutMFetchRef()
+  ;name = "ASLB"
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
+    Res = (Reg(#CPU_DST) << 1) & $FF
+    Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  Else
+    Reg(#CPU_EA) = EaByteM(Op & $3F)
+    MMReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) << 1) & $FF
+    MMWriteByte(Reg(#CPU_EA), Res)
+  EndIf
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 9
+  Reg(#CPU_FLAGV) = (Res << 8) ! (Reg(#CPU_FLAGC) >> 1)
+  FlagNZ = Res << 8
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("ASLB " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-SWAB------------------------------------------------------------------
+InstructionSWAB_0003M:         ; 0003DD   entries $0018-$001F
+  PcOutMFetchRef()
+  ;name = "SWAB"
+  If (Op & $38) = 0
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = ((Reg(#CPU_DST) >> 8) | (Reg(#CPU_DST) << 8)) & $FFFF
+    Reg(Op & 7) = Res
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = ((Reg(#CPU_DST) >> 8) | (Reg(#CPU_DST) << 8)) & $FFFF
+    MMWriteWord(Reg(#CPU_EA), Res)
+  EndIf
+  FlagNZ = (Res & $FF) << 8              ; N and Z come from the low byte
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("SWAB " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-SXT-------------------------------------------------------------------
+InstructionSXT_0067M:          ; 0067DD   entries $01B8-$01BF   N unaffected
+  PcOutMFetchRef()
+  ;name = "SXT"
+  Res = 0
+  If FlagN()
+    Res = $FFFF
+  EndIf
+  If (Op & $38) = 0
+    Reg(Op & 7) = Res
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMWriteWord(Reg(#CPU_EA), Res)
+  EndIf
+  SetNZ(FlagN(), 1 - FlagN())
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("SXT " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-MFPS / MTPS ----------------------------------------------------------
+InstructionMFPS_1067M:         ; 1067DD   entries $11B8-$11BF
+  PcOutMFetchRef()
+  ;name = "MFPS"
+  Res = PswGet() & $FF
+  If (Op & $38) = 0
+    Reg(Op & 7) = (Res | (0 - (Res & $80))) & $FFFF   ; sign-extended into a register
+  Else
+    Reg(#CPU_EA) = EaByteM(Op & $3F)
+    MMWriteByte(Reg(#CPU_EA), Res)
+  EndIf
+  FlagNZ = Res << 8
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("MFPS " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionMTPS_1064M:         ; 1064SS   entries $11A0-$11A7   the T bit is not written
+  PcOutMFetchRef()
+  ;name = "MTPS"
+  If (Op & $38) = 0
+    Reg(#CPU_SRC) = Reg(Op & 7) & $FF
+  Else
+    Reg(#CPU_EA) = EaByteM(Op & $3F)
+    MMReadByteSlot(@Reg(#CPU_SRC), Reg(#CPU_EA))
+  EndIf
+  If PswHigh & $C000                     ; outside kernel mode only the condition codes
+    PswSet((PswGet() & $FFF0) | (Reg(#CPU_SRC) & $0F))
+  Else
+    PswSet((PswGet() & $FF10) | (Reg(#CPU_SRC) & $EF))
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("MTPS " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-MFPI / MTPI / MFPD / MTPD -------------------------------------------
+; One address space until the memory management unit is modelled, so the
+; "previous" space is this one.
+InstructionMFPI_0065M:         ; 0065SS   entries $01A8-$01AF
+  PcOutMFetchRef()
+  ;name = "MFPI"
+  If (Op & $38) = 0
+    Reg(#CPU_SRC) = Reg(Op & 7)
+    If (Op & 7) = 6                      ; SP: the PREVIOUS mode's (PSW 13-12)
+      Reg(#CPU_SRC) = ModeSp((PswHigh >> 12) & 3)
+    EndIf
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWordESlot(@Reg(#CPU_SRC), Reg(#CPU_EA), PrvBase + ((Op >> 12) & 8))
+  EndIf
+  If Reg(#CPU_TRAPVECTOR) = 0                      ; a read that failed (bus error, MMU abort) aborts
+    PushM(Reg(#CPU_SRC))                            ; the instruction: nothing is pushed (the J-11 stops
+  EndIf                                  ; at the fault; V6's fuword relies on it)
+  FlagNZ = Reg(#CPU_SRC)
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("MFPI " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionMTPI_0066M:         ; 0066DD   entries $01B0-$01B7
+  PcOutMFetchRef()
+  ;name = "MTPI"
+  Reg(#CPU_SRC) = PopM()
+  If (Op & $38) = 0
+    If (Op & 7) = 6                      ; SP: the PREVIOUS mode's (PSW 13-12)
+      SetModeSp((PswHigh >> 12) & 3, Reg(#CPU_SRC))
+    Else
+      Reg(Op & 7) = Reg(#CPU_SRC)
+    EndIf
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMWriteWordE(Reg(#CPU_EA), Reg(#CPU_SRC), PrvBase + ((Op >> 12) & 8))
+  EndIf
+  FlagNZ = Reg(#CPU_SRC)
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("MTPI " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionMFPD_1065M:         ; 1065SS   entries $11A8-$11AF
+  ;name = "MFPD"
+  Goto InstructionMFPI_0065M
+  ;disassembly("MFPD " + ;name)
+
+InstructionMTPD_1066M:         ; 1066DD   entries $11B0-$11B7
+  ;name = "MTPD"
+  Goto InstructionMTPI_0066M
+  ;disassembly("MTPD " + ;name)
+
+; ======================================================================
+;  BRANCHES. The offset is the low byte, signed, in words:
+;      PC = PC + 2 * offset
+;  written without a branch as ((Op & $FF) << 1) - ((Op & $80) << 2).
+;  Each branch owns 32 table entries (its offset spills into bits 7-3).
+; ======================================================================
+
+;-BR--------------------------------------------------------------------
+InstructionBR_0004M:           ; 000400   entries $0020-$003F
+  ;name = "BR"
+  BranchToMFetchRef()
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
+  ;disassembly("BR " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBNE_0010M:          ; 001000   entries $0040-$005F   Z = 0
+  ;name = "BNE"
+  If FlagNZ & $FFFF
+    BranchToMFetchRef()
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
+  ;disassembly("BNE " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBEQ_0014M:          ; 001400   entries $0060-$007F   Z = 1
+  ;name = "BEQ"
+  If (FlagNZ & $FFFF) = 0
+    BranchToMFetchRef()
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
+  ;disassembly("BEQ " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBGE_0020M:          ; 002000   entries $0080-$009F   N xor V = 0
+  ;name = "BGE"
+  If (((FlagNZ | (FlagNZ >> 1)) ! Reg(#CPU_FLAGV)) & $8000) = 0     ; N xor V = 0 (N: bit 15, or bit 16 with Z)
+    BranchToMFetchRef()
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
+  ;disassembly("BGE " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBLT_0024M:          ; 002400   entries $00A0-$00BF   N xor V = 1
+  ;name = "BLT"
+  If ((FlagNZ | (FlagNZ >> 1)) ! Reg(#CPU_FLAGV)) & $8000
+    BranchToMFetchRef()
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
+  ;disassembly("BLT " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBGT_0030M:          ; 003000   entries $00C0-$00DF   Z or (N xor V) = 0
+  ;name = "BGT"
+  If FlagNZ & $FFFF                      ; nested, not And: no truth values built
+    If (((FlagNZ | (FlagNZ >> 1)) ! Reg(#CPU_FLAGV)) & $8000) = 0     ; N xor V = 0 (N: bit 15, or bit 16 with Z)
+      BranchToMFetchRef()
+    EndIf
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
+  ;disassembly("BGT " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBLE_0034M:          ; 003400   entries $00E0-$00FF   Z or (N xor V) = 1
+  ;name = "BLE"
+  If (FlagNZ & $FFFF) = 0
+    BranchToMFetchRef()
+  ElseIf ((FlagNZ | (FlagNZ >> 1)) ! Reg(#CPU_FLAGV)) & $8000
+    BranchToMFetchRef()
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
+  ;disassembly("BLE " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBPL_1000M:          ; 100000   entries $1000-$101F   N = 0
+  ;name = "BPL"
+  If (FlagNZ & $18000) = 0
+    BranchToMFetchRef()
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
+  ;disassembly("BPL " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBMI_1004M:          ; 100400   entries $1020-$103F   N = 1
+  ;name = "BMI"
+  If FlagNZ & $18000
+    BranchToMFetchRef()
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
+  ;disassembly("BMI " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBHI_1010M:          ; 101000   entries $1040-$105F   C = 0 and Z = 0
+  ;name = "BHI"
+  If (Reg(#CPU_FLAGC) & $10000) = 0
+    If FlagNZ & $FFFF
+      BranchToMFetchRef()
+    EndIf
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
+  ;disassembly("BHI " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBLOS_1014M:         ; 101400   entries $1060-$107F   C = 1 or Z = 1
+  ;name = "BLOS"
+  If Reg(#CPU_FLAGC) & $10000
+    BranchToMFetchRef()
+  ElseIf (FlagNZ & $FFFF) = 0
+    BranchToMFetchRef()
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
+  ;disassembly("BLOS " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBVC_1020M:          ; 102000   entries $1080-$109F   V = 0
+  ;name = "BVC"
+  If (Reg(#CPU_FLAGV) & $8000) = 0
+    BranchToMFetchRef()
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
+  ;disassembly("BVC " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBVS_1024M:          ; 102400   entries $10A0-$10BF   V = 1
+  ;name = "BVS"
+  If Reg(#CPU_FLAGV) & $8000
+    BranchToMFetchRef()
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
+  ;disassembly("BVS " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBCC_1030M:          ; 103000   entries $10C0-$10DF   C = 0 (also BHIS)
+  ;name = "BCC"
+  If (Reg(#CPU_FLAGC) & $10000) = 0
+    BranchToMFetchRef()
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
+  ;disassembly("BCC " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBCS_1034M:          ; 103400   entries $10E0-$10FF   C = 1 (also BLO)
+  ;name = "BCS"
+  If Reg(#CPU_FLAGC) & $10000
+    BranchToMFetchRef()
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
+  ;disassembly("BCS " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+; ======================================================================
+;  JUMPS AND SUBROUTINES
+; ======================================================================
+
+;-JMP-------------------------------------------------------------------
+InstructionJMP_0001M:          ; 0001DD   entries $0008-$000F
+  PcOutMFetchRef()
+  ;name = "JMP"
+  If (Op & $38) = 0
+    Reg(#CPU_TRAPVECTOR) = #VEC_BUS                ; JMP to a register is illegal
+  Else
+    Reg(7) = EaWordM(Op & $3F)
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_JUMP
+  ;disassembly("JMP " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-JSR-------------------------------------------------------------------
+InstructionJSR_004M:           ; 004RDD   entries $0100-$013F
+  PcOutMFetchRef()
+  ;name = "JSR"
+  If (Op & $38) = 0
+    Reg(#CPU_TRAPVECTOR) = #VEC_BUS                ; JSR to a register is illegal
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    PushM(Reg((Op >> 6) & 7))
+    Reg((Op >> 6) & 7) = Reg(7)
+    Reg(7) = Reg(#CPU_EA)
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_JUMP
+  ;disassembly("JSR " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-RTS-------------------------------------------------------------------
+InstructionRTS_00020M:         ; 00020R   entry $0010
+  PcOutMFetchRef()
+  ;name = "RTS"
+  Reg(7) = Reg(Op & 7)
+  Reg(Op & 7) = PopM()
+  ; ClockCycles = ClockCycles + #J11_T_JUMP
+  ;disassembly("RTS " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-MARK------------------------------------------------------------------
+InstructionMARK_0064M:         ; 0064NN   entries $01A0-$01A7
+  PcOutMFetchRef()
+  ;name = "MARK"
+  Reg(6) = (Reg(7) + ((Op & $3F) << 1)) & $FFFF
+  Reg(7) = Reg(5)
+  Reg(5) = PopM()
+  ; ClockCycles = ClockCycles + #J11_T_JUMP
+  ;disassembly("MARK " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-SOB-------------------------------------------------------------------
+InstructionSOB_077M:           ; 077RNN   entries $0FC0-$0FFF
+  ;name = "SOB"                          ; R0-R6 only: SOB R7 is below
+  Res = (Reg((Op >> 6) & 7) - 1) & $FFFF
+  Reg((Op >> 6) & 7) = Res
+  If Res
+    PC = (PC - ((Op & $3F) << 1)) & $FFFF
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_BRANCH
+  ;disassembly("SOB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionSOB_077_PCM:        ; 0777NN   SOB R7 - legal, if strange: it counts the PC down
+  PcOutMFetchRef()
+  Reg(7) = (Reg(7) - 1) & $FFFF
+  If Reg(7)
+    Reg(7) = (Reg(7) - ((Op & $3F) << 1)) & $FFFF
+  EndIf
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+; ======================================================================
+;  EIS - MUL, DIV, ASH, ASHC, XOR. Register in bits 8-6, operand in 5-0.
+; ======================================================================
+
+;-MUL-------------------------------------------------------------------
+InstructionMUL_070M:           ; 070RSS   entries $0E00-$0E3F
+  PcOutMFetchRef()
+  ;name = "MUL"
+  If (Op & $38) = 0
+    Reg(#CPU_SRC) = Reg(Op & 7)
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWordSlot(@Reg(#CPU_SRC), Reg(#CPU_EA))
+  EndIf
+  Reg(#CPU_SRC) = Reg(#CPU_SRC) - ((Reg(#CPU_SRC) & $8000) << 1)                        ; signed 16
+  Reg(#CPU_DST) = Reg((Op >> 6) & 7)
+  Reg(#CPU_DST) = Reg(#CPU_DST) - ((Reg(#CPU_DST) & $8000) << 1)
+  Res = Reg(#CPU_SRC) * Reg(#CPU_DST)                                          ; fits in 32 bits
+  If Op & $40                                              ; odd register: low word only
+    Reg((Op >> 6) & 7) = Res & $FFFF
+  Else
+    Reg((Op >> 6) & 7) = (Res >> 16) & $FFFF
+    Reg(((Op >> 6) & 7) | 1) = Res & $FFFF
+  EndIf
+  SetNZ(Bool(Res < 0), Bool(Res = 0))
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
+  If Res < -32768 Or Res > 32767
+    Reg(#CPU_FLAGC) = $10000
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_EIS
+  ;disassembly("MUL " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-DIV-------------------------------------------------------------------
+InstructionDIV_071M:           ; 071RSS   entries $0E40-$0E7F
+  PcOutMFetchRef()
+  ;name = "DIV"
+  If (Op & $38) = 0
+    Reg(#CPU_SRC) = Reg(Op & 7)
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWordSlot(@Reg(#CPU_SRC), Reg(#CPU_EA))
+  EndIf
+  Reg(#CPU_SRC) = Reg(#CPU_SRC) - ((Reg(#CPU_SRC) & $8000) << 1)
+  Reg(#CPU_DST) = (Reg((Op >> 6) & 7) << 16) | Reg(((Op >> 6) & 7) | 1)   ; the 32-bit dividend
+  If Reg(#CPU_SRC) = 0
+    Reg(#CPU_FLAGV) = $8000
+    Reg(#CPU_FLAGC) = $10000
+  ElseIf Reg(#CPU_SRC) = -1 And Reg(#CPU_DST) = $80000000
+    Reg(#CPU_FLAGV) = $8000
+    Reg(#CPU_FLAGC) = 0
+  Else
+    Res = Reg(#CPU_DST) / Reg(#CPU_SRC)
+    If Res < -32768 Or Res > 32767
+      Reg(#CPU_FLAGV) = $8000                                            ; registers unchanged
+      Reg(#CPU_FLAGC) = 0
+    Else
+      Reg((Op >> 6) & 7) = Res & $FFFF
+      Reg(((Op >> 6) & 7) | 1) = (Reg(#CPU_DST) - Res * Reg(#CPU_SRC)) & $FFFF
+      SetNZ(Bool(Res < 0), Bool(Res = 0))
+      Reg(#CPU_FLAGV) = 0
+      Reg(#CPU_FLAGC) = 0
+    EndIf
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_EIS
+  ;disassembly("DIV " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-ASH-------------------------------------------------------------------
+; Shift count is the low six bits of the source, signed: positive shifts
+; left, negative shifts right. A loop - rare instruction, correct first.
+InstructionASH_072M:           ; 072RSS   entries $0E80-$0EBF
+  PcOutMFetchRef()
+  ;name = "ASH"
+  If (Op & $38) = 0
+    Reg(#CPU_SRC) = Reg(Op & 7) & $3F
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWordSlot(@Reg(#CPU_SRC), Reg(#CPU_EA))
+    Reg(#CPU_SRC) = Reg(#CPU_SRC) & $3F
+  EndIf
+  Res = Reg((Op >> 6) & 7)
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_SRC) & $20
+    Reg(#CPU_SRC) = 64 - Reg(#CPU_SRC)                                         ; right by this many
+    While Reg(#CPU_SRC) > 0
+      Reg(#CPU_FLAGC) = Res << 16
+      Res = (Res >> 1) | (Res & $8000)
+      Reg(#CPU_SRC) = Reg(#CPU_SRC) - 1
+    Wend
+  Else
+    While Reg(#CPU_SRC) > 0
+      Reg(#CPU_FLAGC) = Res << 1
+      Reg(#CPU_TMP) = (Res << 1) & $FFFF
+      If (Reg(#CPU_TMP) ! Res) & $8000
+        Reg(#CPU_FLAGV) = $8000                                          ; the sign changed
+      EndIf
+      Res = Reg(#CPU_TMP)
+      Reg(#CPU_SRC) = Reg(#CPU_SRC) - 1
+    Wend
+  EndIf
+  Reg((Op >> 6) & 7) = Res
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_EIS
+  ;disassembly("ASH " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-ASHC------------------------------------------------------------------
+InstructionASHC_073M:          ; 073RSS   entries $0EC0-$0EFF
+  PcOutMFetchRef()
+  ;name = "ASHC"
+  If (Op & $38) = 0
+    Reg(#CPU_SRC) = Reg(Op & 7) & $3F
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWordSlot(@Reg(#CPU_SRC), Reg(#CPU_EA))
+    Reg(#CPU_SRC) = Reg(#CPU_SRC) & $3F
+  EndIf
+  Res = (Reg((Op >> 6) & 7) << 16) | Reg(((Op >> 6) & 7) | 1)
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_SRC) & $20
+    Reg(#CPU_SRC) = 64 - Reg(#CPU_SRC)
+    While Reg(#CPU_SRC) > 0
+      Reg(#CPU_FLAGC) = Res << 16
+      Res = Res >> 1                                       ; arithmetic on a 32-bit .i
+      Reg(#CPU_SRC) = Reg(#CPU_SRC) - 1
+    Wend
+  Else
+    While Reg(#CPU_SRC) > 0
+      Reg(#CPU_FLAGC) = Res >> 15
+      Reg(#CPU_TMP) = Res << 1
+      If (Reg(#CPU_TMP) ! Res) & $80000000
+        Reg(#CPU_FLAGV) = $8000
+      EndIf
+      Res = Reg(#CPU_TMP)
+      Reg(#CPU_SRC) = Reg(#CPU_SRC) - 1
+    Wend
+  EndIf
+  Reg((Op >> 6) & 7) = (Res >> 16) & $FFFF
+  Reg(((Op >> 6) & 7) | 1) = Res & $FFFF
+  SetNZ(Bool(Res < 0), Bool(Res = 0))
+  ; ClockCycles = ClockCycles + #J11_T_EIS
+  ;disassembly("ASHC " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+;-XOR-------------------------------------------------------------------
+InstructionXOR_074M:           ; 074RDD   entries $0F00-$0F3F
+  PcOutMFetchRef()
+  ;name = "XOR"
+  If (Op & $38) = 0
+    Res = Reg(Op & 7) ! Reg((Op >> 6) & 7)
+    Reg(Op & 7) = Res
+  Else
+    Reg(#CPU_EA) = EaWordM(Op & $3F)
+    MMReadWord(Res, Reg(#CPU_EA))
+    Res = Res ! Reg((Op >> 6) & 7)
+    MMWriteWord(Reg(#CPU_EA), Res)
+  EndIf
+  FlagNZ = Res
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_EIS
+  ;disassembly("XOR " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+; ======================================================================
+;  TRAPS AND MACHINE CONTROL
+; ======================================================================
+InstructionEMT_104M:           ; 104000-104377   entries $1100-$111F
+  PcOutMFetchRef()
+  ;name = "EMT"
+  Reg(#CPU_TRAPVECTOR) = #VEC_EMT
+  ; ClockCycles = ClockCycles + #J11_T_MISC
+  ;disassembly("EMT " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionTRAP_1044M:         ; 104400-104777   entries $1120-$113F
+  PcOutMFetchRef()
+  ;name = "TRAP"
+  Reg(#CPU_TRAPVECTOR) = #VEC_TRAP
+  ; ClockCycles = ClockCycles + #J11_T_MISC
+  ;disassembly("TRAP " + ;name)
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionHALT_000000M:       ; entry $0000, sub-decoded
+  PcOutMFetchRef()
+  ;name = "HALT"
+  If (PswHigh & $C000) <> 0 Or MaintTrap <> 0   ; HALT outside kernel mode (or with the maintenance
+    CpuErr = CpuErr | #CPUE_HALT                ; register's trap option) does not halt: it traps
+    Reg(#CPU_TRAPVECTOR) = #VEC_BUS                       ; through 4, CPU error register bit 7 (cpu.pico,
+    Goto SlowTailM                               ; THE CPU ERROR AND MAINTENANCE REGISTERS)
+  EndIf
+  Halted = 1
+  Reg(7) = (Reg(7) - 2) & $FFFF          ; PC stays on the HALT, as on the console
+  PC = Reg(7)
+  ; ClockCycles = ClockCycles + #J11_T_MISC
+  ;disassembly("HALT")
+  Goto SlowTailM                         ; Halted is only looked at there
+
+InstructionWAIT_000001M:       ; entry $0000, sub-decoded
+  ;name = "WAIT"
+  Waiting = 1                            ; RunEnd holds the processor until an interrupt
+  CpuEventIn(1)
+  ; ClockCycles = ClockCycles + #J11_T_MISC
+  ;disassembly("WAIT")
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionRTI_000002M:        ; entry $0000, sub-decoded
+  PcOutMFetchRef()
+  ;name = "RTI"
+  Reg(7) = PopM()
+  Reg(#CPU_SRC) = PopM()
+  If PswHigh & $C000                     ; outside kernel: bits 15-11 can only be set,
+    Reg(#CPU_SRC) = (Reg(#CPU_SRC) & $F81F) | (PswHigh & $F8E0)   ; and the priority stays
+  EndIf
+  PswSet(Reg(#CPU_SRC))
+  If PswHigh & $10                       ; RTI loading T: trace straight after it
+    TraceArm = 1
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_MISC
+  ;disassembly("RTI")
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionBPT_000003M:        ; entry $0000, sub-decoded
+  PcOutMFetchRef()
+  ;name = "BPT"
+  Reg(#CPU_TRAPVECTOR) = #VEC_BPT
+  ; ClockCycles = ClockCycles + #J11_T_MISC
+  ;disassembly("BPT")
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionIOT_000004M:        ; entry $0000, sub-decoded
+  PcOutMFetchRef()
+  ;name = "IOT"
+  Reg(#CPU_TRAPVECTOR) = #VEC_IOT
+  ; ClockCycles = ClockCycles + #J11_T_MISC
+  ;disassembly("IOT")
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionRESET_000005M:      ; entry $0000, sub-decoded
+  ;name = "RESET"
+  DevReset()                             ; the bus INIT
+  ; ClockCycles = ClockCycles + #J11_T_MISC
+  ;disassembly("RESET")
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionRTT_000006M:        ; entry $0000, sub-decoded (the T bit: StartWindow in cpu)
+  PcOutMFetchRef()
+  ;name = "RTT"
+  Reg(7) = PopM()
+  Reg(#CPU_SRC) = PopM()
+  If PswHigh & $C000                     ; outside kernel: bits 15-11 can only be set,
+    Reg(#CPU_SRC) = (Reg(#CPU_SRC) & $F81F) | (PswHigh & $F8E0)   ; and the priority stays
+  EndIf
+  PswSet(Reg(#CPU_SRC))
+  ; ClockCycles = ClockCycles + #J11_T_MISC
+  ;disassembly("RTT")
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+InstructionMFPT_000007M:       ; entry $0000, sub-decoded
+  ;name = "MFPT"
+  Reg(0) = 5                             ; processor type 5 = J-11
+  ; ClockCycles = ClockCycles + #J11_T_MISC
+  ;disassembly("MFPT")
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionSPL_00023M:         ; 00023N   entry $0013
+  ;name = "SPL"
+  If (PswHigh & $C000) = 0                ; kernel only; a no-op in other modes
+    PswHigh = (PswHigh & $FF1F) | ((Op & 7) << 5)
+    IntCheck()                           ; a lower priority may let a request in
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_MISC
+  ;disassembly("SPL")
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+; 000240-000277: bit 4 = set (1) or clear (0), bits 3-0 = N Z V C.
+; 000240 is NOP, 000257 CCC, 000277 SCC.
+InstructionCC_00024M:          ; 00024x-00027x   entries $0014-$0017
+  ;name = "CLx/SEx"
+  ; Each named flag is set or cleared where it lives (see SPEED in cpu),
+  ; with no PswGet/PswSet round trip: these are frequent (CLC, SEC, NOP,
+  ; CCC...). The priority is untouched, so the only part of PswSet that
+  ; could matter - IntCheck - is still called whenever a request waits.
+  If Op & 1
+    If Op & $10
+      Reg(#CPU_FLAGC) = $10000
+    Else
+      Reg(#CPU_FLAGC) = 0
+    EndIf
+  EndIf
+  If Op & 2
+    If Op & $10
+      Reg(#CPU_FLAGV) = $8000
+    Else
+      Reg(#CPU_FLAGV) = 0
+    EndIf
+  EndIf
+  If Op & $C                             ; N or Z named: rebuild the lazy pair
+    Reg(#CPU_TMP) = 0
+    If FlagNZ & $18000
+      Reg(#CPU_TMP) = 8
+    EndIf
+    If (FlagNZ & $FFFF) = 0
+      Reg(#CPU_TMP) = Reg(#CPU_TMP) | 4
+    EndIf
+    If Op & $10
+      Reg(#CPU_TMP) = Reg(#CPU_TMP) | (Op & $C)
+    Else
+      Reg(#CPU_TMP) = Reg(#CPU_TMP) & ~(Op & $C)
+    EndIf
+    SetNZ((Reg(#CPU_TMP) >> 3) & 1, (Reg(#CPU_TMP) >> 2) & 1)
+  EndIf
+  If IntReq
+    IntCheck()
+  EndIf
+  ; ClockCycles = ClockCycles + #J11_T_MISC
+  ;disassembly("CC")
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+CompilerIf #FP11 = 1
+InstructionFPM:                ; 17xxxx: the FPJ11 (pico2/fp11.pico2, FpExec; #FP11 is 0 on the Pico)
+  PcOutMFetchRef()
+  FpExec()
+  NextSyncedMFetchRef()
+CompilerEndIf
+
+InstructionReservedM:          ; every opcode this model does not execute
+  PcOutMFetchRef()
+  ;name = "reserved"
+  Reg(#CPU_TRAPVECTOR) = #VEC_RESV
+  ; ClockCycles = ClockCycles + #J11_T_TRAP
+  ;disassembly(".WORD")
+  ; ---- next instruction (THE TAIL, top of file) ----
+  NextSyncedMFetchRef()
+
+; ======================================================================
+;  000000-000007 - the one entry that still holds several instructions.
+;  HALT, WAIT, RTI, BPT, IOT, RESET, RTT and MFPT differ only in the low
+;  three bits, below the table's index. They are rare, so a short If chain
+;  tells them apart - no second table.
+; ======================================================================
+InstructionGroup0_0000M:       ; 000000-000007   entry $0000
+  Reg(#CPU_TMP) = Op & 7
+  If Reg(#CPU_TMP) = 0
+    Goto InstructionHALT_000000M
+  ElseIf Reg(#CPU_TMP) = 1
+    Goto InstructionWAIT_000001M
+  ElseIf Reg(#CPU_TMP) = 2
+    Goto InstructionRTI_000002M
+  ElseIf Reg(#CPU_TMP) = 3
+    Goto InstructionBPT_000003M
+  ElseIf Reg(#CPU_TMP) = 4
+    Goto InstructionIOT_000004M
+  ElseIf Reg(#CPU_TMP) = 5
+    Goto InstructionRESET_000005M
+  ElseIf Reg(#CPU_TMP) = 6
+    Goto InstructionRTT_000006M
+  Else
+    Goto InstructionMFPT_000007M
+  EndIf
+
+
+; ======================================================================
+;  REGISTER FAST PATHS. The commonest forms - both operands in registers,
+;  or a single operand in a register - get handlers with no mode test, no
+;  operand-helper call and no Reg(7) traffic. The Pico's table is indexed
+;  by Op >> 3, so an entry knows both addressing modes and the source
+;  register but NOT the destination register: each fast path first sends
+;  a destination of R7 back to the general handler, which keeps the PC
+;  right. The table sends a source of R7 there too. (The Pico 2 has one
+;  entry per opcode and needs no such test.) Anything not listed here
+;  (ADC, SBC, the byte rotates...) is correct through its general handler.
+; ======================================================================
+
+InstructionMOV_01_RRM:               ; 01SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionMOV_01M       ; the general handler
+  EndIf
+  ;name = "MOV Rs,Rd"
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
+  Reg(Op & 7) = Reg(#CPU_SRC)
+  FlagNZ = Reg(#CPU_SRC)
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("MOV " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionCMP_02_RRM:               ; 02SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionCMP_02M       ; the general handler
+  EndIf
+  ;name = "CMP Rs,Rd"
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
+  Res = Reg(#CPU_SRC) - Reg(Op & 7)
+  Reg(#CPU_FLAGC) = Res                            ; the borrow is bit 16
+  FlagNZ = Res & $FFFF
+  Reg(#CPU_FLAGV) = (Reg(#CPU_SRC) ! (Reg(#CPU_SRC) - Res)) & (Reg(#CPU_SRC) ! Res)   ; bit 15; Src - Res is Rd
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("CMP " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBIT_03_RRM:               ; 03SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBIT_03M       ; the general handler
+  EndIf
+  ;name = "BIT Rs,Rd"
+  FlagNZ = Reg((Op >> 6) & 7) & Reg(Op & 7)
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("BIT " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBIC_04_RRM:               ; 04SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBIC_04M       ; the general handler
+  EndIf
+  ;name = "BIC Rs,Rd"
+  Res = Reg(Op & 7) & ~Reg((Op >> 6) & 7) & $FFFF
+  Reg(Op & 7) = Res
+  FlagNZ = Res
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("BIC " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBIS_05_RRM:               ; 05SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBIS_05M       ; the general handler
+  EndIf
+  ;name = "BIS Rs,Rd"
+  Res = Reg(Op & 7) | Reg((Op >> 6) & 7)
+  Reg(Op & 7) = Res
+  FlagNZ = Res
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("BIS " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionADD_06_RRM:               ; 06SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionADD_06M       ; the general handler
+  EndIf
+  ;name = "ADD Rs,Rd"
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
+  Res = Reg(#CPU_SRC) + Reg(Op & 7)
+  Reg(#CPU_FLAGC) = Res                            ; C is bit 16 of the sum
+  Res = Res & $FFFF
+  Reg(Op & 7) = Res
+  FlagNZ = Res
+  Reg(#CPU_FLAGV) = (Reg(#CPU_SRC) ! Res) & ((Res - Reg(#CPU_SRC)) ! Res)   ; bit 15; Res - Src is the old Rd
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("ADD " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionMOVB_11_RRM:              ; 11SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionMOVB_11M      ; the general handler
+  EndIf
+  ;name = "MOVB Rs,Rd"
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7) & $FF
+  Reg(Op & 7) = (Reg(#CPU_SRC) | (0 - (Reg(#CPU_SRC) & $80))) & $FFFF
+  FlagNZ = Reg(#CPU_SRC) << 8
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("MOVB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionCMPB_12_RRM:              ; 12SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionCMPB_12M      ; the general handler
+  EndIf
+  ;name = "CMPB Rs,Rd"
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7) & $FF
+  Reg(#CPU_DST) = Reg(Op & 7) & $FF
+  Res = Reg(#CPU_SRC) - Reg(#CPU_DST)
+  Reg(#CPU_FLAGC) = Res << 8
+  Reg(#CPU_FLAGV) = ((Reg(#CPU_SRC) ! Reg(#CPU_DST)) & (Reg(#CPU_SRC) ! Res)) << 8
+  FlagNZ = (Res & $FF) << 8
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("CMPB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBITB_13_RRM:              ; 13SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBITB_13M      ; the general handler
+  EndIf
+  ;name = "BITB Rs,Rd"
+  FlagNZ = (Reg((Op >> 6) & 7) & Reg(Op & 7) & $FF) << 8
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("BITB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBICB_14_RRM:              ; 14SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBICB_14M      ; the general handler
+  EndIf
+  ;name = "BICB Rs,Rd"
+  Res = Reg(Op & 7) & ~Reg((Op >> 6) & 7) & $FF
+  Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  FlagNZ = Res << 8
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("BICB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionBISB_15_RRM:              ; 15SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBISB_15M      ; the general handler
+  EndIf
+  ;name = "BISB Rs,Rd"
+  Res = (Reg(Op & 7) | Reg((Op >> 6) & 7)) & $FF
+  Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  FlagNZ = Res << 8
+  Reg(#CPU_FLAGV) = 0
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("BISB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionSUB_16_RRM:               ; 16SD, both operands in registers
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionSUB_16M       ; the general handler
+  EndIf
+  ;name = "SUB Rs,Rd"
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
+  Res = Reg(Op & 7) - Reg(#CPU_SRC)
+  Reg(#CPU_FLAGC) = Res                            ; the borrow is bit 16
+  Res = Res & $FFFF
+  Reg(Op & 7) = Res
+  FlagNZ = Res
+  Reg(#CPU_FLAGV) = (Reg(#CPU_SRC) ! (Res + Reg(#CPU_SRC))) & ((Res + Reg(#CPU_SRC)) ! Res)   ; bit 15; Res + Src is the old Rd
+  ; ClockCycles = ClockCycles + #J11_T_DOUBLE
+  ;disassembly("SUB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionCLR_0050_RM:              ; 0050R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionCLR_0050M     ; the general handler
+  EndIf
+  ;name = "CLR Rd"
+  Reg(Op & 7) = 0
+  FlagNZ = 0
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("CLR " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionCOM_0051_RM:              ; 0051R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionCOM_0051M     ; the general handler
+  EndIf
+  ;name = "COM Rd"
+  Res = Reg(Op & 7) ! $FFFF
+  Reg(Op & 7) = Res
+  FlagNZ = Res
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = $10000
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("COM " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionINC_0052_RM:              ; 0052R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionINC_0052M     ; the general handler
+  EndIf
+  ;name = "INC Rd"
+  Reg(#CPU_DST) = Reg(Op & 7)
+  Res = (Reg(#CPU_DST) + 1) & $FFFF
+  Reg(Op & 7) = Res
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $7FFF
+    Reg(#CPU_FLAGV) = $8000
+  EndIf
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("INC " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionDEC_0053_RM:              ; 0053R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionDEC_0053M     ; the general handler
+  EndIf
+  ;name = "DEC Rd"
+  Reg(#CPU_DST) = Reg(Op & 7)
+  Res = (Reg(#CPU_DST) - 1) & $FFFF
+  Reg(Op & 7) = Res
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $8000
+    Reg(#CPU_FLAGV) = $8000
+  EndIf
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("DEC " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionNEG_0054_RM:              ; 0054R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionNEG_0054M     ; the general handler
+  EndIf
+  ;name = "NEG Rd"
+  Res = (0 - Reg(Op & 7)) & $FFFF
+  Reg(Op & 7) = Res
+  Reg(#CPU_FLAGV) = 0
+  If Res = $8000
+    Reg(#CPU_FLAGV) = $8000
+  EndIf
+  Reg(#CPU_FLAGC) = $10000
+  If Res = 0
+    Reg(#CPU_FLAGC) = 0
+  EndIf
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("NEG " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionTST_0057_RM:              ; 0057R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionTST_0057M     ; the general handler
+  EndIf
+  ;name = "TST Rd"
+  FlagNZ = Reg(Op & 7)
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("TST " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionROR_0060_RM:              ; 0060R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionROR_0060M     ; the general handler
+  EndIf
+  ;name = "ROR Rd"
+  Reg(#CPU_DST) = Reg(Op & 7)
+  Res = (Reg(#CPU_DST) >> 1) | ((Reg(#CPU_FLAGC) >> 1) & $8000)
+  Reg(Op & 7) = Res
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 16
+  Reg(#CPU_FLAGV) = Res ! (Reg(#CPU_FLAGC) >> 1)
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("ROR " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionROL_0061_RM:              ; 0061R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionROL_0061M     ; the general handler
+  EndIf
+  ;name = "ROL Rd"
+  Reg(#CPU_DST) = Reg(Op & 7)
+  Res = ((Reg(#CPU_DST) << 1) | ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FFFF
+  Reg(Op & 7) = Res
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 1
+  Reg(#CPU_FLAGV) = Res ! (Reg(#CPU_FLAGC) >> 1)
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("ROL " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionASR_0062_RM:              ; 0062R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionASR_0062M     ; the general handler
+  EndIf
+  ;name = "ASR Rd"
+  Reg(#CPU_DST) = Reg(Op & 7)
+  Res = (Reg(#CPU_DST) >> 1) | (Reg(#CPU_DST) & $8000)
+  Reg(Op & 7) = Res
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 16
+  Reg(#CPU_FLAGV) = Res ! (Reg(#CPU_FLAGC) >> 1)
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("ASR " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionASL_0063_RM:              ; 0063R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionASL_0063M     ; the general handler
+  EndIf
+  ;name = "ASL Rd"
+  Reg(#CPU_DST) = Reg(Op & 7)
+  Res = (Reg(#CPU_DST) << 1) & $FFFF
+  Reg(Op & 7) = Res
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 1
+  Reg(#CPU_FLAGV) = Res ! (Reg(#CPU_FLAGC) >> 1)
+  FlagNZ = Res
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("ASL " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionSWAB_0003_RM:             ; 0003R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionSWAB_0003M    ; the general handler
+  EndIf
+  ;name = "SWAB Rd"
+  Reg(#CPU_DST) = Reg(Op & 7)
+  Res = ((Reg(#CPU_DST) >> 8) | (Reg(#CPU_DST) << 8)) & $FFFF
+  Reg(Op & 7) = Res
+  FlagNZ = (Res & $FF) << 8
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("SWAB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionCLRB_1050_RM:             ; 1050R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionCLRB_1050M    ; the general handler
+  EndIf
+  ;name = "CLRB Rd"
+  Reg(Op & 7) = Reg(Op & 7) & $FF00
+  FlagNZ = 0
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("CLRB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionINCB_1052_RM:             ; 1052R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionINCB_1052M    ; the general handler
+  EndIf
+  ;name = "INCB Rd"
+  Reg(#CPU_DST) = Reg(Op & 7) & $FF
+  Res = (Reg(#CPU_DST) + 1) & $FF
+  Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $7F
+    Reg(#CPU_FLAGV) = $8000
+  EndIf
+  FlagNZ = Res << 8
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("INCB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionDECB_1053_RM:             ; 1053R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionDECB_1053M    ; the general handler
+  EndIf
+  ;name = "DECB Rd"
+  Reg(#CPU_DST) = Reg(Op & 7) & $FF
+  Res = (Reg(#CPU_DST) - 1) & $FF
+  Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $80
+    Reg(#CPU_FLAGV) = $8000
+  EndIf
+  FlagNZ = Res << 8
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("DECB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+InstructionTSTB_1057_RM:             ; 1057R, operand in a register
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionTSTB_1057M    ; the general handler
+  EndIf
+  ;name = "TSTB Rd"
+  FlagNZ = (Reg(Op & 7) & $FF) << 8
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
+  ; ClockCycles = ClockCycles + #J11_T_SINGLE
+  ;disassembly("TSTB " + ;name)
+  ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
+  NextNativeMFetchRef()
+
+
+; ======================================================================
+;  IMMEDIATE FAST PATHS: OP #n,Rd - the source is the word after the
+;  instruction (mode 2 on R7) and the destination a register other than
+;  R7. The immediate is read straight at the PC, which stays in its
+;  register: no PcOut, no EaWord, no call. A destination of R7 goes back to
+;  the general handler, as in the register fast paths.
+; ======================================================================
+
+InstructionMOV_01_IRM:            ; 0127DD  MOV #n,Rd, the source an immediate
+  ;name = "MOV #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionMOV_01M                  ; the general handler
+  EndIf
+  MMReadWordESlot(@Reg(#CPU_SRC), PC, Reg(#CPU_CURI))                     ; the word after the instruction
+  PC = (PC + 2) & $FFFF
+  Reg(Op & 7) = Reg(#CPU_SRC)
+  FlagNZ = Reg(#CPU_SRC)
+  Reg(#CPU_FLAGV) = 0
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrapMFetchRef()
+
+InstructionCMP_02_IRM:            ; 0227DD  CMP #n,Rd, the source an immediate
+  ;name = "CMP #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionCMP_02M                  ; the general handler
+  EndIf
+  MMReadWordESlot(@Reg(#CPU_SRC), PC, Reg(#CPU_CURI))                     ; the word after the instruction
+  PC = (PC + 2) & $FFFF
+  Res = Reg(#CPU_SRC) - Reg(Op & 7)
+  Reg(#CPU_FLAGC) = Res                            ; the borrow is bit 16
+  FlagNZ = Res & $FFFF
+  Reg(#CPU_FLAGV) = (Reg(#CPU_SRC) ! (Reg(#CPU_SRC) - Res)) & (Reg(#CPU_SRC) ! Res)   ; bit 15; Src - Res is Rd
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrapMFetchRef()
+
+InstructionBIT_03_IRM:            ; 0327DD  BIT #n,Rd, the source an immediate
+  ;name = "BIT #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBIT_03M                  ; the general handler
+  EndIf
+  MMReadWordESlot(@Reg(#CPU_SRC), PC, Reg(#CPU_CURI))                     ; the word after the instruction
+  PC = (PC + 2) & $FFFF
+  FlagNZ = Reg(#CPU_SRC) & Reg(Op & 7)
+  Reg(#CPU_FLAGV) = 0
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrapMFetchRef()
+
+InstructionBIC_04_IRM:            ; 0427DD  BIC #n,Rd, the source an immediate
+  ;name = "BIC #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBIC_04M                  ; the general handler
+  EndIf
+  MMReadWordESlot(@Reg(#CPU_SRC), PC, Reg(#CPU_CURI))                     ; the word after the instruction
+  PC = (PC + 2) & $FFFF
+  Res = Reg(Op & 7) & ~Reg(#CPU_SRC) & $FFFF
+  Reg(Op & 7) = Res
+  FlagNZ = Res
+  Reg(#CPU_FLAGV) = 0
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrapMFetchRef()
+
+InstructionBIS_05_IRM:            ; 0527DD  BIS #n,Rd, the source an immediate
+  ;name = "BIS #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBIS_05M                  ; the general handler
+  EndIf
+  MMReadWordESlot(@Reg(#CPU_SRC), PC, Reg(#CPU_CURI))                     ; the word after the instruction
+  PC = (PC + 2) & $FFFF
+  Res = Reg(Op & 7) | Reg(#CPU_SRC)
+  Reg(Op & 7) = Res
+  FlagNZ = Res
+  Reg(#CPU_FLAGV) = 0
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrapMFetchRef()
+
+InstructionADD_06_IRM:            ; 0627DD  ADD #n,Rd, the source an immediate
+  ;name = "ADD #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionADD_06M                  ; the general handler
+  EndIf
+  MMReadWordESlot(@Reg(#CPU_SRC), PC, Reg(#CPU_CURI))                     ; the word after the instruction
+  PC = (PC + 2) & $FFFF
+  Res = Reg(#CPU_SRC) + Reg(Op & 7)
+  Reg(#CPU_FLAGC) = Res                            ; C is bit 16 of the sum
+  Res = Res & $FFFF
+  Reg(Op & 7) = Res
+  FlagNZ = Res
+  Reg(#CPU_FLAGV) = (Reg(#CPU_SRC) ! Res) & ((Res - Reg(#CPU_SRC)) ! Res)   ; bit 15; Res - Src is the old Rd
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrapMFetchRef()
+
+InstructionSUB_16_IRM:            ; 1627DD  SUB #n,Rd, the source an immediate
+  ;name = "SUB #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionSUB_16M                  ; the general handler
+  EndIf
+  MMReadWordESlot(@Reg(#CPU_SRC), PC, Reg(#CPU_CURI))                     ; the word after the instruction
+  PC = (PC + 2) & $FFFF
+  Res = Reg(Op & 7) - Reg(#CPU_SRC)
+  Reg(#CPU_FLAGC) = Res                            ; the borrow is bit 16
+  Res = Res & $FFFF
+  Reg(Op & 7) = Res
+  FlagNZ = Res
+  Reg(#CPU_FLAGV) = (Reg(#CPU_SRC) ! (Res + Reg(#CPU_SRC))) & ((Res + Reg(#CPU_SRC)) ! Res)   ; bit 15; Res + Src is the old Rd
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrapMFetchRef()
+
+InstructionMOVB_11_IRM:           ; 1127DD  MOVB #n,Rd, the source an immediate
+  ;name = "MOVB #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionMOVB_11M                 ; the general handler
+  EndIf
+  MMReadByteESlot(@Reg(#CPU_SRC), PC, Reg(#CPU_CURI))                     ; the low byte of the word after the instruction
+  PC = (PC + 2) & $FFFF                  ; (R7 always steps by two)
+  Reg(Op & 7) = (Reg(#CPU_SRC) | (0 - (Reg(#CPU_SRC) & $80))) & $FFFF   ; to a register it is sign-extended
+  FlagNZ = Reg(#CPU_SRC) << 8
+  Reg(#CPU_FLAGV) = 0
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrapMFetchRef()
+
+InstructionCMPB_12_IRM:           ; 1227DD  CMPB #n,Rd, the source an immediate
+  ;name = "CMPB #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionCMPB_12M                 ; the general handler
+  EndIf
+  MMReadByteESlot(@Reg(#CPU_SRC), PC, Reg(#CPU_CURI))                     ; the low byte of the word after the instruction
+  PC = (PC + 2) & $FFFF                  ; (R7 always steps by two)
+  Reg(#CPU_DST) = Reg(Op & 7) & $FF
+  Res = Reg(#CPU_SRC) - Reg(#CPU_DST)
+  Reg(#CPU_FLAGC) = Res << 8
+  Reg(#CPU_FLAGV) = ((Reg(#CPU_SRC) ! Reg(#CPU_DST)) & (Reg(#CPU_SRC) ! Res)) << 8
+  FlagNZ = (Res & $FF) << 8
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrapMFetchRef()
+
+InstructionBITB_13_IRM:           ; 1327DD  BITB #n,Rd, the source an immediate
+  ;name = "BITB #n,Rd"
+  If (Op & 7) = 7                        ; the destination is the PC:
+    Goto InstructionBITB_13M                 ; the general handler
+  EndIf
+  MMReadByteESlot(@Reg(#CPU_SRC), PC, Reg(#CPU_CURI))                     ; the low byte of the word after the instruction
+  PC = (PC + 2) & $FFFF                  ; (R7 always steps by two)
+  FlagNZ = (Reg(#CPU_SRC) & Reg(Op & 7) & $FF) << 8
+  Reg(#CPU_FLAGV) = 0
+  ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
+  NextNativeTrapMFetchRef()
+
+; ======================================================================
+;  REGISTER SOURCE, MEMORY DESTINATION - OP Rs,(Rd)  OP Rs,(Rd)+  OP Rs,X(Rd)
+;  and every other form whose source is a register and whose destination
+;  is not. On the J-11 the source register is read AFTER the destination's
+;  address has been worked out, so:
+;    OP R,(R)+  OP R,-(R)  OP R,@(R)+  OP R,@-(R)   the source is R already
+;                                                   stepped by the destination
+;    OP PC,X(R)  OP PC,@X(R)  OP PC,A  OP PC,@A     the source is the address
+;                                                   of the instruction + 4
+;  (KDJ11-A CPU Module User's Guide EK-KDJ1A-UG-002, appendix B, table B-1,
+;  items 1, 2 and 3, page B-2: the KDJ11-A is in the 11/23's row, not the
+;  11/44's or the 11/70's. The DCF11-AA CPU diagnostic CJKDBD0 tests the
+;  same row in its tests 264 to 267 and 271 to 274.) The general handlers
+;  above read the source first, which is the same thing for every other
+;  pair of modes, so the table sends these forms here and the general
+;  handlers never see them. Everything else is the general handler's, line
+;  for line; with neither mode to test, these are also the shorter path.
+; ======================================================================
+InstructionMOV_01_RMM:            ; 010SDD  MOV Rs,memory
+  PcOutMFetchRef()
+  Reg(#CPU_EA) = EaWordM(Op & $3F)
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
+  MMWriteWord(Reg(#CPU_EA), Reg(#CPU_SRC))
+  FlagNZ = Reg(#CPU_SRC)
+  Reg(#CPU_FLAGV) = 0
+  NextSyncedMFetchRef()
+
+InstructionCMP_02_RMM:            ; 020SDD  CMP Rs,memory
+  PcOutMFetchRef()
+  Reg(#CPU_EA) = EaWordM(Op & $3F)
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
+  MMReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+  Res = Reg(#CPU_SRC) - Reg(#CPU_DST)
+  Reg(#CPU_FLAGC) = Res
+  Reg(#CPU_FLAGV) = (Reg(#CPU_SRC) ! Reg(#CPU_DST)) & (Reg(#CPU_SRC) ! Res)
+  FlagNZ = Res & $FFFF
+  NextSyncedMFetchRef()
+
+InstructionBIT_03_RMM:            ; 030SDD  BIT Rs,memory
+  PcOutMFetchRef()
+  Reg(#CPU_EA) = EaWordM(Op & $3F)
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
+  MMReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+  FlagNZ = Reg(#CPU_SRC) & Reg(#CPU_DST)
+  Reg(#CPU_FLAGV) = 0
+  NextSyncedMFetchRef()
+
+InstructionBIC_04_RMM:            ; 040SDD  BIC Rs,memory
+  PcOutMFetchRef()
+  Reg(#CPU_EA) = EaWordM(Op & $3F)
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
+  MMReadWord(Res, Reg(#CPU_EA))
+  Res = Res & ~Reg(#CPU_SRC) & $FFFF
+  MMWriteWord(Reg(#CPU_EA), Res)
+  FlagNZ = Res
+  Reg(#CPU_FLAGV) = 0
+  NextSyncedMFetchRef()
+
+InstructionBIS_05_RMM:            ; 050SDD  BIS Rs,memory
+  PcOutMFetchRef()
+  Reg(#CPU_EA) = EaWordM(Op & $3F)
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
+  MMReadWord(Res, Reg(#CPU_EA))
+  Res = Res | Reg(#CPU_SRC)
+  MMWriteWord(Reg(#CPU_EA), Res)
+  FlagNZ = Res
+  Reg(#CPU_FLAGV) = 0
+  NextSyncedMFetchRef()
+
+InstructionADD_06_RMM:            ; 060SDD  ADD Rs,memory
+  PcOutMFetchRef()
+  Reg(#CPU_EA) = EaWordM(Op & $3F)
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
+  MMReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+  Res = Reg(#CPU_SRC) + Reg(#CPU_DST)
+  MMWriteWord(Reg(#CPU_EA), Res)
+  Reg(#CPU_FLAGC) = Res
+  Reg(#CPU_FLAGV) = ~(Reg(#CPU_SRC) ! Reg(#CPU_DST)) & (Reg(#CPU_SRC) ! Res)
+  FlagNZ = Res & $FFFF
+  NextSyncedMFetchRef()
+
+InstructionSUB_16_RMM:            ; 160SDD  SUB Rs,memory
+  PcOutMFetchRef()
+  Reg(#CPU_EA) = EaWordM(Op & $3F)
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
+  MMReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+  Res = Reg(#CPU_DST) - Reg(#CPU_SRC)
+  MMWriteWord(Reg(#CPU_EA), Res)
+  Reg(#CPU_FLAGC) = Res                ; borrow
+  Reg(#CPU_FLAGV) = (Reg(#CPU_SRC) ! Reg(#CPU_DST)) & (Reg(#CPU_DST) ! Res)
+  FlagNZ = Res & $FFFF
+  NextSyncedMFetchRef()
+
+InstructionMOVB_11_RMM:           ; 110SDD  MOVB Rs,memory
+  PcOutMFetchRef()
+  Reg(#CPU_EA) = EaByteM(Op & $3F)
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7) & $FF
+  MMWriteByte(Reg(#CPU_EA), Reg(#CPU_SRC))
+  FlagNZ = Reg(#CPU_SRC) << 8
+  Reg(#CPU_FLAGV) = 0
+  NextSyncedMFetchRef()
+
+InstructionCMPB_12_RMM:           ; 120SDD  CMPB Rs,memory
+  PcOutMFetchRef()
+  Reg(#CPU_EA) = EaByteM(Op & $3F)
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7) & $FF
+  MMReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+  Res = Reg(#CPU_SRC) - Reg(#CPU_DST)
+  Reg(#CPU_FLAGC) = Res << 8
+  Reg(#CPU_FLAGV) = ((Reg(#CPU_SRC) ! Reg(#CPU_DST)) & (Reg(#CPU_SRC) ! Res)) << 8
+  FlagNZ = (Res & $FF) << 8
+  NextSyncedMFetchRef()
+
+InstructionBITB_13_RMM:           ; 130SDD  BITB Rs,memory
+  PcOutMFetchRef()
+  Reg(#CPU_EA) = EaByteM(Op & $3F)
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7) & $FF
+  MMReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+  FlagNZ = (Reg(#CPU_SRC) & Reg(#CPU_DST)) << 8
+  Reg(#CPU_FLAGV) = 0
+  NextSyncedMFetchRef()
+
+InstructionBICB_14_RMM:           ; 140SDD  BICB Rs,memory
+  PcOutMFetchRef()
+  Reg(#CPU_EA) = EaByteM(Op & $3F)
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7) & $FF
+  MMReadByte(Res, Reg(#CPU_EA))
+  Res = Res & ~Reg(#CPU_SRC) & $FF
+  MMWriteByte(Reg(#CPU_EA), Res)
+  FlagNZ = Res << 8
+  Reg(#CPU_FLAGV) = 0
+  NextSyncedMFetchRef()
+
+InstructionBISB_15_RMM:           ; 150SDD  BISB Rs,memory
+  PcOutMFetchRef()
+  Reg(#CPU_EA) = EaByteM(Op & $3F)
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7) & $FF
+  MMReadByte(Res, Reg(#CPU_EA))
+  Res = Res | Reg(#CPU_SRC)
+  MMWriteByte(Reg(#CPU_EA), Res)
+  FlagNZ = Res << 8
+  Reg(#CPU_FLAGV) = 0
+  NextSyncedMFetchRef()
+
+; ======================================================================
+;  THE SLOW WAY OUT OF AN INSTRUCTION - a trap to take, or a HALT. The
+;  handlers' own tails send any instruction that left TrapVector set here,
+;  and HALT comes here always, because this is the only place that looks
+;  at Halted (nothing else sets it).
+; ======================================================================
+SlowTailM:
+  If PswLate                             ; the PSW written through 177776 wins (PswWrite)
+    PswSet(PswLate & $FFFF)
+    PswLate = 0
+    If Reg(#CPU_TRAPVECTOR) = #TRAP_PSW_LATE
+      Reg(#CPU_TRAPVECTOR) = 0
+    EndIf
+  EndIf
+  If AbortPsw                            ; a bus error aborted the instruction (BusError)
+    PswSet(AbortPsw & $FFFF)
+    AbortPsw = 0
+  EndIf
+  If Reg(#CPU_TRAPVECTOR) = #TRAP_STACK            ; only a marker: StackYellow says what
+    Reg(#CPU_TRAPVECTOR) = 0
+  EndIf
+  Reg(7) = PC
+  If Reg(#CPU_TRAPVECTOR)
+    Reg(#CPU_TMP) = Reg(#CPU_TRAPVECTOR)
+    Reg(#CPU_TRAPVECTOR) = 0
+    TraceArm = 0                         ; a trapping instruction is not traced
+    TakeTrap(Reg(#CPU_TMP))
+    If Reg(#CPU_TRAPVECTOR) = #TRAP_STACK
+      Reg(#CPU_TRAPVECTOR) = 0
+    EndIf
+  EndIf
+  TakeStackTrap()
+  PC = Reg(7)
+  RunLeft = RunLeft - 1
+  If RunLeft > 0 And Halted = 0
+    Goto FetchM
+  EndIf
+; ======================================================================
+;  RUNEND - every window ends here (THE RUN WINDOW in cpu.pico): the clock
+;  is brought up to date, the devices act, and the next window opens -
+;  until CpuRun has run its n, the processor halts, or it WAITs with
+;  nothing inside the emulator left to wake it (a typed character comes
+;  from the firmware, between runs).
+; ======================================================================
+RunEndM:
+  Reg(7) = PC                            ; the devices' traps work on Reg(7)
+  InstrCount = InstrCount + RunWindow - RunLeft
+  RunBank = RunBank + RunLeft
+  RunLeft = 0
+  RunWindow = 0
+  ; ---- MMU HANDOVER: the unit is off - back to the unmapped loop ----
+  If MmuOn = 0                           ; CpuRun (instructions) takes the rest
+    ProcedureReturn InstrCount - RunFrom
+  EndIf
+  ; ---- END MMU HANDOVER ----
+  If Halted = 0
+    If TraceArm                          ; the T bit (StartWindow in cpu): trace trap
+      TraceArm = 0
+      TakeTrap(#VEC_BPT)
+      TakeStackTrap()
+    EndIf
+    DevService()
+    While Waiting <> 0 And RunBank > 0 And Dl11TxRdy = 0
+      Reg(#CPU_TMP) = Dl11TxDue - InstrCount           ; WAIT: let time pass to the
+      If Reg(#CPU_TMP) < 1                             ; transmitter's next moment
+        Reg(#CPU_TMP) = 1
+      EndIf
+      If Reg(#CPU_TMP) > RunBank
+        Reg(#CPU_TMP) = RunBank
+      EndIf
+      InstrCount = InstrCount + Reg(#CPU_TMP)
+      RunBank = RunBank - Reg(#CPU_TMP)
+      DevService()
+    Wend
+    If Waiting = 0 And RunBank > 0
+      StartWindow()
+      PC = Reg(7)
+      Goto FetchM
+    EndIf
+  EndIf
+  RunBank = 0
+  ProcedureReturn InstrCount - RunFrom
+
+
+; ======================================================================
+;  THE TABLE - filled the first time CpuRun runs. A '.Label' is taken
+;  with ?Name only inside the procedure that owns the label, so this is
+;  part of CpuRun; BuildOpcodeTable() at the foot just calls CpuRun(0).
+; ======================================================================
+BuildTableM:
+  OpsMFetchRef(0, 8192, ?InstructionReservedM)
+
+  ; ---- 0000xx - 0003xx ----
+  OpTableMFetchRef($0000) = ?InstructionGroup0_0000M        ; 000000-000007
+  OpsMFetchRef($0008, 8, ?InstructionJMP_0001M)             ; 000100-000177
+  OpTableMFetchRef($0010) = ?InstructionRTS_00020M          ; 000200-000207
+  OpTableMFetchRef($0013) = ?InstructionSPL_00023M          ; 000230-000237
+  OpsMFetchRef($0014, 4, ?InstructionCC_00024M)             ; 000240-000277
+  OpsMFetchRef($0018, 8, ?InstructionSWAB_0003M)            ; 000300-000377
+
+  ; ---- branches, JSR, single operand ----
+  OpsMFetchRef($0020, 32, ?InstructionBR_0004M)
+  OpsMFetchRef($0040, 32, ?InstructionBNE_0010M)
+  OpsMFetchRef($0060, 32, ?InstructionBEQ_0014M)
+  OpsMFetchRef($0080, 32, ?InstructionBGE_0020M)
+  OpsMFetchRef($00A0, 32, ?InstructionBLT_0024M)
+  OpsMFetchRef($00C0, 32, ?InstructionBGT_0030M)
+  OpsMFetchRef($00E0, 32, ?InstructionBLE_0034M)
+  OpsMFetchRef($0100, 64, ?InstructionJSR_004M)
+  OpsMFetchRef($0140, 8, ?InstructionCLR_0050M)
+  OpsMFetchRef($0148, 8, ?InstructionCOM_0051M)
+  OpsMFetchRef($0150, 8, ?InstructionINC_0052M)
+  OpsMFetchRef($0158, 8, ?InstructionDEC_0053M)
+  OpsMFetchRef($0160, 8, ?InstructionNEG_0054M)
+  OpsMFetchRef($0168, 8, ?InstructionADC_0055M)
+  OpsMFetchRef($0170, 8, ?InstructionSBC_0056M)
+  OpsMFetchRef($0178, 8, ?InstructionTST_0057M)
+  OpsMFetchRef($0180, 8, ?InstructionROR_0060M)
+  OpsMFetchRef($0188, 8, ?InstructionROL_0061M)
+  OpsMFetchRef($0190, 8, ?InstructionASR_0062M)
+  OpsMFetchRef($0198, 8, ?InstructionASL_0063M)
+  OpsMFetchRef($01A0, 8, ?InstructionMARK_0064M)
+  OpsMFetchRef($01A8, 8, ?InstructionMFPI_0065M)
+  OpsMFetchRef($01B0, 8, ?InstructionMTPI_0066M)
+  OpsMFetchRef($01B8, 8, ?InstructionSXT_0067M)
+
+  ; ---- double operand, word ----
+  OpsMFetchRef($0200, 512, ?InstructionMOV_01M)
+  OpsMFetchRef($0400, 512, ?InstructionCMP_02M)
+  OpsMFetchRef($0600, 512, ?InstructionBIT_03M)
+  OpsMFetchRef($0800, 512, ?InstructionBIC_04M)
+  OpsMFetchRef($0A00, 512, ?InstructionBIS_05M)
+  OpsMFetchRef($0C00, 512, ?InstructionADD_06M)
+
+  ; ---- EIS ----
+  OpsMFetchRef($0E00, 64, ?InstructionMUL_070M)
+  OpsMFetchRef($0E40, 64, ?InstructionDIV_071M)
+  OpsMFetchRef($0E80, 64, ?InstructionASH_072M)
+  OpsMFetchRef($0EC0, 64, ?InstructionASHC_073M)
+  OpsMFetchRef($0F00, 64, ?InstructionXOR_074M)
+  OpsMFetchRef($0FC0, 64, ?InstructionSOB_077M)
+  OpsMFetchRef($0FF8, 8, ?InstructionSOB_077_PCM)              ; SOB R7
+
+  ; ---- 10xxxx ----
+  OpsMFetchRef($1000, 32, ?InstructionBPL_1000M)
+  OpsMFetchRef($1020, 32, ?InstructionBMI_1004M)
+  OpsMFetchRef($1040, 32, ?InstructionBHI_1010M)
+  OpsMFetchRef($1060, 32, ?InstructionBLOS_1014M)
+  OpsMFetchRef($1080, 32, ?InstructionBVC_1020M)
+  OpsMFetchRef($10A0, 32, ?InstructionBVS_1024M)
+  OpsMFetchRef($10C0, 32, ?InstructionBCC_1030M)
+  OpsMFetchRef($10E0, 32, ?InstructionBCS_1034M)
+  OpsMFetchRef($1100, 32, ?InstructionEMT_104M)
+  OpsMFetchRef($1120, 32, ?InstructionTRAP_1044M)
+  OpsMFetchRef($1140, 8, ?InstructionCLRB_1050M)
+  OpsMFetchRef($1148, 8, ?InstructionCOMB_1051M)
+  OpsMFetchRef($1150, 8, ?InstructionINCB_1052M)
+  OpsMFetchRef($1158, 8, ?InstructionDECB_1053M)
+  OpsMFetchRef($1160, 8, ?InstructionNEGB_1054M)
+  OpsMFetchRef($1168, 8, ?InstructionADCB_1055M)
+  OpsMFetchRef($1170, 8, ?InstructionSBCB_1056M)
+  OpsMFetchRef($1178, 8, ?InstructionTSTB_1057M)
+  OpsMFetchRef($1180, 8, ?InstructionRORB_1060M)
+  OpsMFetchRef($1188, 8, ?InstructionROLB_1061M)
+  OpsMFetchRef($1190, 8, ?InstructionASRB_1062M)
+  OpsMFetchRef($1198, 8, ?InstructionASLB_1063M)
+  OpsMFetchRef($11A0, 8, ?InstructionMTPS_1064M)
+  OpsMFetchRef($11A8, 8, ?InstructionMFPD_1065M)
+  OpsMFetchRef($11B0, 8, ?InstructionMTPD_1066M)
+  OpsMFetchRef($11B8, 8, ?InstructionMFPS_1067M)
+
+  ; ---- double operand, byte, and SUB ----
+  OpsMFetchRef($1200, 512, ?InstructionMOVB_11M)
+  OpsMFetchRef($1400, 512, ?InstructionCMPB_12M)
+  OpsMFetchRef($1600, 512, ?InstructionBITB_13M)
+  OpsMFetchRef($1800, 512, ?InstructionBICB_14M)
+  OpsMFetchRef($1A00, 512, ?InstructionBISB_15M)
+  OpsMFetchRef($1C00, 512, ?InstructionSUB_16M)
+
+  CompilerIf #FP11 = 1
+  OpsMFetchRef($1E00, 512, ?InstructionFPM)        ; 17xxxx: the FPJ11 (pico2/fp11.pico2; #FP11 is 0 on the Pico)
+  CompilerEndIf
+  ; ---- register fast paths: overlay the general entries (Op >> 3 keeps
+  ; the source register in bits 5-3 and both modes; R7 as the source stays
+  ; general, R7 as the destination is sent back by the handler) ----
+  For FillFromMFetchRef = 0 To 6
+    OpTableMFetchRef($0200 | (FillFromMFetchRef << 3)) = ?InstructionMOV_01_RRM
+    OpTableMFetchRef($0400 | (FillFromMFetchRef << 3)) = ?InstructionCMP_02_RRM
+    OpTableMFetchRef($0600 | (FillFromMFetchRef << 3)) = ?InstructionBIT_03_RRM
+    OpTableMFetchRef($0800 | (FillFromMFetchRef << 3)) = ?InstructionBIC_04_RRM
+    OpTableMFetchRef($0A00 | (FillFromMFetchRef << 3)) = ?InstructionBIS_05_RRM
+    OpTableMFetchRef($0C00 | (FillFromMFetchRef << 3)) = ?InstructionADD_06_RRM
+    OpTableMFetchRef($1200 | (FillFromMFetchRef << 3)) = ?InstructionMOVB_11_RRM
+    OpTableMFetchRef($1400 | (FillFromMFetchRef << 3)) = ?InstructionCMPB_12_RRM
+    OpTableMFetchRef($1600 | (FillFromMFetchRef << 3)) = ?InstructionBITB_13_RRM
+    OpTableMFetchRef($1800 | (FillFromMFetchRef << 3)) = ?InstructionBICB_14_RRM
+    OpTableMFetchRef($1A00 | (FillFromMFetchRef << 3)) = ?InstructionBISB_15_RRM
+    OpTableMFetchRef($1C00 | (FillFromMFetchRef << 3)) = ?InstructionSUB_16_RRM
+  Next
+  OpTableMFetchRef($0140) = ?InstructionCLR_0050_RM
+  OpTableMFetchRef($0148) = ?InstructionCOM_0051_RM
+  OpTableMFetchRef($0150) = ?InstructionINC_0052_RM
+  OpTableMFetchRef($0158) = ?InstructionDEC_0053_RM
+  OpTableMFetchRef($0160) = ?InstructionNEG_0054_RM
+  OpTableMFetchRef($0178) = ?InstructionTST_0057_RM
+  OpTableMFetchRef($0180) = ?InstructionROR_0060_RM
+  OpTableMFetchRef($0188) = ?InstructionROL_0061_RM
+  OpTableMFetchRef($0190) = ?InstructionASR_0062_RM
+  OpTableMFetchRef($0198) = ?InstructionASL_0063_RM
+  OpTableMFetchRef($0018) = ?InstructionSWAB_0003_RM
+  OpTableMFetchRef($1140) = ?InstructionCLRB_1050_RM
+  OpTableMFetchRef($1150) = ?InstructionINCB_1052_RM
+  OpTableMFetchRef($1158) = ?InstructionDECB_1053_RM
+  OpTableMFetchRef($1178) = ?InstructionTSTB_1057_RM
+  ; ---- immediate fast paths: OP #n,Rd (the handler sends Rd = R7 back) ----
+  OpTableMFetchRef($02B8) = ?InstructionMOV_01_IRM
+  OpTableMFetchRef($04B8) = ?InstructionCMP_02_IRM
+  OpTableMFetchRef($06B8) = ?InstructionBIT_03_IRM
+  OpTableMFetchRef($08B8) = ?InstructionBIC_04_IRM
+  OpTableMFetchRef($0AB8) = ?InstructionBIS_05_IRM
+  OpTableMFetchRef($0CB8) = ?InstructionADD_06_IRM
+  OpTableMFetchRef($1CB8) = ?InstructionSUB_16_IRM
+  OpTableMFetchRef($12B8) = ?InstructionMOVB_11_IRM
+  OpTableMFetchRef($14B8) = ?InstructionCMPB_12_IRM
+  OpTableMFetchRef($16B8) = ?InstructionBITB_13_IRM
+  ; ---- register source, memory destination (the handlers' header says why):
+  ; every source register, R7 too, and destination modes 1 to 7 ----
+  For FillFromMFetchRef = 0 To 7
+    For FillCountMFetchRef = 1 To 7
+      OpTableMFetchRef($0200 | (FillFromMFetchRef << 3) | FillCountMFetchRef) = ?InstructionMOV_01_RMM
+      OpTableMFetchRef($0400 | (FillFromMFetchRef << 3) | FillCountMFetchRef) = ?InstructionCMP_02_RMM
+      OpTableMFetchRef($0600 | (FillFromMFetchRef << 3) | FillCountMFetchRef) = ?InstructionBIT_03_RMM
+      OpTableMFetchRef($0800 | (FillFromMFetchRef << 3) | FillCountMFetchRef) = ?InstructionBIC_04_RMM
+      OpTableMFetchRef($0A00 | (FillFromMFetchRef << 3) | FillCountMFetchRef) = ?InstructionBIS_05_RMM
+      OpTableMFetchRef($0C00 | (FillFromMFetchRef << 3) | FillCountMFetchRef) = ?InstructionADD_06_RMM
+      OpTableMFetchRef($1200 | (FillFromMFetchRef << 3) | FillCountMFetchRef) = ?InstructionMOVB_11_RMM
+      OpTableMFetchRef($1400 | (FillFromMFetchRef << 3) | FillCountMFetchRef) = ?InstructionCMPB_12_RMM
+      OpTableMFetchRef($1600 | (FillFromMFetchRef << 3) | FillCountMFetchRef) = ?InstructionBITB_13_RMM
+      OpTableMFetchRef($1800 | (FillFromMFetchRef << 3) | FillCountMFetchRef) = ?InstructionBICB_14_RMM
+      OpTableMFetchRef($1A00 | (FillFromMFetchRef << 3) | FillCountMFetchRef) = ?InstructionBISB_15_RMM
+      OpTableMFetchRef($1C00 | (FillFromMFetchRef << 3) | FillCountMFetchRef) = ?InstructionSUB_16_RMM
+    Next
+  Next
+; ---- INDEXED ENTRY POINTS ----
+; ---- IMX ENTRY POINTS ----
+; ---- FAST ENTRY POINTS ----
+  OpTableReadyMFetchRef = 1
+  Goto RunStartM
+EndProcedure
+
+; Fills the table. CpuRun does this itself the first time it runs; calling
+; this first only moves the cost out of the first timed run.
+Procedure BuildOpcodeTableMFetchRef()
+  CpuRunMFetchRef(0)
+EndProcedure

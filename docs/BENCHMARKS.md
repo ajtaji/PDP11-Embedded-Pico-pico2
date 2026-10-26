@@ -128,3 +128,48 @@ Teletype's flags, among them a pause of 10 clock ticks after every newline;
 Dhrystone's 60-line report then took 13 s of a 31 s run. `tools/v7_pack.py`
 patches the kernel's constant (TOOLS.md); with it the same run takes 20.8 s
 from the host, its computing 18 s as before.
+
+## Additional assembly pass, 2026-10-26
+
+This pass replaces the remaining unmapped two-operand word/byte handlers with
+Thumb-1 assembly on RP2040 and Thumb-2-compatible bodies on RP2350. The mapped
+RP2350 loop uses table dispatch for word addressing modes and a cached fetch
+span with paired loads. These paths apply to ordinary instruction execution;
+there is no guest program or benchmark recognition.
+
+Fresh, output-checked Unix commands on physical boards, timed by the host:
+
+| Board and workload | Previous firmware | New firmware | Less elapsed time |
+| --- | ---: | ---: | ---: |
+| Pico W, 200 MHz: Mini-Unix build | 10.705 s | 10.587 s | 1.10% |
+| Pico W: reads and process listing | 19.185 s | 18.814 s | 1.93% |
+| Pico W: total of these phases | 29.890 s | 29.401 s | 1.63% |
+| Pico 2 W, 150 MHz: V6 build | 11.378 s | 11.112 s | 2.34% |
+| Pico 2 W: processes and file I/O | 6.890 s | 6.773 s | 1.71% |
+| Pico 2 W: text tools | 11.158 s | 11.063 s | 0.86% |
+| Pico 2 W: reads and process listing | 27.426 s | 26.695 s | 2.66% |
+| Pico 2 W: total of all four phases | 56.852 s | 55.642 s | 2.13% |
+
+The plans come from `tools/unix_workload.py`. Each phase starts from a fresh
+boot of the same disk pack. Totals exclude setup/input transfer and include
+all measured commands in the phase, including nested compiler and utility
+work. The Pico W completed 17 measured commands and Pico 2 W completed 52;
+compiler results, arithmetic, file contents and utility checksums matched.
+There were no lost console characters or dropped clock ticks. These are
+single paired runs; the small percentages should not be read as precise
+universal speedups. Mini-Unix's process/file and text phases still exceed
+its existing 124-block RAM write overlay on both versions; they are not
+passes and were not included in the RP2040 timings.
+
+The normal program images shrink from 183,124 to 181,960 bytes on RP2040 and
+201,992 to 199,920 bytes on RP2350. Guest RAM and write overlays are unchanged.
+These figures compare firmware versions, not a physical PDP-11. The historical
+real-machine comparisons above remain limited to their stated programs.
+
+Correctness includes 4,000 comparisons of the twelve generic handlers on each
+chip against their plain implementations, plus 512 mapped multi-instruction
+sequences on RP2350. The sequence tests exercise warm/cold fetch windows,
+kernel/user modes, physical aliases, page boundaries and 16-bit PC wrap.
+Deliberately broken word stores, addressing-mode dispatch and indexed-PC
+wrapping were rejected. The last virtual word uses the existing slow fetch
+so PC wraps correctly, without masking every ordinary opcode fetch.

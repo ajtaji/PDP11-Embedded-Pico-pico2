@@ -253,6 +253,7 @@ Global PC.i                 ; the emulated PC between instructions; Reg(7) is it
 ; #ASM_EA: the handlers reach __eaw1 by bl for X(R), -(R), (R)+ and (R) (EaFast,
 ; below). 0 builds the plain code alone.
 #ASM_MOV = 1
+#ASM_FULL = 1             ; complete unmapped word/byte operand assembly
 #ASM_MEM = 1              ; compact Thumb-1 RAM access helpers
 #ASM_INDEXED = 1                       ; indexed CLR/TST/INC/DEC and byte CLR/TST
 #ASM_IMX = 1              ; native immediate/indexed memory forms
@@ -264,8 +265,8 @@ Global PC.i                 ; the emulated PC between instructions; Reg(7) is it
 ; Measured on a Pico W, 2026-10-19 (Mini-Unix `time od /rkmx`, host-timed): 5.88 s
 ; before, 4.61 s with both.
 CompilerIf #DISK_BACKEND = 0
-Global Dim FastAsm.Label(42)
-Global Dim FastRef.Label(42)
+Global Dim FastAsm.Label(54)
+Global Dim FastRef.Label(54)
 CompilerEndIf
 Global Dim MovAsm.Label(7)                  ; each MOV handler by mode: the assembly entry ...
 Global Dim MovRef.Label(7)                  ; ... and the plain one (filled with the table)

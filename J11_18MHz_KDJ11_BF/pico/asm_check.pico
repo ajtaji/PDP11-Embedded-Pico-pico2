@@ -34,6 +34,7 @@
 #DISK_FLASH_MODEL = 0
 #DISK_READ_ONLY = 0
 #DESK_PROBE = 0
+#DEMO_DEV = 0                ; this comparison firmware has no graphics device
 EnableExplicit
 XIncludeFile "RP2040/Lib/clocks.pico"
 XIncludeFile "RP2040/Lib/timer.pico"
@@ -355,19 +356,43 @@ Procedure OneCheck()
 EndProcedure
 
 Global FKind.i, FChecks.i, FFailures.i, FFirst.i = -1, FFirstOp.i, FFirstField.i, FFast.i, FSlow.i
-Global Dim FCode.i(28)
+Global Dim FCode.i(40)
+Global FFullOnly.i
 Global FCallsOnly.i
+Global FGroupStart.i
 Global FAsmTarget.Label, FRefTarget.Label
 Procedure FastOne()
   PswSet($00E0)
-  If FCallsOnly
+  If FFullOnly
+    FKind = 28 + (FChecks % 12)
+  ElseIf FCallsOnly
     FKind = 26 + RndN(2)
   Else
     FKind = RndN(26)
   EndIf
   For Oi = 0 To 6 : Reg(Oi) = RndReg() : Next
   TPc = RndN(#LO_WORDS - 4) * 2
-  If FKind < 15
+  If FKind >= 28
+    ; Keep random deferred/indexed targets away from live device registers.
+    ; Odd addresses still exercise faults; SP also crosses the yellow limit.
+    For Oi = 0 To 6 : Reg(Oi) = 512 + RndN($3C00) : Next
+    If RndN(4) = 0 : Reg(6) = $FC + RndN(8) * 2 : EndIf
+    TPc = RndN($1000) * 2
+    For Oi = 0 To #RAM_WORDS - 1 : Mem(Oi) = Mem(Oi) & $3FFF : Next
+    TOp = FCode(FKind) | RndN(4096)
+    ; Full-width data in register operands exercises signed overflow/carry
+    ; without turning a deferred operand into a live I/O-register access.
+    If ((TOp >> 6) & $38) = 0 And ((TOp >> 6) & 7) < 7
+      If (TOp & $38) = 0 Or ((TOp >> 6) & 7) <> (TOp & 7)
+        Reg((TOp >> 6) & 7) = RndN($10000)
+      EndIf
+    EndIf
+    If (TOp & $38) = 0 And (TOp & 7) < 7
+      If ((TOp >> 6) & $38) = 0 Or ((TOp >> 6) & 7) <> (TOp & 7)
+        Reg(TOp & 7) = RndN($10000)
+      EndIf
+    EndIf
+  ElseIf FKind < 15
     TOp = FCode(FKind) | RndN(256)
   ElseIf FKind < 22
     TOp = FCode(FKind) | (RndN(8) << 6) | RndN(8)
@@ -389,7 +414,10 @@ Procedure FastOne()
   For Oi = 1 To 3                       ; a trap into another mode pushes on that mode's stack:
     StackBank(Oi) = RndRam() + 8        ; keep it in the shadowed RAM too
   Next
-  If FKind >= 26
+  If FKind >= 28
+    FAsmTarget = FastAsm(42 + FKind - 28)
+    FRefTarget = FastRef(42 + FKind - 28)
+  ElseIf FKind >= 26
     FAsmTarget = FastAsm(40 + FKind - 26)
     FRefTarget = FastRef(40 + FKind - 26)
   Else
@@ -859,6 +887,18 @@ Procedure Main()
   FCode(23) = $BC0
   FCode(24) = $A80
   FCode(25) = $AC0
+  FCode(28) = $1000
+  FCode(29) = $9000
+  FCode(30) = $2000
+  FCode(31) = $6000
+  FCode(32) = $E000
+  FCode(33) = $3000
+  FCode(34) = $4000
+  FCode(35) = $5000
+  FCode(36) = $A000
+  FCode(37) = $B000
+  FCode(38) = $C000
+  FCode(39) = $D000
   ICode(0) = $95F0
   ICode(1) = $15F0
   ICode(2) = $25F0
@@ -883,13 +923,25 @@ Procedure Main()
   MidSum = MidSumNow()
   Say("ASMCHECK start: the Pico's unmapped MOV handlers and __eaw1, assembly against plain") : Eol()
   Repeat
-    FCallsOnly = 1
+    FFullOnly = 1
+    FGroupStart = FChecks
     For Mr = 1 To #ROUND * 2
       FastOne()
       UsbSerialTask()
       SafetyPet()
     Next
-    Say("ASMCHECK calls checks=") : Num(FChecks) : Say(" failures=") : Num(FFailures)
+    Say("ASMCHECK full checks=") : Num(FChecks - FGroupStart) : Say(" failures=") : Num(FFailures)
+    If FFailures = 0 : Say(" PASS") : Else : Say(" FAIL") : EndIf
+    Eol()
+    FFullOnly = 0
+    FCallsOnly = 1
+    FGroupStart = FChecks
+    For Mr = 1 To #ROUND * 2
+      FastOne()
+      UsbSerialTask()
+      SafetyPet()
+    Next
+    Say("ASMCHECK calls checks=") : Num(FChecks - FGroupStart) : Say(" failures=") : Num(FFailures)
     If FFailures = 0 : Say(" PASS") : Else : Say(" FAIL") : EndIf
     Eol()
     FCallsOnly = 0
@@ -918,12 +970,13 @@ Procedure Main()
     Say("ASMCHECK imx checks=") : Num(IChecks) : Say(" fast=") : Num(IFast) : Say(" failures=") : Num(IFailures)
     If IFailures = 0 : Say(" PASS") : Else : Say(" FAIL") : EndIf
     Eol()
+    FGroupStart = FChecks
     For Mr = 1 To #ROUND
       FastOne()
       UsbSerialTask()
       SafetyPet()
     Next
-    Say("ASMCHECK fast checks=") : Num(FChecks) : Say(" failures=") : Num(FFailures)
+    Say("ASMCHECK fast checks=") : Num(FChecks - FGroupStart) : Say(" failures=") : Num(FFailures)
     If FFailures = 0 : Say(" PASS") : Else : Say(" FAIL") : EndIf
     Eol()
     Mt0 = Micros()

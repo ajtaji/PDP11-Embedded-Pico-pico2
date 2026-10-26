@@ -500,3 +500,17 @@ These exist outside the repository and would be worth adding:
 
 Panel wiring, APIs, live-font controls and audio module contracts are in
 [OUTPUTS.md](../OUTPUTS.md).
+
+## Operand assembly and fetch regression checks
+
+`asm_full_gen.py --check` checks the twelve generic unmapped word/byte handlers
+in the shared instruction source. Regenerate them before `mmu_gen.py`, then
+run `unmapped_gen.py` and `unmapped_gen.py --tests` for RP2350 output. The
+plain handlers remain available to diskless comparison firmware.
+
+`fetch_check_gen.py` generates `pico2/fetch_check.pico2` and its independent
+plain mapped interpreter. Build this fixture with PureMetal Forge and run it
+on an RP2350; its serial verdict is `ASMCHECK fetch checks=512 failures=0 PASS`.
+It executes instruction sequences with a multi-instruction budget so native
+next-fetch tails are exercised. `CpuRunM(1)` alone cannot validate those tails.
+`--check` verifies that the generated fixture and reference are current.

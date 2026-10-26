@@ -1,6 +1,6 @@
 ; desktop/gen/core.pbi - WRITTEN BY desktop/tools/desktop_gen.py from the Pico 2's
 ; sources; do not edit (edit the board's files and run the tool again).
-; cpu.pico2 (7 ASM blocks dropped); fp11.pico2 (6 ASM blocks dropped); instructions_mmu.pico2 (363 ASM blocks dropped); instructions.pico2 (194 ASM blocks dropped); kw11.pico2 (0 ASM blocks dropped); rk11.pico2 (0 ASM blocks dropped); rp11.pico2 (0 ASM blocks dropped)
+; cpu.pico2 (7 ASM blocks dropped); fp11.pico2 (6 ASM blocks dropped); instructions_mmu.pico2 (363 ASM blocks dropped); instructions.pico2 (206 ASM blocks dropped); kw11.pico2 (0 ASM blocks dropped); rk11.pico2 (0 ASM blocks dropped); rp11.pico2 (0 ASM blocks dropped)
 
 Declare SmpBarrier()
 Declare CpuEventIn(k.l)
@@ -479,7 +479,7 @@ Global MmE.l ; the mapped memory macros' entry
 Global RunSave.l ; CpuRun's RunFrom while the mapped loop runs
 ; THE FETCH WINDOW AND THE INSTRUCTION'S ADDRESS, in one array so that the
 ; mapped tails (assembly, #ASM_TAILS) reach all four through one base
-; register: Fw(0) FetchLo, Fw(1) FetchHi, Fw(2) FetchBase (MmuFetchWindow),
+; register: Fw(0) FetchLo, Fw(1) FetchSpan, Fw(2) FetchBase (MmuFetchWindow),
 ; Fw(3) the address of the mapped instruction being run (MMR2). A literal
 ; index costs compiled code nothing: Fw(1) is the address of Fw plus 4.
 ; FwSave(m * 4 + 0..2): mode m's fetch window (Fw(0..2)) while another mode
@@ -503,6 +503,7 @@ Global Dim FwSave.i(16)
 ; in assembly in front of their plain handlers (tools/mmu_gen.py, pico2_ops; held to
 ; the plain ones by asm_check.pico2). Needs #ASM_EA = 1. 0: the plain handlers alone.
 #ASM_FAST = 0                          ; unmapped native branch/register forms
+#ASM_FULL = 0             ; complete unmapped word/byte operand assembly
 #ASM_MEM = 0                           ; unmapped native RAM access helpers
 #ASM_IMX = 0                           ; unmapped immediate/indexed forms
 #ASM_INDEXED = 0                       ; indexed CLR/TST/INC/DEC and byte CLR/TST
@@ -2087,7 +2088,7 @@ Procedure.l PopM()
 EndProcedure
 
 ; THE FETCH WINDOW. The mapped loop fetches every instruction through three
-; Globals: the word at PC in [FetchLo, FetchHi) is at host address PC +
+; Globals: the word at PC in [FetchLo, FetchLo + FetchSpan) is at host address PC +
 ; FetchBase. The window is the fast window of the page the PC is in, joined
 ; with its neighbours' while they touch and share the same host offset - so
 ; an identity-mapped kernel fetches from all of RAM through one window, and
@@ -2114,8 +2115,12 @@ Procedure MmuFetchWindow(va.i)
     e = e + 1
     hi = MapRHi(e)
   Wend
+  ; The final virtual word is fetched through FetchWordM, which wraps PC
+  ; to 16 bits. Native tails can then increment PC without a per-op mask.
+  If hi > $FFFE : hi = $FFFE : EndIf
+  If hi <= lo : ProcedureReturn : EndIf
   Fw(0) = lo
-  Fw(1) = hi
+  Fw(1) = hi - lo
   Fw(2) = bs
 EndProcedure
 
@@ -3779,7 +3784,7 @@ Macro NextSyncedM()
     Goto RunEndM
   EndIf
   If PC >= Fw(0)                       ; the fetch, through the fetch window (cpu)
-    If PC < Fw(1)
+    If PC - Fw(0) < Fw(1)
       If (PC & 1) = 0
         MmuInstrStart(PC)
         Op = PeekU(PC + Fw(2))
@@ -3805,7 +3810,7 @@ Macro NextNativeM()
     Goto RunEndM
   EndIf
   If PC >= Fw(0)                       ; the fetch, through the fetch window (cpu)
-    If PC < Fw(1)
+    If PC - Fw(0) < Fw(1)
       MmuInstrStart(PC)
       Op = PeekU(PC + Fw(2))
       PC = PC + 2
@@ -3851,7 +3856,7 @@ RunStartM:
   Goto RunEndM                            ; which lets the devices act, then opens a window
 FetchM:
   If PC >= Fw(0)                       ; the fetch, through the fetch window (cpu)
-    If PC < Fw(1)
+    If PC - Fw(0) < Fw(1)
       If (PC & 1) = 0
         MmuInstrStart(PC)
         Op = PeekU(PC + Fw(2))
@@ -7987,8 +7992,8 @@ EndProcedure
 CompilerIf #DISK_BACKEND = 0
 Global Dim MovAsm.i(7)
 Global Dim MovRef.i(7)
-Global Dim FastAsm.i(42)
-Global Dim FastRef.i(42)
+Global Dim FastAsm.i(54)
+Global Dim FastRef.i(54)
 CompilerEndIf
 Global Dim OpTable.i(8192)
 Global OpTableReady.l                    ; 0 until the first CpuRun fills OpTable
@@ -8279,6 +8284,15 @@ CompilerEndIf
 ; ---- END UNMAPPED ONLY ----
 ; ---- MEMORY HELPERS ----
 InstructionMOV_01:            ; 01SSDD   entries $0200-$03FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionMOV_01FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "MOV"
   MSrcWord()
@@ -8306,7 +8320,21 @@ CompilerEndIf
   ; ---- next instruction (THE TAIL, top of file) ----
   NextSynced()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionMOVB_11:           ; 11SSDD   entries $1200-$13FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionMOVB_11FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "MOVB"
   MSrcByte()
@@ -8335,7 +8363,21 @@ CompilerEndIf
   NextSynced()
 
 ;-CMP-------------------------------------------------------------------
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionCMP_02:            ; 02SSDD   entries $0400-$05FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionCMP_02FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "CMP"
   MSrcWord()
@@ -8365,7 +8407,21 @@ CompilerEndIf
   ; ---- next instruction (THE TAIL, top of file) ----
   NextSynced()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionCMPB_12:           ; 12SSDD   entries $1400-$15FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionCMPB_12FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "CMPB"
   MSrcByte()
@@ -8396,7 +8452,21 @@ CompilerEndIf
   NextSynced()
 
 ;-BIT-------------------------------------------------------------------
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionBIT_03:            ; 03SSDD   entries $0600-$07FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionBIT_03FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "BIT"
   MSrcWord()
@@ -8424,7 +8494,21 @@ CompilerEndIf
   ; ---- next instruction (THE TAIL, top of file) ----
   NextSynced()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionBITB_13:           ; 13SSDD   entries $1600-$17FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionBITB_13FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "BITB"
   MSrcByte()
@@ -8453,7 +8537,21 @@ CompilerEndIf
   NextSynced()
 
 ;-BIC-------------------------------------------------------------------
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionBIC_04:            ; 04SSDD   entries $0800-$09FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionBIC_04FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "BIC"
   MSrcWord()
@@ -8495,7 +8593,21 @@ CompilerEndIf
   ; ---- next instruction (THE TAIL, top of file) ----
   NextSynced()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionBICB_14:           ; 14SSDD   entries $1800-$19FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionBICB_14FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "BICB"
   MSrcByte()
@@ -8538,7 +8650,21 @@ CompilerEndIf
   NextSynced()
 
 ;-BIS-------------------------------------------------------------------
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionBIS_05:            ; 05SSDD   entries $0A00-$0BFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionBIS_05FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "BIS"
   MSrcWord()
@@ -8580,7 +8706,21 @@ CompilerEndIf
   ; ---- next instruction (THE TAIL, top of file) ----
   NextSynced()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionBISB_15:           ; 15SSDD   entries $1A00-$1BFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionBISB_15FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "BISB"
   MSrcByte()
@@ -8623,7 +8763,21 @@ CompilerEndIf
   NextSynced()
 
 ;-ADD-------------------------------------------------------------------
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionADD_06:            ; 06SSDD   entries $0C00-$0DFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionADD_06FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "ADD"
   MSrcWord()
@@ -8668,7 +8822,21 @@ CompilerEndIf
   NextSynced()
 
 ;-SUB-------------------------------------------------------------------
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionSUB_16:            ; 16SSDD   entries $1C00-$1DFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionSUB_16FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "SUB"
   MSrcWord()
@@ -8718,6 +8886,11 @@ CompilerEndIf
 ; ======================================================================
 
 ;-CLR-------------------------------------------------------------------
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionCLR_0050:          ; 0050DD   entries $0140-$0147
   PcOut()
   ;name = "CLR"
@@ -12746,6 +12919,36 @@ CompilerEndIf
 ; ---- END FAST THUMB1 ----
 ; ---- END UNMAPPED ONLY ----
 ; ---- FAST ENTRY POINTS ----
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #DISK_BACKEND = 0
+  FastAsm(42) = ?InstructionMOV_01
+  FastRef(42) = ?InstructionMOV_01FullRef
+  FastAsm(43) = ?InstructionMOVB_11
+  FastRef(43) = ?InstructionMOVB_11FullRef
+  FastAsm(44) = ?InstructionCMP_02
+  FastRef(44) = ?InstructionCMP_02FullRef
+  FastAsm(45) = ?InstructionADD_06
+  FastRef(45) = ?InstructionADD_06FullRef
+  FastAsm(46) = ?InstructionSUB_16
+  FastRef(46) = ?InstructionSUB_16FullRef
+  FastAsm(47) = ?InstructionBIT_03
+  FastRef(47) = ?InstructionBIT_03FullRef
+  FastAsm(48) = ?InstructionBIC_04
+  FastRef(48) = ?InstructionBIC_04FullRef
+  FastAsm(49) = ?InstructionBIS_05
+  FastRef(49) = ?InstructionBIS_05FullRef
+  FastAsm(50) = ?InstructionCMPB_12
+  FastRef(50) = ?InstructionCMPB_12FullRef
+  FastAsm(51) = ?InstructionBITB_13
+  FastRef(51) = ?InstructionBITB_13FullRef
+  FastAsm(52) = ?InstructionBICB_14
+  FastRef(52) = ?InstructionBICB_14FullRef
+  FastAsm(53) = ?InstructionBISB_15
+  FastRef(53) = ?InstructionBISB_15FullRef
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 ; ---- UNMAPPED ONLY: native calls (tools/asm_call_gen.py) ----
 CompilerIf #DISK_BACKEND = 0
   FastAsm(40) = ?InstructionJSR_004

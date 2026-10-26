@@ -1,0 +1,118 @@
+; Run complete instruction sequences through native fetch tails and the
+; plain interpreter. Single-instruction comparisons cannot exercise a tail's
+; next fetch. Alternate mappings, modes, warm/cold windows and page/PC edges.
+Global FcCase.i, FcI.i, FcPage.i, FcReg.i, FcKind.i, FcStart.i, FcBudget.i
+Global FcChecks.i, FcFailures.i, FcFirst.i = -1
+
+Procedure FetchOne()
+  OpPsw = $E0
+  If FcCase & 32 : OpPsw = $C0E0 : EndIf
+  PswSet(OpPsw)
+  For FcI = 0 To 63
+    Par(FcI) = (((FcI & 7) + (FcCase >> 6)) % 6) * 128
+    Pdr(FcI) = $7F06
+  Next
+  For FcI = 0 To #RAM_WORDS - 1
+    FcPage = (FcI >> 12) % 6
+    FcKind = FcI & 7
+    If FcKind = 0
+      Mem(FcI) = $A80 | FcPage
+    ElseIf FcKind = 1
+      Mem(FcI) = $A40 | ((FcPage + 1) % 6)
+    ElseIf FcKind = 2
+      Mem(FcI) = $C00 | ((FcPage + 2) % 6)
+    ElseIf FcKind = 3
+      Mem(FcI) = $BC0 | ((FcPage + 3) % 6)
+    ElseIf FcKind = 4
+      Mem(FcI) = $1000 | (FcPage << 6) | ((FcPage + 4) % 6)
+    ElseIf FcKind = 5
+      Mem(FcI) = $6000 | (((FcPage + 1) % 6) << 6) | ((FcPage + 5) % 6)
+    ElseIf FcKind = 6
+      Mem(FcI) = $4000 | (((FcPage + 2) % 6) << 6) | ((FcPage + 3) % 6)
+    Else
+      Mem(FcI) = $A0
+    EndIf
+    Shadow(FcI) = Mem(FcI)
+  Next
+  For FcI = 0 To 6 : Reg(FcI) = RndN($10000) : Next
+  For FcI = 0 To 3 : StackBank(FcI) = $C000 : Next
+  Mmr3 = 0 : Reg(#CPU_MMR0) = 1 : Reg(#CPU_MMR1) = 0 : Reg(#CPU_MMUPCREC) = -1
+  NzWrite(Rnd()) : Reg(#CPU_FLAGV) = Rnd() : Reg(#CPU_FLAGC) = Rnd()
+  FcStart = (FcCase & 7) * 8192
+  If (FcCase & 8) = 0 : FcStart = FcStart + 8190 : EndIf
+  If FcCase & 128
+    ; Indexed MOV fast paths also fetch the last virtual word. Their
+    ; extension-word increment must wrap independently of opcode fetch.
+    FcStart = (FcCase & 7) * 8192 + 8188
+    Reg(0) = 512 : Reg(1) = 1024
+    FcPage = (((FcStart >> 13) + (FcCase >> 6)) % 6) * 8192
+    FcI = (FcPage + (FcStart & $1FFF)) >> 1
+    If ((FcCase >> 3) & 3) = 0
+      Mem(FcI) = $1C02                  ; MOV X(R0),R2
+    ElseIf ((FcCase >> 3) & 3) = 1
+      Mem(FcI) = $10B0                  ; MOV R2,X(R0)
+    ElseIf ((FcCase >> 3) & 3) = 2
+      Mem(FcI) = $1C21                  ; MOV X(R0),-(R1)
+    Else
+      Mem(FcI) = $1C09                  ; MOV X(R0),(R1)
+    EndIf
+    Mem(FcI + 1) = 0
+    Shadow(FcI) = Mem(FcI) : Shadow(FcI + 1) = 0
+  EndIf
+  FcBudget = 32 + (FcCase % 5) * 8
+  Reg(7) = FcStart
+  SaveState()
+  LoadState()
+  If ((FcCase >> 4) ! (FcCase >> 8)) & 1
+    FcReg = MmuReadWord(FcStart, Reg(#CPU_CURI) + (FcStart >> 13))
+    MmuFetchWindow(FcStart)
+  EndIf
+  GK = CpuRunM(FcBudget)
+  Snap(@SnapA(0), @DiffA(0), @NDiffA)
+  LoadState()
+  If ((FcCase >> 4) ! (FcCase >> 8)) & 1
+    FcReg = MmuReadWord(FcStart, Reg(#CPU_CURI) + (FcStart >> 13))
+    MmuFetchWindow(FcStart)
+  EndIf
+  GK = CpuRunMFetchRef(FcBudget)
+  Snap(@SnapB(0), @DiffB(0), @NDiffB)
+  Ofield = -1
+  For FcI = 0 To 24
+    If SnapA(FcI) <> SnapB(FcI) And Ofield < 0 : Ofield = FcI : EndIf
+  Next
+  If NDiffA <> NDiffB : Ofield = 30 : EndIf
+  For FcI = 0 To 15
+    If FcI < NDiffA * 2 And DiffA(FcI) <> DiffB(FcI) : Ofield = 31 : EndIf
+  Next
+  FcChecks = FcChecks + 1
+  If Ofield >= 0
+    FcFailures = FcFailures + 1
+    If FcFirst < 0
+      FcFirst = FcCase
+      Say("FETCH DIFFERENCE case=") : Num(FcCase) : Say(" field=") : Num(Ofield)
+      Say(" native=") : Num(SnapA(Ofield)) : Say(" plain=") : Num(SnapB(Ofield)) : Eol()
+      Say("memory native=") : Num(NDiffA) : Say(" plain=") : Num(NDiffB) : Eol()
+      For FcReg = 0 To 7
+        If FcReg < NDiffA Or FcReg < NDiffB
+          Say("delta ") : Num(FcReg) : Say(" native@") : Oct(DiffA(FcReg * 2) * 2)
+          Say("=") : Oct(DiffA(FcReg * 2 + 1)) : Say(" plain@") : Oct(DiffB(FcReg * 2) * 2)
+          Say("=") : Oct(DiffB(FcReg * 2 + 1)) : Eol()
+        EndIf
+      Next
+    EndIf
+  EndIf
+EndProcedure
+
+Procedure FetchMain()
+  SafetyBoot() : ClockInitKhz(#CLOCK_KHZ) : UsbSerialInit() : SafetyOk()
+  While UsbSerialReady() = 0 : UsbSerialTask() : SafetyPet() : Wend
+  BuildOpcodeTable() : BuildOpcodeTableM() : BuildOpcodeTableMFetchRef()
+  CpuReset()
+  For FcCase = 0 To 511
+    FetchOne() : UsbSerialTask() : SafetyPet()
+  Next
+  Say("ASMCHECK fetch checks=") : Num(FcChecks) : Say(" failures=") : Num(FcFailures)
+  If FcFailures = 0 : Say(" PASS") : Else : Say(" FAIL") : EndIf
+  Eol()
+  Repeat : UsbSerialTask() : SafetyPet() : ForEver
+EndProcedure

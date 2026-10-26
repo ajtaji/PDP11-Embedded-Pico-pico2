@@ -318,7 +318,7 @@ Global MmE.i ; the mapped memory macros' entry
 Global RunSave.i ; CpuRun's RunFrom while the mapped loop runs
 ; THE FETCH WINDOW AND THE INSTRUCTION'S ADDRESS, in one array so that the
 ; mapped tails (assembly, #ASM_TAILS) reach all four through one base
-; register: Fw(0) FetchLo, Fw(1) FetchHi, Fw(2) FetchBase (MmuFetchWindow),
+; register: Fw(0) FetchLo, Fw(1) FetchSpan, Fw(2) FetchBase (MmuFetchWindow),
 ; Fw(3) the address of the mapped instruction being run (MMR2). A literal
 ; index costs compiled code nothing: Fw(1) is the address of Fw plus 4.
 ; FwSave(m * 4 + 0..2): mode m's fetch window (Fw(0..2)) while another mode
@@ -342,6 +342,7 @@ Global Dim FwSave.i(16)
 ; in assembly in front of their plain handlers (tools/mmu_gen.py, pico2_ops; held to
 ; the plain ones by asm_check.pico2). Needs #ASM_EA = 1. 0: the plain handlers alone.
 #ASM_FAST = 1                          ; unmapped native branch/register forms
+#ASM_FULL = 1             ; complete unmapped word/byte operand assembly
 #ASM_MEM = 1                           ; unmapped native RAM access helpers
 #ASM_IMX = 1                           ; unmapped immediate/indexed forms
 #ASM_INDEXED = 1                       ; indexed CLR/TST/INC/DEC and byte CLR/TST
@@ -1950,7 +1951,7 @@ ProcedureRAM.i PopM()
 EndProcedure
 
 ; THE FETCH WINDOW. The mapped loop fetches every instruction through three
-; Globals: the word at PC in [FetchLo, FetchHi) is at host address PC +
+; Globals: the word at PC in [FetchLo, FetchLo + FetchSpan) is at host address PC +
 ; FetchBase. The window is the fast window of the page the PC is in, joined
 ; with its neighbours' while they touch and share the same host offset - so
 ; an identity-mapped kernel fetches from all of RAM through one window, and
@@ -1977,8 +1978,12 @@ ProcedureRAM MmuFetchWindow(va.i)
     e = e + 1
     hi = MapRHi(e)
   Wend
+  ; The final virtual word is fetched through FetchWordM, which wraps PC
+  ; to 16 bits. Native tails can then increment PC without a per-op mask.
+  If hi > $FFFE : hi = $FFFE : EndIf
+  If hi <= lo : ProcedureReturn : EndIf
   Reg(#CPU_FW + (0)) = lo
-  Reg(#CPU_FW + (1)) = hi
+  Reg(#CPU_FW + (1)) = hi - lo
   Reg(#CPU_FW + (2)) = bs
 EndProcedure
 

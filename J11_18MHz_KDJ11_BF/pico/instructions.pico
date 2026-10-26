@@ -1509,6 +1509,62 @@ CompilerEndIf
 ; ---- END UNMAPPED ONLY ----
 ; ---- MEMORY HELPERS ----
 InstructionMOV_01:            ; 01SSDD   entries $0200-$03FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  ASM Uses Op, PC, FlagNZ
+    ldr r1, =global_reg
+    mov r0, r9
+    str r0, [r1, #28]
+    mov r0, r8
+    lsrs r0, r0, #6
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_mov_01_srcreg
+    bl __eaw1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readword
+    b __full_mov_01_source
+__full_mov_01_srcreg:
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+__full_mov_01_source:
+    ldr r1, =global_src
+    str r0, [r1]
+    mov r0, r8
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_mov_01_dstreg
+    bl __eaw1
+    ldr r1, =global_ea
+    str r0, [r1]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    bl __t1_writeword
+    b __full_mov_01_flags
+__full_mov_01_dstreg:
+    lsls r0, r0, #2
+    ldr r1, =global_src
+    ldr r1, [r1]
+    ldr r2, =global_reg
+    str r1, [r2, r0]
+__full_mov_01_flags:
+    ldr r1, =global_src
+    ldr r4, [r1]
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+  EndASM
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionMOV_01FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "MOV"
   MSrcWord()
@@ -1543,7 +1599,72 @@ CompilerEndIf
   ; ---- next instruction (THE TAIL, top of file) ----
   NextSynced()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionMOVB_11:           ; 11SSDD   entries $1200-$13FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  ASM Uses Op, PC, FlagNZ
+    ldr r1, =global_reg
+    mov r0, r9
+    str r0, [r1, #28]
+    mov r0, r8
+    lsrs r0, r0, #6
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_movb_11_srcreg
+    bl __eab1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readbyte
+    b __full_movb_11_source
+__full_movb_11_srcreg:
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+    uxtb r0, r0
+__full_movb_11_source:
+    ldr r1, =global_src
+    str r0, [r1]
+    mov r0, r8
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_movb_11_dstreg
+    bl __eab1
+    ldr r1, =global_ea
+    str r0, [r1]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    bl __t1_writebyte
+    b __full_movb_11_flags
+__full_movb_11_dstreg:
+    lsls r0, r0, #2
+    ldr r1, =global_src
+    ldr r1, [r1]
+    sxtb r1, r1
+    uxth r1, r1
+    ldr r2, =global_reg
+    str r1, [r2, r0]
+__full_movb_11_flags:
+    ldr r1, =global_src
+    ldr r4, [r1]
+    lsls r4, r4, #8
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+  EndASM
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionMOVB_11FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "MOVB"
   MSrcByte()
@@ -1579,7 +1700,74 @@ CompilerEndIf
   NextSynced()
 
 ;-CMP-------------------------------------------------------------------
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionCMP_02:            ; 02SSDD   entries $0400-$05FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  ASM Uses Op, PC, FlagNZ, Res
+    ldr r1, =global_reg
+    mov r0, r9
+    str r0, [r1, #28]
+    mov r0, r8
+    lsrs r0, r0, #6
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_cmp_02_srcreg
+    bl __eaw1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readword
+    b __full_cmp_02_source
+__full_cmp_02_srcreg:
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+__full_cmp_02_source:
+    ldr r1, =global_src
+    str r0, [r1]
+    mov r0, r8
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_cmp_02_dstreg
+    bl __eaw1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readword
+    b __full_cmp_02_compare
+__full_cmp_02_dstreg:
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+
+__full_cmp_02_compare:
+    ldr r1, =global_dst
+    str r0, [r1]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    subs r2, r1, r0
+    mov r10, r2
+    uxth r4, r2
+    ldr r3, =global_flagc
+    str r2, [r3]
+    eors r0, r1
+    eors r1, r2
+    ands r0, r1
+    ldr r1, =global_flagv
+    str r0, [r1]
+  EndASM
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionCMP_02FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "CMP"
   MSrcWord()
@@ -1616,7 +1804,81 @@ CompilerEndIf
   ; ---- next instruction (THE TAIL, top of file) ----
   NextSynced()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionCMPB_12:           ; 12SSDD   entries $1400-$15FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  ASM Uses Op, PC, FlagNZ, Res
+    ldr r1, =global_reg
+    mov r0, r9
+    str r0, [r1, #28]
+    mov r0, r8
+    lsrs r0, r0, #6
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_cmpb_12_srcreg
+    bl __eab1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readbyte
+    b __full_cmpb_12_source
+__full_cmpb_12_srcreg:
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+    uxtb r0, r0
+__full_cmpb_12_source:
+    ldr r1, =global_src
+    str r0, [r1]
+    mov r0, r8
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_cmpb_12_dstreg
+    bl __eab1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readbyte
+    b __full_cmpb_12_compare
+__full_cmpb_12_dstreg:
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+    uxtb r0, r0
+
+__full_cmpb_12_compare:
+    ldr r1, =global_dst
+    str r0, [r1]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    subs r2, r1, r0
+    mov r10, r2
+    uxtb r4, r2
+    lsls r4, r4, #8
+    lsls r3, r2, #8
+    mov r12, r3
+    eors r0, r1
+    eors r1, r2
+    ands r0, r1
+    lsls r0, r0, #8
+    ldr r1, =global_flagv
+    str r0, [r1]
+    mov r0, r12
+    ldr r1, =global_flagc
+    str r0, [r1]
+  EndASM
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionCMPB_12FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "CMPB"
   MSrcByte()
@@ -1654,7 +1916,69 @@ CompilerEndIf
   NextSynced()
 
 ;-BIT-------------------------------------------------------------------
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionBIT_03:            ; 03SSDD   entries $0600-$07FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  ASM Uses Op, PC, FlagNZ
+    ldr r1, =global_reg
+    mov r0, r9
+    str r0, [r1, #28]
+    mov r0, r8
+    lsrs r0, r0, #6
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_bit_03_srcreg
+    bl __eaw1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readword
+    b __full_bit_03_source
+__full_bit_03_srcreg:
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+__full_bit_03_source:
+    ldr r1, =global_src
+    str r0, [r1]
+    mov r0, r8
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_bit_03_dstreg
+    bl __eaw1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readword
+    b __full_bit_03_compare
+__full_bit_03_dstreg:
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+
+__full_bit_03_compare:
+    ldr r1, =global_dst
+    str r0, [r1]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    ands r0, r1
+    movs r4, r0
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+  EndASM
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionBIT_03FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "BIT"
   MSrcWord()
@@ -1689,7 +2013,72 @@ CompilerEndIf
   ; ---- next instruction (THE TAIL, top of file) ----
   NextSynced()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionBITB_13:           ; 13SSDD   entries $1600-$17FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  ASM Uses Op, PC, FlagNZ
+    ldr r1, =global_reg
+    mov r0, r9
+    str r0, [r1, #28]
+    mov r0, r8
+    lsrs r0, r0, #6
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_bitb_13_srcreg
+    bl __eab1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readbyte
+    b __full_bitb_13_source
+__full_bitb_13_srcreg:
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+    uxtb r0, r0
+__full_bitb_13_source:
+    ldr r1, =global_src
+    str r0, [r1]
+    mov r0, r8
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_bitb_13_dstreg
+    bl __eab1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readbyte
+    b __full_bitb_13_compare
+__full_bitb_13_dstreg:
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+    uxtb r0, r0
+
+__full_bitb_13_compare:
+    ldr r1, =global_dst
+    str r0, [r1]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    ands r0, r1
+    movs r4, r0
+    lsls r4, r4, #8
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+  EndASM
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionBITB_13FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "BITB"
   MSrcByte()
@@ -1725,7 +2114,80 @@ CompilerEndIf
   NextSynced()
 
 ;-BIC-------------------------------------------------------------------
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionBIC_04:            ; 04SSDD   entries $0800-$09FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  ASM Uses Op, PC, FlagNZ, Res
+    ldr r1, =global_reg
+    mov r0, r9
+    str r0, [r1, #28]
+    mov r0, r8
+    lsrs r0, r0, #6
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_bic_04_srcreg
+    bl __eaw1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readword
+    b __full_bic_04_source
+__full_bic_04_srcreg:
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+__full_bic_04_source:
+    ldr r1, =global_src
+    str r0, [r1]
+    mov r0, r8
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_bic_04_dstreg
+    bl __eaw1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readword
+    ldr r1, =global_src
+    ldr r1, [r1]
+    bics r0, r1
+    uxth r3, r0
+    mov r10, r3
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+    b __full_bic_04_flags
+__full_bic_04_dstreg:
+    lsls r0, r0, #2
+    ldr r2, =global_reg
+    adds r2, r2, r0
+    ldr r0, [r2]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    bics r0, r1
+    uxth r3, r0
+    mov r10, r3
+    uxth r3, r3
+    str r3, [r2]
+__full_bic_04_flags:
+    mov r4, r10
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+  EndASM
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionBIC_04FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "BIC"
   MSrcWord()
@@ -1779,7 +2241,81 @@ CompilerEndIf
   ; ---- next instruction (THE TAIL, top of file) ----
   NextSynced()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionBICB_14:           ; 14SSDD   entries $1800-$19FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  ASM Uses Op, PC, FlagNZ, Res
+    ldr r1, =global_reg
+    mov r0, r9
+    str r0, [r1, #28]
+    mov r0, r8
+    lsrs r0, r0, #6
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_bicb_14_srcreg
+    bl __eab1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readbyte
+    b __full_bicb_14_source
+__full_bicb_14_srcreg:
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+    uxtb r0, r0
+__full_bicb_14_source:
+    ldr r1, =global_src
+    str r0, [r1]
+    mov r0, r8
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_bicb_14_dstreg
+    bl __eab1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readbyte
+    ldr r1, =global_src
+    ldr r1, [r1]
+    bics r0, r1
+    uxtb r3, r0
+    mov r10, r3
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writebyte
+    b __full_bicb_14_flags
+__full_bicb_14_dstreg:
+    lsls r0, r0, #2
+    ldr r2, =global_reg
+    adds r2, r2, r0
+    ldr r0, [r2]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    bics r0, r1
+    uxtb r3, r0
+    mov r10, r3
+    str r0, [r2]
+__full_bicb_14_flags:
+    mov r4, r10
+    lsls r4, r4, #8
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+  EndASM
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionBICB_14FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "BICB"
   MSrcByte()
@@ -1834,7 +2370,80 @@ CompilerEndIf
   NextSynced()
 
 ;-BIS-------------------------------------------------------------------
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionBIS_05:            ; 05SSDD   entries $0A00-$0BFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  ASM Uses Op, PC, FlagNZ, Res
+    ldr r1, =global_reg
+    mov r0, r9
+    str r0, [r1, #28]
+    mov r0, r8
+    lsrs r0, r0, #6
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_bis_05_srcreg
+    bl __eaw1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readword
+    b __full_bis_05_source
+__full_bis_05_srcreg:
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+__full_bis_05_source:
+    ldr r1, =global_src
+    str r0, [r1]
+    mov r0, r8
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_bis_05_dstreg
+    bl __eaw1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readword
+    ldr r1, =global_src
+    ldr r1, [r1]
+    orrs r0, r1
+    movs r3, r0
+    mov r10, r3
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+    b __full_bis_05_flags
+__full_bis_05_dstreg:
+    lsls r0, r0, #2
+    ldr r2, =global_reg
+    adds r2, r2, r0
+    ldr r0, [r2]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    orrs r0, r1
+    movs r3, r0
+    mov r10, r3
+    uxth r3, r3
+    str r3, [r2]
+__full_bis_05_flags:
+    mov r4, r10
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+  EndASM
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionBIS_05FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "BIS"
   MSrcWord()
@@ -1888,7 +2497,81 @@ CompilerEndIf
   ; ---- next instruction (THE TAIL, top of file) ----
   NextSynced()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionBISB_15:           ; 15SSDD   entries $1A00-$1BFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  ASM Uses Op, PC, FlagNZ, Res
+    ldr r1, =global_reg
+    mov r0, r9
+    str r0, [r1, #28]
+    mov r0, r8
+    lsrs r0, r0, #6
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_bisb_15_srcreg
+    bl __eab1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readbyte
+    b __full_bisb_15_source
+__full_bisb_15_srcreg:
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+    uxtb r0, r0
+__full_bisb_15_source:
+    ldr r1, =global_src
+    str r0, [r1]
+    mov r0, r8
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_bisb_15_dstreg
+    bl __eab1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readbyte
+    ldr r1, =global_src
+    ldr r1, [r1]
+    orrs r0, r1
+    uxtb r3, r0
+    mov r10, r3
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writebyte
+    b __full_bisb_15_flags
+__full_bisb_15_dstreg:
+    lsls r0, r0, #2
+    ldr r2, =global_reg
+    adds r2, r2, r0
+    ldr r0, [r2]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    orrs r0, r1
+    uxtb r3, r0
+    mov r10, r3
+    str r0, [r2]
+__full_bisb_15_flags:
+    mov r4, r10
+    lsls r4, r4, #8
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+  EndASM
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionBISB_15FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "BISB"
   MSrcByte()
@@ -1943,7 +2626,91 @@ CompilerEndIf
   NextSynced()
 
 ;-ADD-------------------------------------------------------------------
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionADD_06:            ; 06SSDD   entries $0C00-$0DFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  ASM Uses Op, PC, FlagNZ, Res
+    ldr r1, =global_reg
+    mov r0, r9
+    str r0, [r1, #28]
+    mov r0, r8
+    lsrs r0, r0, #6
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_add_06_srcreg
+    bl __eaw1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readword
+    b __full_add_06_source
+__full_add_06_srcreg:
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+__full_add_06_source:
+    ldr r1, =global_src
+    str r0, [r1]
+    mov r0, r8
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_add_06_dstreg
+    bl __eaw1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readword
+    ldr r3, =global_dst
+    str r0, [r3]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    adds r3, r0, r1
+    mov r10, r3
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+    b __full_add_06_flags
+__full_add_06_dstreg:
+    lsls r0, r0, #2
+    ldr r2, =global_reg
+    adds r2, r2, r0
+    ldr r0, [r2]
+    ldr r3, =global_dst
+    str r0, [r3]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    adds r3, r0, r1
+    mov r10, r3
+    uxth r3, r3
+    str r3, [r2]
+__full_add_06_flags:
+    mov r2, r10
+    ldr r3, =global_flagc
+    str r2, [r3]
+    ldr r0, =global_src
+    ldr r0, [r0]
+    ldr r1, =global_dst
+    ldr r1, [r1]
+    eors r0, r2
+    eors r1, r2
+    ands r0, r1
+    ldr r1, =global_flagv
+    str r0, [r1]
+    uxth r4, r2
+  EndASM
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionADD_06FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "ADD"
   MSrcWord()
@@ -2001,7 +2768,91 @@ CompilerEndIf
   NextSynced()
 
 ;-SUB-------------------------------------------------------------------
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionSUB_16:            ; 16SSDD   entries $1C00-$1DFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #ASM_FULL = 1 And #ASM_EA = 1 And #ASM_MEM = 1
+  ASM Uses Op, PC, FlagNZ, Res
+    ldr r1, =global_reg
+    mov r0, r9
+    str r0, [r1, #28]
+    mov r0, r8
+    lsrs r0, r0, #6
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_sub_16_srcreg
+    bl __eaw1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readword
+    b __full_sub_16_source
+__full_sub_16_srcreg:
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    ldr r0, [r1, r0]
+__full_sub_16_source:
+    ldr r1, =global_src
+    str r0, [r1]
+    mov r0, r8
+    movs r1, #63
+    ands r0, r1
+    cmp r0, #8
+    blo __full_sub_16_dstreg
+    bl __eaw1
+    ldr r1, =global_ea
+    str r0, [r1]
+    bl __t1_readword
+    ldr r3, =global_dst
+    str r0, [r3]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    subs r3, r0, r1
+    mov r10, r3
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+    b __full_sub_16_flags
+__full_sub_16_dstreg:
+    lsls r0, r0, #2
+    ldr r2, =global_reg
+    adds r2, r2, r0
+    ldr r0, [r2]
+    ldr r3, =global_dst
+    str r0, [r3]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    subs r3, r0, r1
+    mov r10, r3
+    uxth r3, r3
+    str r3, [r2]
+__full_sub_16_flags:
+    mov r2, r10
+    ldr r3, =global_flagc
+    str r2, [r3]
+    ldr r0, =global_src
+    ldr r0, [r0]
+    ldr r1, =global_dst
+    ldr r1, [r1]
+    eors r0, r1
+    eors r1, r2
+    ands r0, r1
+    ldr r1, =global_flagv
+    str r0, [r1]
+    uxth r4, r2
+  EndASM
+  NextSynced()
+CompilerEndIf
+CompilerIf #ASM_FULL = 0 Or #ASM_EA = 0 Or #ASM_MEM = 0 Or #DISK_BACKEND = 0
+InstructionSUB_16FullRef:
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "SUB"
   MSrcWord()
@@ -2064,6 +2915,11 @@ CompilerEndIf
 ; ======================================================================
 
 ;-CLR-------------------------------------------------------------------
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 InstructionCLR_0050:          ; 0050DD   entries $0140-$0147
   PcOut()
   ;name = "CLR"
@@ -8281,6 +9137,36 @@ CompilerEndIf
 ; ---- END FAST THUMB1 ----
 ; ---- END UNMAPPED ONLY ----
 ; ---- FAST ENTRY POINTS ----
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FULL NATIVE OPERANDS ----
+CompilerIf #DISK_BACKEND = 0
+  FastAsm(42) = ?InstructionMOV_01
+  FastRef(42) = ?InstructionMOV_01FullRef
+  FastAsm(43) = ?InstructionMOVB_11
+  FastRef(43) = ?InstructionMOVB_11FullRef
+  FastAsm(44) = ?InstructionCMP_02
+  FastRef(44) = ?InstructionCMP_02FullRef
+  FastAsm(45) = ?InstructionADD_06
+  FastRef(45) = ?InstructionADD_06FullRef
+  FastAsm(46) = ?InstructionSUB_16
+  FastRef(46) = ?InstructionSUB_16FullRef
+  FastAsm(47) = ?InstructionBIT_03
+  FastRef(47) = ?InstructionBIT_03FullRef
+  FastAsm(48) = ?InstructionBIC_04
+  FastRef(48) = ?InstructionBIC_04FullRef
+  FastAsm(49) = ?InstructionBIS_05
+  FastRef(49) = ?InstructionBIS_05FullRef
+  FastAsm(50) = ?InstructionCMPB_12
+  FastRef(50) = ?InstructionCMPB_12FullRef
+  FastAsm(51) = ?InstructionBITB_13
+  FastRef(51) = ?InstructionBITB_13FullRef
+  FastAsm(52) = ?InstructionBICB_14
+  FastRef(52) = ?InstructionBICB_14FullRef
+  FastAsm(53) = ?InstructionBISB_15
+  FastRef(53) = ?InstructionBISB_15FullRef
+CompilerEndIf
+; ---- END FULL NATIVE OPERANDS ----
+; ---- END UNMAPPED ONLY ----
 ; ---- UNMAPPED ONLY: native calls (tools/asm_call_gen.py) ----
 CompilerIf #DISK_BACKEND = 0
   FastAsm(40) = ?InstructionJSR_004

@@ -926,6 +926,7 @@ def asm_mov(sm, dm, ref):
     e("    movs r4, r1")                      # FlagNZ = Src
     if sm in (6,) or dm == 6:
         e("    adds.w r9, r9, #%d" % (4 if (sm == 6 and dm == 6) else 2))
+        e("    uxth.w r9, r9")
     flagv = ["    ldr r3, =global_flagv", "    movs r0, #0", "    str r0, [r3]"]
     if sm in (2, 4):
         # the source register moves first, then the destination register is
@@ -988,8 +989,17 @@ ASM_EAW = """    mov r12, r0
     ldr r3, =global_eabase
     str r2, [r3]
     ubfx r0, r0, #3, #3
-    cmp r0, #6
-    bne __eaw_m4
+    tbb [pc, r0]
+__eaw_modes:
+    .byte (__eaw_slow - __eaw_modes) / 2
+    .byte (__eaw_m1 - __eaw_modes) / 2
+    .byte (__eaw_m2 - __eaw_modes) / 2
+    .byte (__eaw_m3 - __eaw_modes) / 2
+    .byte (__eaw_m4 - __eaw_modes) / 2
+    .byte (__eaw_slow - __eaw_modes) / 2
+    .byte (__eaw_m6 - __eaw_modes) / 2
+    .byte (__eaw_m7 - __eaw_modes) / 2
+__eaw_m6:
     ldr r2, =global_reg
     ldr r3, [r2, #28]
     ldr r2, =global_curi
@@ -1019,8 +1029,6 @@ ASM_EAW = """    mov r12, r0
     uxth r0, r0
     b __eaw_out
 __eaw_m4:
-    cmp r0, #4
-    bne __eaw_m2
     cmp r1, #7
     beq __eaw_slow
     ldr r2, =global_reg
@@ -1039,8 +1047,6 @@ __eaw_m4a:
     adds r1, #240
     b __eaw_rec
 __eaw_m2:
-    cmp r0, #2
-    bne __eaw_m1
     ldr r2, =global_reg
     lsls r3, r1, #2
     adds r2, r2, r3
@@ -1060,8 +1066,6 @@ __eaw_m2a:
     adds r1, #16
     b __eaw_rec
 __eaw_m1:
-    cmp r0, #1
-    bne __eaw_m3
     cmp r1, #7
     beq __eaw_slow
     ldr r2, =global_reg
@@ -1069,8 +1073,6 @@ __eaw_m1:
     ldr r0, [r2, r0]
     b __eaw_out
 __eaw_m3:
-    cmp r0, #3
-    bne __eaw_m7
     ldr r2, =global_reg
     lsls r3, r1, #2
     ldr r3, [r2, r3]
@@ -1107,8 +1109,6 @@ __eaw_m3e:
     adds r1, #16
     b __eaw_rec
 __eaw_m7:
-    cmp r0, #7
-    bne __eaw_slow
     ldr r2, =global_reg
     ldr r3, [r2, #28]
     lsls r0, r3, #31
@@ -2350,10 +2350,13 @@ def main():
             from asm_indexed_gen import generate as indexed_single
             text = indexed_single(text)
             text = own_tails(text)        # last: the assembly handlers' tails too
+            from fetch_span import rewrite as span_guards, double_load as span_loads
+            text = span_guards(text)
             text = map_rows(text)
             text = base_rel(text)         # the hot globals from GBase (r5)
             from cpu_state_layout import forward as compact_cpu
             text = compact_cpu(text, native_base=True)
+            text = span_loads(text)
             text = reference_tables(text)
         else:                                # the Pico: its SRAM holds CpuRun (Mini-Unix); CpuRunM stays in flash
             text = text.replace("\nProcedureRAM.i CpuRunM(n.i)", "\nProcedure.i CpuRunM(n.i)", 1)
