@@ -259,8 +259,8 @@ Global PC.i                 ; the emulated PC between instructions; Reg(7) is it
 ; Measured on a Pico W, 2026-10-19 (Mini-Unix `time od /rkmx`, host-timed): 5.88 s
 ; before, 4.61 s with both.
 CompilerIf #DISK_BACKEND = 0
-Global Dim FastAsm.Label(40)
-Global Dim FastRef.Label(40)
+Global Dim FastAsm.Label(42)
+Global Dim FastRef.Label(42)
 CompilerEndIf
 Global Dim MovAsm.Label(7)                  ; each MOV handler by mode: the assembly entry ...
 Global Dim MovRef.Label(7)                  ; ... and the plain one (filled with the table)

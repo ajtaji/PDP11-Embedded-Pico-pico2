@@ -1,6 +1,6 @@
 ; desktop/gen/core.pbi - WRITTEN BY desktop/tools/desktop_gen.py from the Pico 2's
 ; sources; do not edit (edit the board's files and run the tool again).
-; cpu.pico2 (7 ASM blocks dropped); fp11.pico2 (6 ASM blocks dropped); instructions_mmu.pico2 (357 ASM blocks dropped); instructions.pico2 (190 ASM blocks dropped); kw11.pico2 (0 ASM blocks dropped); rk11.pico2 (0 ASM blocks dropped); rp11.pico2 (0 ASM blocks dropped)
+; cpu.pico2 (7 ASM blocks dropped); fp11.pico2 (6 ASM blocks dropped); instructions_mmu.pico2 (363 ASM blocks dropped); instructions.pico2 (194 ASM blocks dropped); kw11.pico2 (0 ASM blocks dropped); rk11.pico2 (0 ASM blocks dropped); rp11.pico2 (0 ASM blocks dropped)
 
 Declare SmpBarrier()
 Declare CpuEventIn(k.l)
@@ -5713,6 +5713,10 @@ CompilerEndIf
 ;-JSR-------------------------------------------------------------------
 InstructionJSR_004M:           ; 004RDD   entries $0100-$013F
 CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
   PcOutM()
   If (Op & $38) = 0
     TrapVector = #VEC_BUS                ; JSR to a register is illegal
@@ -5748,6 +5752,10 @@ CompilerEndIf
 ;-RTS-------------------------------------------------------------------
 InstructionRTS_00020M:         ; 00020R   entry $0010
 CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextSyncedM()
+CompilerEndIf
   PcOutM()
 CompilerIf #ASM_TAILS = 1
 CompilerElse
@@ -7979,8 +7987,8 @@ EndProcedure
 CompilerIf #DISK_BACKEND = 0
 Global Dim MovAsm.i(7)
 Global Dim MovRef.i(7)
-Global Dim FastAsm.i(40)
-Global Dim FastRef.i(40)
+Global Dim FastAsm.i(42)
+Global Dim FastRef.i(42)
 CompilerEndIf
 Global Dim OpTable.i(8192)
 Global OpTableReady.l                    ; 0 until the first CpuRun fills OpTable
@@ -10327,6 +10335,12 @@ InstructionJMP_0001:          ; 0001DD   entries $0008-$000F
 
 ;-JSR-------------------------------------------------------------------
 InstructionJSR_004:           ; 004RDD   entries $0100-$013F
+; ---- UNMAPPED ONLY: native calls (tools/asm_call_gen.py) ----
+CompilerIf #ASM_FAST = 1
+  NextSynced()
+CompilerEndIf
+InstructionJSR_004Ref:
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "JSR"
   If (Op & $38) = 0
@@ -10344,6 +10358,12 @@ InstructionJSR_004:           ; 004RDD   entries $0100-$013F
 
 ;-RTS-------------------------------------------------------------------
 InstructionRTS_00020:         ; 00020R   entry $0010
+; ---- UNMAPPED ONLY: native calls (tools/asm_call_gen.py) ----
+CompilerIf #ASM_FAST = 1
+  NextSynced()
+CompilerEndIf
+InstructionRTS_00020Ref:
+; ---- END UNMAPPED ONLY ----
   PcOut()
   ;name = "RTS"
   Reg(7) = Reg(Op & 7)
@@ -12726,6 +12746,14 @@ CompilerEndIf
 ; ---- END FAST THUMB1 ----
 ; ---- END UNMAPPED ONLY ----
 ; ---- FAST ENTRY POINTS ----
+; ---- UNMAPPED ONLY: native calls (tools/asm_call_gen.py) ----
+CompilerIf #DISK_BACKEND = 0
+  FastAsm(40) = ?InstructionJSR_004
+  FastRef(40) = ?InstructionJSR_004Ref
+  FastAsm(41) = ?InstructionRTS_00020
+  FastRef(41) = ?InstructionRTS_00020Ref
+CompilerEndIf
+; ---- END UNMAPPED ONLY ----
   OpTableReady = 1
   Goto RunStart
 EndProcedure

@@ -2226,9 +2226,11 @@ def pico2_ops(text):
             b = plain.index("  ; ClockCycles")
             fast = plain[:a] + DIV_ASM + plain[b:]
         elif name.startswith("JSR"):
-            fast = JSR_ASM
+            from asm_call_gen import mapped_prefix
+            fast = mapped_prefix(True) + JSR_ASM
         elif name.startswith("RTS"):
-            fast = RTS_ASM
+            from asm_call_gen import mapped_prefix
+            fast = mapped_prefix(False) + RTS_ASM
         elif name.startswith("CMP"):
             fast = CMP_ASM
         elif name.startswith("TST"):

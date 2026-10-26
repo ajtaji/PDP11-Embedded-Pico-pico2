@@ -1339,6 +1339,7 @@ Procedure.i RndEdge()
 EndProcedure
 
 Global ForceForm.i = -1, FormI.i, FormBefore.i, FormChecked.i
+Global ForceCall.i = -1
 
 Procedure OpsOne()
   OpPsw = $00E0
@@ -1350,6 +1351,7 @@ Procedure OpsOne()
     ProcedureReturn
   EndIf
   OpKind = RndN(51)
+  If ForceCall >= 0 : OpKind = ForceCall : EndIf
   If ForceForm = 8 : OpKind = 19
   ElseIf ForceForm = 9 : OpKind = 4
   ElseIf ForceForm = 10 : OpKind = 5
@@ -1616,6 +1618,16 @@ Procedure Main()
   OpsFastK(13) = 3
   FpInit()
   Say("ASMCHECK start: the mapped loop's MOV handlers and __eaw, assembly against plain") : Eol()
+  For Mr = 1 To 1000
+    ForceCall = Mr & 1
+    OpsOne()
+    UsbSerialTask()
+    SafetyPet()
+  Next
+  ForceCall = -1
+  Say("ASMCHECK calls checks=") : Num(OpChecks) : Say(" jsr=") : Num(OpCount(0)) : Say(" rts=") : Num(OpCount(1)) : Say(" failures=") : Num(OpFailures)
+  If OpFailures = 0 : Say(" PASS") : Else : Say(" FAIL") : EndIf
+  Eol()
   Repeat
     For Mr = 1 To #ROUND * 10
       MByteOne()

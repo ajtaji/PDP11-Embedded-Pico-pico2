@@ -370,17 +370,26 @@ Procedure OneCheck()
 EndProcedure
 
 Global FKind.i, FChecks.i, FFailures.i, FFirst.i = -1, FFirstOp.i, FFirstField.i, FFast.i, FSlow.i
-Global Dim FCode.i(26)
+Global Dim FCode.i(28)
+Global FCallsOnly.i
 Global FAsmTarget.Label, FRefTarget.Label
 Procedure FastOne()
   PswSet($00E0)
-  FKind = RndN(26)
+  If FCallsOnly
+    FKind = 26 + RndN(2)
+  Else
+    FKind = RndN(26)
+  EndIf
   For Oi = 0 To 6 : Reg(Oi) = RndReg() : Next
   TPc = RndN(#LO_WORDS - 4) * 2
   If FKind < 15
     TOp = FCode(FKind) | RndN(256)
   ElseIf FKind < 22
     TOp = FCode(FKind) | (RndN(8) << 6) | RndN(8)
+  ElseIf FKind = 26
+    TOp = $800 | RndN(512)
+  ElseIf FKind = 27
+    TOp = $80 | RndN(8)
   Else
     TOp = FCode(FKind) | RndN(8)
   EndIf
@@ -395,8 +404,13 @@ Procedure FastOne()
   For Oi = 1 To 3                       ; a trap into another mode pushes on that mode's stack:
     StackBank(Oi) = RndRam() + 8        ; keep it in the shadowed RAM too
   Next
-  FAsmTarget = FastAsm(FKind)
-  FRefTarget = FastRef(FKind)
+  If FKind >= 26
+    FAsmTarget = FastAsm(40 + FKind - 26)
+    FRefTarget = FastRef(40 + FKind - 26)
+  Else
+    FAsmTarget = FastAsm(FKind)
+    FRefTarget = FastRef(FKind)
+  EndIf
   ; RR entries are installed only for source R0-R6. Exercise a PC source
   ; through its real generic dispatch entry, preserving that table contract.
   If FKind >= 15 And FKind < 22 And ((TOp >> 6) & 7) = 7
@@ -884,6 +898,16 @@ Procedure Main()
   MidSum = MidSumNow()
   Say("ASMCHECK start: the Pico 2's unmapped MOV handlers and __eau, assembly against plain") : Eol()
   Repeat
+    FCallsOnly = 1
+    For Mr = 1 To #ROUND * 2
+      FastOne()
+      UsbSerialTask()
+      SafetyPet()
+    Next
+    Say("ASMCHECK calls checks=") : Num(FChecks) : Say(" failures=") : Num(FFailures)
+    If FFailures = 0 : Say(" PASS") : Else : Say(" FAIL") : EndIf
+    Eol()
+    FCallsOnly = 0
     For Mr = 1 To #ROUND * 10
       MByteOne()
       UsbSerialTask()
