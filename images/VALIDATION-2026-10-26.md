@@ -1,8 +1,11 @@
 # Firmware validation, 2026-10-26
 
-The RP2040 floating-point refresh uses runtime source `526ca8a`. RP2350 programs and disks are byte-identical to the preceding publication; their earlier hardware checks below remain applicable.
+The current text refresh uses runtime source `37c7690`. All six firmware programs were rebuilt with corrected text gamma and a 16-pixel readable default. Pico W/Pico 2 W normal and demo builds were checked on physical panels. PSRAM variants were compiled and repackaged with unchanged disk payloads; their physical checks below predate this text-only refresh.
 [manifest-2026-10-26.json](manifest-2026-10-26.json) records every program/file
 hash, board profile and compiler hash. All ready builds start silent.
+
+The following CPU/Unix checks precede the text-only refresh. New panel checks
+are recorded at the end of this document.
 
 | Image | Physical hardware | Checks |
 | --- | --- | --- |
@@ -126,3 +129,37 @@ snapshot, preserving settings, Unix pack and radio data. The panel and guest
 frame/vertical-blank counters advanced by 1,322 over roughly 22 seconds,
 with zero panel errors, dropped ticks or audio transport errors in silent
 mode. Speaker playback was not repeated for this FP-only update.
+
+## Gamma and 16-pixel text refresh
+
+- Both standard programs boot at 16 pixels on the physical Pico W and Pico 2 W
+  LAFVIN panels. Four cached coverage levels now use nominal brightness
+  0/156/213/255 instead of 0/85/170/255, encoded by a flash lookup table.
+  The glyph cache remains 4 KB; 16-pixel Terminal Sans uses 3,581 bytes.
+- Both boards generated identical 14- and 16-pixel glyphs, metrics and actual
+  RGB565 palette exports. Fourteen uses a 19-pixel line (16 screen rows),
+  sixteen a 22-pixel line (14 rows). Sixteen was selected from the captured
+  rendering for clearer lowercase letters and punctuation. This is an export
+  of board-rendered data, not optical calibration or a photograph of the LCD.
+- Final standard programs pass Unix text output, file creation/readback and
+  clean statistics: zero panel errors, dropped clock ticks or lost input.
+  Live-font tests cover both faces, 14/15/16 pixels, cache-limit rejection and
+  return to the original glyph data. One initial extended Pico 2 stress run
+  recorded one dropped tick; the complete clean-boot repeat passed with zero.
+- Both rebuilt demos boot with the same 16-pixel font/palette; guest/panel
+  frame and vertical-blank counters advance with zero panel errors and
+  dropped ticks. Silent audio was used; speaker playback was not repeated.
+- A fresh whole-flash backup preceded testing. Final 2 MB Pico W and 4 MB
+  Pico 2 W readbacks match every page of their final program images. Every
+  byte from 0x3f000/0x4f000 respectively to flash end matches its original
+  snapshot, preserving settings, Unix packs and radio data. Pico W is left
+  on the rebuilt silent demo; Pico 2 W is left on updated normal Unix.
+- The Mini-Unix pack is unchanged from the accepted FP release. All RP2350
+  combined-image disk bytes and nonces are unchanged. Existing settings UF2s
+  keep their stable font IDs; readable now selects 16, compact remains 11.
+- RP2040 normal program: 197,620 bytes, unchanged 49,136-byte SRAM code and
+  248 free SRAM bytes beyond reserved stacks/windows. RP2040 demo: 249,660
+  bytes, below its 0x3f000 settings sector. RP2350 normal: 199,992 bytes;
+  RP2350 demo: 218,692 bytes. No guest memory or overlay budgets changed.
+
+[Comparison, exports and reproduction](../docs/FONT-READABILITY.md).
