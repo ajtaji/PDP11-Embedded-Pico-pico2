@@ -91,7 +91,7 @@ py -3 tools/output_build.py --target rp2350 --compiler PATH/TO/PureMetalForge.ex
 Build without a hardware lease; use the normal lease/uploader for flashing.
 The 2026-10-26 [ready images](images/README.md) include these features. Firmware-only downloads update an existing installation without downloading the disk packs again.
 The existing `tools/term_build.py` filename wrapper remains supported for
-RP2350. `tools/demo_build.py` builds the optional graphics/sound demo.
+RP2350. `tools/demo_build.py --target rp2040|rp2350` builds the optional graphics/sound demo.
 
 ## Saved settings
 
@@ -147,6 +147,58 @@ silent output, 242 with the example PCM module, or 208 with Bluetooth;
 its separate 112-block swap area remains. The live font workspace accounts
 for six blocks compared with the earlier 254-block serial firmware. PSRAM
 builds retain their existing guest memory and 36-block fallback overlay.
+
+## Graphics and sound demo
+
+The same PDP-11 program runs on both chips with a 320 x 200, 16-colour
+framebuffer, palette/scroll controls, frame interrupts and four sound voices.
+The resident panel drivers center the picture on the selected screen.
+
+```text
+py -3 tools/demo_build.py --target rp2040 --audio bluetooth --compiler PureMetalForge.exe --out build_demo2040
+py -3 tools/demo_build.py --target rp2350 --compiler PureMetalForge.exe --out build_demo2350
+```
+
+Upload `demo_firmware.uf2` and its `output_settings.uf2`. A Bluetooth build
+without `--speaker` starts silently; no private address is embedded in firmware.
+The RP2040 [ready build](images/picow-demo/firmware.uf2) links Bluetooth, with
+silent settings available in [rp2040-lafvin.uf2](images/output-settings/rp2040-lafvin.uf2).
+The RP2350 ready build uses the silent backend. Both start the demo automatically.
+
+RP2040 uses 56 KB of guest RAM and two four-row DMA buffers. Its standalone
+demo profile disables disks, reclaiming the Unix write overlay for graphics
+and audio. RP2350 uses 64 KB and two eight-row buffers. Both use the same
+device implementation in `outputs/demo.pmi` and run the CPU loop from SRAM.
+Normal Unix builds omit the graphics register device.
+
+For Bluetooth sound, install the SDK radio firmware and enable the backend
+with `output_config.py --target rp2040 --panel lafvin --audio bluetooth
+--speaker AA:BB:CC:DD:EE:FF --out private-settings.uf2`. The address uses the
+order shown by a phone. Keep this settings file private.
+The SDK radio file is
+`Firmware/CYW43439/wb43439A0-7.95.49.00.combined.rp2040.uf2`
+(`rp2350.uf2` for the other chip), uploaded through the normal prebuilt-file
+uploader. RP2350 also needs a Bluetooth-linked demo build.
+
+**On RP2040, radio data overlaps the Mini-Unix pack.** Back up flash before
+installing it. To return to Unix, restore the backup or reflash both the
+normal firmware and Mini-Unix pack; restoring firmware alone leaves the
+overwritten disk bytes damaged. The graphics firmware and output settings
+themselves stay below the pack and do not write disk sectors.
+
+On the actual 200 MHz Pico W/LAFVIN, the PCM-meter build sustained about
+60 panel frames/s, with nonzero audio samples and zero lost/late samples.
+The final Bluetooth-linked build also sustained 60 frames/s with audio
+disabled. A speaker connection attempt received HCI page timeout (status 4);
+audible playback has not been established. The original disk bytes were
+restored after that attempt. RP2040 Unix and RP2350 demo binaries remain
+byte-identical to the preceding published versions.
+
+`tools/demo_check.py --port COM7 --out work/demo.txt --audio silent|plugin|bluetooth`
+checks advancing guest/panel counters and the selected audio backend's
+counters, after acquiring the board lease. Bluetooth checks require a live
+stream, advancing packets and no continuing underruns, overruns or synthesis
+delays. The plugin check establishes sample generation, not speaker playback.
 
 ## Validation scope
 

@@ -34,7 +34,8 @@ disk download. Full combined images are for installing the firmware and Unix
 packs together. [Downloads, hashes and validation](images/README.md) list both.
 All packaged builds use silent audio; the shared PCM interface supports an
 optional Bluetooth backend or a custom output module ([details](OUTPUTS.md)).
-The [graphics demo](images/pico2w-demo/firmware.uf2) is RP2350-only.
+The graphics demo runs on [RP2040](images/picow-demo/firmware.uf2) and
+[RP2350](images/pico2w-demo/firmware.uf2). See [demo setup](OUTPUTS.md#graphics-and-sound-demo).
 
 ## Status per board
 

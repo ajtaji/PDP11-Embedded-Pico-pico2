@@ -14,7 +14,8 @@
     "rp2350",
     "picoplus2",
     "feather",
-    "rp2350-demo"
+    "rp2350-demo",
+    "rp2040-demo"
   ],
   "unchanged_disk_payload_sha256": {
     "images/pico2w-v6/combined.uf2": "4d8880b302702f35fb4dc920fc446ba7260b401533e799a32e214aba21bbdda3",
@@ -153,6 +154,23 @@
       "path": "images/picow-mini-unix/minix.uf2",
       "bytes": 3167232,
       "sha256": "0ec2c16c5201f3ed789c785174c7c1480f414197fcda6ce772600585bf0be54c"
+    },
+    {
+      "path": "images/picow-demo/firmware.uf2",
+      "bytes": 465408,
+      "sha256": "6ec1d7eb90836cff120c17692e5b6d12f635e846b2556f172d2ecec71880035a"
+    },
+    {
+      "path": "images/picow-demo/firmware.uf2.regions",
+      "bytes": 145,
+      "sha256": "b9d9a1591d842279ef639ed28a3d1c68ae862b3a9a9894b6786270ec6ead14f4"
     }
-  ]
+  ],
+  "demo_profiles": {
+    "rp2040-demo": {
+      "runtime_source": "fd781918aa4a1fbc6ed21d69b47aface7e97c686",
+      "linked_audio": "bluetooth",
+      "default_audio": "silent"
+    }
+  }
 }

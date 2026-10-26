@@ -284,14 +284,26 @@ python tools/term_font.py DejaVuSansMono.ttf [--preview glyphs.png]
 Writes `pico2/term_font.pico2`: ASCII 32-126 in 6 x 13 cells at four grey levels (13 rows of 12 bits a
 glyph) from a monospace TTF; the firmware's are DejaVu Sans Mono's (any Linux has the font).
 
-## `demo_build.py` - the demo's firmware for a Pico 2 W in the LAFVIN kit
+## `demo_build.py` - graphics and sound demo for either Pico family
 
 ```
-python tools/demo_build.py [--compiler EXE] [--lda demo/demo.lda] [--out DIR] [--port COMnn]
+python tools/demo_build.py [--target rp2040|rp2350] [--compiler EXE] [--lda demo/demo.lda] [--out DIR] [--port COMnn]
                            [--speaker AA:BB:CC:DD:EE:FF] [--keep]
 ```
 
-The emulator's firmware with the demo's display and tone generator in it (`pico2/demo_dev.pico2`: the registers at 164000, the frame interrupt at 320, the picture on the kit's ST7796 panel by DMA from core 1) and the demo built in as its tape (`tape2pico.py`), so the board starts the demo at power-up. Like `psram_build.py` it writes copies beside `diag.pico2` (`#DEMO_DEV = 1`, 64 KB of PDP-11 memory, the panel's libraries, CpuRun from SRAM) and removes them; the source's `#DEMO_DEV = 0` keeps the devices out of every Unix build, whose firmware is byte for byte what it was. `--speaker` adds the radio and Bluetooth libraries (A2DP, as the Ms. Pac-Man emulator uses them) and the speaker's address, in the copy only; the board needs the radio's firmware installed once (`PureMetalForge.exe --radio-firmware`). `--keep` leaves the copies, so a failed build can be compiled by hand to read the compiler's message.
+Builds the emulator with the shared graphics and tone device (`outputs/demo.pmi`),
+registers at octal 164000, frame interrupt at 320, and the demo as its boot tape.
+Core 1 sends strips through the selected shared panel driver. RP2040 has 56 KB
+guest RAM, four-row buffers and disks disabled; RP2350 has 64 KB and eight-row
+buffers. CpuRun runs from SRAM. Temporary source copies are removed unless
+`--keep` is given. Normal Unix builds omit the device.
+
+`--audio silent|plugin|bluetooth` selects the backend; `--speaker` also selects
+Bluetooth. Personal addresses reside only in the separately generated settings.
+Bluetooth without `--speaker` produces silent public settings. `--port` uploads
+both firmware and settings. Radio firmware is installed separately. On RP2040
+it overlaps Mini-Unix: back up first and restore the disk pack when returning
+to Unix. See [setup and validation](../OUTPUTS.md#graphics-and-sound-demo).
 
 ## `uf2_firmware.py` - new firmware into an image, the packs left alone
 
@@ -471,10 +483,15 @@ These exist outside the repository and would be worth adding:
 - `font_capture.py --port COM7 --out work/font --exercise` captures the actual
   glyph cache and checks live font changes on a board. Requires pyserial and
   Pillow; take the board lease before using it.
-- `demo_build.py --compiler EXE --out build_demo` builds the RP2350 graphics
+- `demo_build.py --target rp2040|rp2350 --compiler EXE --out build_demo` builds the graphics
   demo and its settings file. `--panel` and `--font` choose its settings;
   `--speaker` selects the optional Bluetooth backend. Keep personal speaker
   settings private. `--port` also uploads the settings after building.
+- `demo_check.py --port COM7 --out work/demo.txt --audio bluetooth` checks
+  live graphics/audio counters on a leased board.
+- `demo_release.py --target rp2040 --build-dir DIR --manifest images/manifest-2026-10-26.json --audio bluetooth`
+  adds a tested demo and its committed source revision to the existing release
+  manifest and checksums, leaving Unix packages untouched.
 - `firmware_release.py --build-dir DIR --date YYYY-MM-DD --compiler-sha256 HASH` publishes the
   prepared firmware set, checksums and metadata. It uses `uf2_firmware.py` to
   replace code while verifying that every existing Unix pack byte and nonce

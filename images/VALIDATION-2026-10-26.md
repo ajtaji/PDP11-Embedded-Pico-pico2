@@ -12,6 +12,21 @@ The program payloads and image hashes are listed in
 | Pico Plus 2 W V7 combined image | Pico Plus 2 W | Boot, RP03 `/usr` mount, C compilation in `/usr` and result `42`; MMU 22-bit, 2040 KB; fonts ready; zero dropped ticks/lost input |
 | Feather V7 combined image | Feather RP2350 HSTX | Boot, RK1 `/usr` mount, C compilation and result `42`; MMU 22-bit, 2040 KB; fonts ready; zero dropped ticks/lost input |
 | RP2350 demo firmware | Pico 2 W with LAFVIN ST7796 | Guest enables the display; guest and panel frame counters advance; no HALT; silent backend |
+| RP2040 demo firmware, source `fd78191` | Pico W, 200 MHz, LAFVIN ST7796 | Final Bluetooth-linked UF2 with silent settings: 367 panel frames over 367 vertical blanks, 60 FPS; no panel errors or HALT |
+
+The RP2040 PCM-meter build also passed: panel/guest counters advance,
+nonzero samples increase from 751,350 to 1,041,899, peak 9,072,
+zero lost/late samples and zero dropped clock ticks. This checks the shared
+four-voice producer, not audible playback. A short Bluetooth attempt reported
+HCI status 4 (page timeout), with no stream established. The complete 2 MB
+flash backup was restored afterward, followed by the final demo firmware
+and silent settings. The board was left running the silent graphics demo.
+
+The normal RP2040 Unix image rebuilt with the conditional device hooks is
+byte-identical to the preceding publication (`55cc5e6f...`). The shared
+renderer produces the identical RP2350 demo UF2 (`12c31d16...`), so that
+previous hardware validation still applies. Unix images and disk payloads
+were not replaced by this demo addition.
 
 The PSRAM tests preserved complete pre-test flash snapshots. Each test image
 was uploaded whole. The original flash contents were restored afterward by

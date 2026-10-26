@@ -92,17 +92,26 @@ previous font. Standard images are silent; optional audio modules are built
 from source as described in OUTPUTS.md. Speaker playback is not claimed by the
 silent builds or PCM meter example.
 
-## RP2350 graphics demo
+## Graphics demo on both chips
 
 | File | Bytes | SHA-256 |
 | --- | ---: | --- |
 | [pico2w-demo/firmware.uf2](pico2w-demo/firmware.uf2) | 441,344 | `12c31d16e4738b11028c4cc9a61c5d73a740e7bf1021b4aca4f11719b472557f` |
+| [picow-demo/firmware.uf2](picow-demo/firmware.uf2) | 465,408 | `6ec1d7eb90836cff120c17692e5b6d12f635e846b2556f172d2ecec71880035a` |
 
-Flash this firmware on an RP2350. The built-in demo starts automatically and
-uses the selected panel. Its 320 × 200 picture is centered on the screen.
-This build is silent and uses 64 KB of guest memory. It keeps the disk pack;
-flash the normal board firmware to return to Unix. The RP2040 graphics demo
-is not implemented in this release.
+Flash the firmware matching the chip, then its [silent panel settings](output-settings/).
+The built-in demo starts automatically with a centered 320 x 200 picture.
+RP2350 uses 64 KB of guest memory and a silent backend. RP2040 uses 56 KB,
+disables disks and links the optional Bluetooth backend; silent saved settings
+keep its radio off. RP2040 demo runtime source: `fd78191`. The manifest records
+this source separately from the unchanged Unix builds.
+
+The firmware and settings preserve the installed disk pack. Flash normal
+firmware to return to Unix. **Installing RP2040 radio firmware for sound
+overwrites part of Mini-Unix:** back up first, then restore the pack or flash
+backup when returning to Unix. See [sound setup and measured results](../OUTPUTS.md#graphics-and-sound-demo).
+Speaker playback remains unverified after a connection page timeout; graphics
+and nonzero sound-sample generation passed on the actual Pico W.
 
 ## Hardware validation
 
@@ -116,6 +125,10 @@ The V7 Pico Plus 2 test used a clean temporary store and a workspace under
 `/usr`, isolating the board's previously full saved root filesystem.
 The PSRAM boards' original flash snapshots were restored after testing.
 The RP2350 demo's guest and panel frame counters advanced on the LAFVIN panel.
+The RP2040 demo sustained 60 panel frames/s with its final public firmware and
+silent settings. Its PCM-meter build generated nonzero samples without lost
+or late samples. Bluetooth could not connect to the speaker; flash was restored
+after the attempt.
 
 Live-font switching, cache-limit rejection and identical glyph data across
 RP2040/RP2350 were checked in the runtime-font work. Standard guest memory
@@ -134,7 +147,9 @@ py -3 tools/output_build.py --target rp2350 --compiler PureMetalForge.exe --out 
 py -3 tools/psram_build.py --board picoplus2 --compiler PureMetalForge.exe --out build_release/picoplus2
 py -3 tools/psram_build.py --board feather --compiler PureMetalForge.exe --out build_release/feather
 py -3 tools/demo_build.py --compiler PureMetalForge.exe --out build_release/demo
+py -3 tools/demo_build.py --target rp2040 --audio bluetooth --compiler PureMetalForge.exe --out build_release/demo2040
 py -3 tools/firmware_release.py --build-dir build_release --date 2026-10-26 --compiler-sha256 COMPILER_SHA256
+py -3 tools/demo_release.py --target rp2040 --audio bluetooth --build-dir build_release/demo2040 --manifest images/manifest-2026-10-26.json
 ```
 
 The release step takes the existing combined images' disk payloads. It does
