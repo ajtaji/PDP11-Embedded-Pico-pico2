@@ -514,3 +514,23 @@ on an RP2350; its serial verdict is `ASMCHECK fetch checks=512 failures=0 PASS`.
 It executes instruction sequences with a multi-instruction budget so native
 next-fetch tails are exercised. `CpuRunM(1)` alone cannot validate those tails.
 `--check` verifies that the generated fixture and reference are current.
+
+
+## RP2040 FP11 native arithmetic checks
+
+`tools/fp11_vectors.py` generates deterministic, exact integer reference
+values for the native `J11_18MHz_KDJ11_BF/pico/fp_check.pico` fixture.
+It executes no guest instructions on the host. `--check` verifies the
+committed vector data. The physical-board fixture performs 22,528 checks
+of full-width multiplication, FP fraction products, division and 64-bit
+shifts, including aliasing and all counts from zero through 63.
+
+```
+python tools/fp11_vectors.py --check
+PureMetalForge.exe --compile J11_18MHz_KDJ11_BF/pico/fp_check.pico -t rp2040 -o fp_check.uf2
+```
+
+Flash the fixture to a physical RP2040 and read its USB serial output.
+Success ends with `FP CHECK 22528 failures=0 PASS`. The ordinary firmware
+also passes DEC JFPAA1/JFPBA0; the Mini-Unix tests in `docs/bench/v6/` cover
+precision, library math, process state, executable startup and signal 8.

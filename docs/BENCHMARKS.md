@@ -1,6 +1,8 @@
 # Benchmarks
 
-Latest fresh Pico W / Pico 2 W results: [26 October hardware rerun](bench/fresh-2026-10-26.md), including the complete RP2040 Unix suite, Sieve and Whetstone.
+Latest: [direct RP2040 floating point and complete Unix rerun](bench/fp-2026-10-26.md).
+
+Earlier same-day Pico W / Pico 2 W results: [26 October hardware rerun](bench/fresh-2026-10-26.md), including the complete RP2040 Unix suite, Sieve and Whetstone.
 
 Part of the [PDP-11 emulator for the Pico W and Pico 2 W](../README.md).
 Classic benchmarks run under Unix on the emulator, on a Pimoroni Pico Plus 2 W

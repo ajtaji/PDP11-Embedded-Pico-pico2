@@ -129,10 +129,12 @@
 +	}
 --- a/sys1.c
 +++ b/sys1.c
-@@ -206 +206 @@
+@@ -165,0 +166 @@
++	restfp();
+@@ -206 +207 @@
 -	p = getblk(swapdev, p->p_pid*SWPSIZ+SWPLO);
 +	p = getblk(swapdev, (p-&proc[0])*SWPSIZ+SWPLO);
-@@ -248 +248 @@
+@@ -248 +249 @@
 -			bp = bread(swapdev, p->p_pid*SWPSIZ+SWPLO);
 +			bp = bread(swapdev, (p-&proc[0])*SWPSIZ+SWPLO);
 --- a/fio.c
@@ -148,9 +150,13 @@
 +	}
 --- a/bio.c
 +++ b/bio.c
-@@ -340 +340 @@
+@@ -325,0 +326 @@
++		savfp();
+@@ -340 +341 @@
 -	swbuf.b_blkno = SWPLO+rp->p_pid*SWPSIZ;
 +	swbuf.b_blkno = SWPLO+(rp-&proc[0])*SWPSIZ;
+@@ -347,0 +349 @@
++		restfp();
 --- a/sysent.c
 +++ b/sysent.c
 @@ -52 +52 @@
@@ -161,3 +167,56 @@
 @@ -6 +6 @@
 -eis = 0
 +eis = 1
+@@ -95,0 +96,4 @@
++
++/ FP11 exception vector
++. = 244^.
++	trap; br7+8
+--- a/mch.s
++++ b/mch.s
+@@ -438,0 +439,38 @@
++
++.text
++/ Exact FP11 process state: FPS followed by all six D-format accumulators.
++/ Mask exceptions during save/restore, then restore the original FPS.
++.globl _savfp, _restfp
++_savfp:
++ bit $400,*$177750
++ beq fpret
++ mov $_u+4,r0
++ stfps (r0)+
++ ldfps $200
++ movf fr0,(r0)+
++ movf fr1,(r0)+
++ movf fr2,(r0)+
++ movf fr3,(r0)+
++ movf fr4,fr0
++ movf fr0,(r0)+
++ movf fr5,fr0
++ movf fr0,(r0)+
++ movf _u+6,fr0
++ ldfps _u+4
++ rts pc
++_restfp:
++ bit $400,*$177750
++ beq fpret
++ mov $_u+6,r0
++ ldfps $200
++ movf (r0)+,fr0
++ movf (r0)+,fr1
++ movf (r0)+,fr2
++ movf (r0)+,fr3
++ movf (r0)+,fr0
++ movf fr0,fr4
++ movf (r0)+,fr0
++ movf fr0,fr5
++ movf _u+6,fr0
++ ldfps _u+4
++ fpret:rts pc
+--- a/trap.c
++++ b/trap.c
+@@ -86,0 +87,4 @@
++	case 8+USER: /* FP11 arithmetic exception */
++		i = SIGFPT;
++		break;
++

@@ -33,8 +33,9 @@ increase size, or **-** to decrease it. The guest keeps running. A monospace
 face is included for aligned columns. Oversized requests are refused and
 the previous font is restored.
 
-Existing installations need only their board's **firmware.uf2**, not another
-disk download. Full combined images are for installing the firmware and Unix
+RP2040 installations need both the new **firmware.uf2** and **minix.uf2**
+to enable direct floating point with safe Unix process state. Other boards
+need only their matching firmware. Full combined images are for installing the firmware and Unix
 packs together. [Downloads, hashes and validation](images/README.md) list both.
 All packaged builds use silent audio; the shared PCM interface supports an
 optional Bluetooth backend or a custom output module ([details](OUTPUTS.md)).
@@ -51,10 +52,10 @@ The graphics demo runs on [RP2040](images/picow-demo/firmware.uf2) and
 | PDP-11 memory | 152 KB (000000-457777) plus the I/O page; V6 says `mem = 556` (56 KB, 000000-157777, with memory management off) | 56 KB (000000-157777) plus the I/O page |
 | Speed, historical measurements on the boards (2026-10-20, with the hot paths in assembly) | V6 `time od /rkunix` in 10.4 s, timed from the host (13.9 s on 2026-10-04); the bench loop with memory management off ran at about 2,440,000 instructions per second on 2026-10-04 | Mini-Unix `time od /rkmx` in 4.6 s (5.9 s on 2026-10-04); the bench loop ran at about 2,550,000 instructions per second on 2026-10-04 |
 | Console ready after port open (historical serial measurements) | `#` after 3.4 s | `#` after 3.2 s |
-| RAM for writes | 112-block swap RAM disk plus 248 blocks for file-system writes in the standard panel build | 124 blocks shared by swap and file writes |
+| RAM for writes | 112-block swap RAM disk plus 248 blocks for file-system writes in the standard panel build | 63 KB compressed/deduplicated overlay, 255 unique records shared by swap and file writes |
 | Flash images | `combined.uf2` (one file) | `firmware.uf2` then `minix.uf2` (two files) |
 | Disk | RK05 pack in flash, read-only | RK05 pack in flash, read-only |
-| CPU-core diagnostic validation (2026-10-25) | 19 of 21 pass, including floating point; two expected J-11 model HALTs | 17 applicable integer tests pass; two expected J-11 model HALTs; no FP11 in this build |
+| CPU-core diagnostic validation (2026-10-25) | 19 of 21 pass, including floating point; two expected J-11 model HALTs | 17 integer tests passed in the earlier validation; both KDJ11 FPA diagnostics now pass; two expected J-11 model HALTs |
 | Seventh Edition (V7) | on the Pico Plus 2 W: `images/picoplus2-v7/combined.uf2`, boots itself ([Seventh Edition and floating point](#seventh-edition-v7-and-floating-point)) | not supported |
 
 ## Features
@@ -236,7 +237,7 @@ For comparison, a PDP-11/70 with its FP11 ran the double precision Whetstone at 
 
 ## The emulated processor, and where it is known to differ from a real J-11
 
-The processor is a J-11 as far as the software run on it needs: the instruction set, with the FPJ11 floating point unit on the RP2350 builds (the Pico W has none: its floating point instructions trap as reserved), the three modes, memory management with 18-bit and 22-bit mapping, the CPU error and maintenance registers, and on the PSRAM boards the Unibus map of a PDP-11/84. It boots the Unix systems named above and passes the diagnostic ladder as [media/diagnostics/ladder.txt](media/diagnostics/ladder.txt) states it. **It is not claimed to be an exact KDJ11.** No diagnostic written for the KDJ11 has been run on it (none is in the diagnostic image here); the diagnostics that have been run are for other processors (the 11/20 family, the 11/34, the 11/44, the F-11 of the 11/23), judged against the published manuals.
+The processor is a J-11 as far as the software run on it needs: the instruction set, with the FPJ11 floating point unit on both Pico families (Thumb-1 arithmetic on RP2040, Thumb-2 on RP2350), the three modes, memory management with 18-bit and 22-bit mapping, the CPU error and maintenance registers, and on the PSRAM boards the Unibus map of a PDP-11/84. It boots the Unix systems named above and passes the diagnostic ladder as [media/diagnostics/ladder.txt](media/diagnostics/ladder.txt) states it. **It is not claimed to be an exact KDJ11.** A complete KDJ11 CPU diagnostic suite has not been run; the two KDJ11 floating-point diagnostics pass on both Pico families. Otherwise, the diagnostics that have been run are for other processors (the 11/20 family, the 11/34, the 11/44, the F-11 of the 11/23), judged against the published manuals.
 
 One behaviour was corrected from those runs: with a register as the source and memory as the destination, the register is read after the destination's address has been worked out, so `MOV R0,(R0)+` stores R0 already stepped and `MOV PC,X(R)` stores the address of the instruction plus 4 (KDJ11-A CPU Module User's Guide, EK-KDJ1A-UG-002, appendix B, table B-1, items 1 to 3). The F-11 CPU diagnostic CJKDBD0 halted at its test 264 before the change and runs to its test 405 after it; the 11/34 diagnostic DFKAA tests the 11/34's opposite behaviour in its test 145 and carries two patches in the ladder for that reason.
 
@@ -248,7 +249,7 @@ Known differences, found by those tapes and left as they are:
 - **A memory-management abort and an odd address in one instruction** (CKKTB test 13: the stacked PC is 4 higher than the 11/44 tape wants) and **the address errors of CKKTB test 34:** not settled by the manuals read.
 - **PDR bit 15 does not read back** (CKKTA test 31). On the KDJ11 it is the bit that bypasses the cache; the emulated machine has no cache.
 - **Tests of the F-11 tape that a J-11 must fail:** test 405 wants no trap from a word reference to an odd address (the F-11 has none; the J-11 traps: table B-1, item 21) and test 410 wants MFPT to answer 3 (the J-11 answers 5). The emulator behaves as the J-11 there; the tape was not run further.
-- **The floating point unit is a port of SIMH's** (`pico2/fp11.pico2`, its notice kept), held to a second, separate port in Python (`tools/fp11_model.py`) and run by V7's C compiler, `awk` and the benchmarks; the DEC KDJ11 floating-point diagnostics passed on RP2350 in the 2026-10-25 CPU-core validation. The RP2040 build omits FP11. The 2026-10-26 assembly refresh adds native/plain comparisons and multi-instruction fetch checks; current hardware coverage is recorded in [the validation notes](images/VALIDATION-2026-10-26.md).
+- **The floating point unit is a port of SIMH's** (`pico2/fp11.pico2`, its notice kept), held to a second, separate port in Python (`tools/fp11_model.py`) and run by V7's C compiler, `awk` and the benchmarks; the DEC KDJ11 floating-point diagnostics passed on RP2350 in the 2026-10-25 CPU-core validation. The RP2040 build now includes direct FP11 execution, exact Thumb-1 multiply/divide kernels and native arithmetic checks. Mini-Unix preserves all six accumulators and FPS across process switches, resets them on exec, and delivers FP exceptions as signal 8. The 2026-10-26 assembly refresh adds native/plain comparisons and multi-instruction fetch checks; current hardware coverage is recorded in [the validation notes](images/VALIDATION-2026-10-26.md).
 - **Not modelled at all:** the cache and its registers beyond what Unix reads, memory on the Unibus itself, the red stack trap, and the registers the KDJ11-B's boot ROM uses.
 
 ## The desktop version
@@ -304,7 +305,7 @@ The same emulator as a Windows program, `desktop/PDP11Desktop.exe` (built and de
 - **This repository's own work is under the [MIT licence](LICENSE):** the PureMetal firmware source, the tools and the docs. **Third-party material keeps its own terms and is not covered by it:** the Unix distributions and the disk images and UF2 files built from them (Caldera licence, [Caldera-license.pdf](Caldera-license.pdf), which also covers `tools/rkuboot.py`); the DEC manuals and diagnostics; and the files serialcomms contributed (the Mini-Unix pack `mini-unix.rk05`, `disk_boot_readme.md`, the two screenshots, the manuals and the paper tape files in `media/papertape/`; `git log --author=serialcomms` lists them).
 - The original C emulator is by **serialcomms**: [Serialcomms/Pico-PDP11-Pimoroni-RISCV-Staging](https://github.com/Serialcomms/Pico-PDP11-Pimoroni-RISCV-Staging). This repository holds the PureMetal work split out of that repository, with its history.
 - **UNIX:** the UNIX files in `media/unix/`, in the disk packs and in `images/` are covered by the Caldera licence ([Caldera-license.pdf](Caldera-license.pdf)). They come from the Unix Heritage Society archive (tuhs.org). The two Berkeley archives (1BSD, 2BSD) predate the BSD licence text and carry no separate licence file; they are kept as TUHS distributes them, with the University of California, Berkeley credits in their own READ_ME files. `tools/rkuboot.py` reproduces V7's `/mdec/rpuboot.s` and is covered by the same licence.
-- **SIMH:** `J11_18MHz_KDJ11_BF/pico2/fp11.pico2` and `tools/fp11_model.py` are ports of SIMH's `pdp11_fp.c`, Copyright (c) 1993-2023 Robert M Supnik, under its permission notice, which both files carry.
+- **SIMH:** `J11_18MHz_KDJ11_BF/pico/fp11.pico`, `J11_18MHz_KDJ11_BF/pico2/fp11.pico2` and `tools/fp11_model.py` are ports of SIMH's `pdp11_fp.c`, Copyright (c) 1993-2023 Robert M Supnik, under its permission notice, which both files carry.
 - **Benchmarks:** `docs/bench/*/whet.c` derive from netlib's C Whetstone (Copyright 1998 Painter Engineering, Inc.; its comment block and terms kept in each).
 - **DEC material:** the diagnostics in `media/diagnostics/` are Digital Equipment Corporation diagnostics, from bitsavers.org and pcjs.org, kept here for testing the emulator. The paper tape images in `media/papertape/` come from <http://iamvirtual.ca/PDP-11/Basic-11/>. See [media/README.md](media/README.md).
 - **Questions and news:** <https://forum.ajtaji.com>

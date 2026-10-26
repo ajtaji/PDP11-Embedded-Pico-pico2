@@ -259,9 +259,12 @@ Global PC.i                 ; the emulated PC between instructions; Reg(7) is it
 #ASM_IMX = 1              ; native immediate/indexed memory forms
 #ASM_FAST = 1             ; Thumb-1 branches and register forms (tools/asm_fast_gen.py)
 #ASM_EA = 1
-; The FPJ11 is modelled on the Pico 2 only (pico2/fp11.pico2); here 170000-177777
-; stay reserved instructions. The handler in instructions.pico is compiled out.
-#FP11 = 0
+; The FPJ11 executes 170000-177777 directly, using exact integer-pair F/D arithmetic.
+#FP11 = 1
+#ASM_FP_M0 = 1
+Global Fps.i, Fec.i, Fea.i
+Global Dim FrH.i(6)
+Global Dim FrL.i(6)
 ; Measured on a Pico W, 2026-10-19 (Mini-Unix `time od /rkmx`, host-timed): 5.88 s
 ; before, 4.61 s with both.
 CompilerIf #DISK_BACKEND = 0
@@ -937,7 +940,7 @@ ProcedureRAM.i IoRead(a.i)                  ; a is even and past the end of RAM
   ElseIf a = #CPUERR_ADDR                ; THE CPU ERROR AND MAINTENANCE REGISTERS
     ProcedureReturn CpuErr
   ElseIf a = #MAINT_ADDR
-    ProcedureReturn #MAINT_FIXED | MaintTrap
+    ProcedureReturn #MAINT_FIXED | ($0100 * #FP11) | MaintTrap
   EndIf
   CpuErr = CpuErr | #CPUE_IO
   BusError()
@@ -2024,6 +2027,7 @@ Procedure CpuReset()
   Next
   CpuErr = 0                             ; the CPU error register and the halt/trap option
   MaintTrap = 0
+  Fps = 0 : Fec = 0 : Fea = 0
   Dl11TxRdy = 1
   PswSet($00E0)            ; kernel, priority 7
   TrapVector = 0
@@ -2035,4 +2039,8 @@ EndProcedure
 
 CompilerIf #DISK_BACKEND = 0
 Global SingleHit.i                      ; successful indexed native entries, hardware test only
+CompilerEndIf
+
+CompilerIf #FP11 = 1
+XIncludeFile "fp11.pico"
 CompilerEndIf

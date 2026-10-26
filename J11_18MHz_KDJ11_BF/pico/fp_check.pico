@@ -1,0 +1,90 @@
+#DISK_BACKEND = 0
+#DISK_FLASH_MODEL = 0
+#DISK_READ_ONLY = 0
+#DESK_PROBE = 0
+#DEMO_DEV = 0                ; this comparison firmware has no graphics device
+EnableExplicit
+XIncludeFile "RP2040/Lib/clocks.pico"
+XIncludeFile "RP2040/Lib/timer.pico"
+XIncludeFile "RP2040/Lib/uart.pico"
+XIncludeFile "RP2040/Lib/usb_serial.pico"
+XIncludeFile "RP2040/Lib/safety.pico"
+XIncludeFile "cpu.pico"
+XIncludeFile "instructions_mmu.pico"
+XIncludeFile "instructions.pico"
+XIncludeFile "disk.pico"
+XIncludeFile "kw11.pico"
+XIncludeFile "rk11.pico"
+
+
+Global Failures.i, Checks.i
+Procedure Ch(c.i)
+ UsbSerialWrite(c)
+EndProcedure
+Procedure Say(*s.i)
+ Define p.i = *s
+ While PeekA(p) <> 0 : Ch(PeekA(p)) : p = p + 1 : Wend
+EndProcedure
+Procedure Num(n.i)
+ Define p.i = 1
+ If n < 0 : Ch(45) : n = -n : EndIf
+ While n / p >= 10 : p = p * 10 : Wend
+ While p > 0 : Ch(48 + (n / p) % 10) : p = p / 10 : Wend
+EndProcedure
+Procedure Check(a.i, b.i)
+ Checks = Checks + 1
+ If a <> b
+  Failures = Failures + 1
+  If Failures < 8 : Say("BAD ") : Num(Checks) : Say(" got ") : Num(a) : Say(" expected ") : Num(b) : Ch(10) : EndIf
+ EndIf
+EndProcedure
+Procedure Pump()
+ UsbSerialTask() : SafetyPet()
+EndProcedure
+Procedure Main()
+ Define i.i, ah.i, al.i, bh.i, bl.i, eh.i, el.i, rh.i, rl.i, n.i, d.i
+ SafetyBoot() : ClockInitKhz(200000) : UsbSerialInit() : SafetyOk()
+ While UsbSerialReady() = 0 : Pump() : Wend
+ FpInit()
+ Restore mul_vectors
+ For i = 0 To 1023
+  Read.l FmA : Read.l FmB : Read.l eh : Read.l el
+  FpMul32() : Check(FmHi, eh) : Check(FmLo, el) : Pump()
+ Next
+ Say("MUL32 done failures=") : Num(Failures) : Ch(10)
+ Restore frac_vectors
+ For i = 0 To 1023
+  Read.l ah : Read.l al : Read.l bh : Read.l bl : Read.l eh : Read.l el
+  PH(#P_FF)=ah : PL(#P_FF)=al : PH(#P_SF)=bh : PL(#P_SF)=bl
+  FpFracMulRef() : Check(PH(#P_FF), eh) : Check(PL(#P_FF), el)
+  PH(#P_FF)=ah : PL(#P_FF)=al : PH(#P_SF)=bh : PL(#P_SF)=bl
+  FpFracMulAsm() : Check(PH(#P_FF), eh) : Check(PL(#P_FF), el) : Pump()
+ Next
+ Say("FRAC done failures=") : Num(Failures) : Ch(10)
+ Restore div_vectors
+ For i = 0 To 1023
+  Read.l ah : Read.l al : Read.l bh : Read.l bl : Read.l n : Read.l d : Read.l eh : Read.l el : Read.l rh : Read.l rl
+  PH(#P_FF)=ah : PL(#P_FF)=al : PH(#P_SF)=bh : PL(#P_SF)=bl : FqCount=n : FqQd=d
+  FpDivQRef() : Check(PH(#P_Q), eh) : Check(PL(#P_Q), el) : Check(PH(#P_FF), rh) : Check(PL(#P_FF), rl)
+  PH(#P_FF)=ah : PL(#P_FF)=al : PH(#P_SF)=bh : PL(#P_SF)=bl : FqCount=n : FqQd=d
+  FpDivQAsm() : Check(PH(#P_Q), eh) : Check(PL(#P_Q), el) : Check(PH(#P_FF), rh) : Check(PL(#P_FF), rl) : Pump()
+ Next
+ Restore shift_vectors
+ For i = 0 To 1023
+  Read.l ah : Read.l al : Read.l n : Read.l eh : Read.l el : Read.l rh : Read.l rl
+  PH(#P_FAC)=ah : PL(#P_FAC)=al
+  FpLsh(#P_FAC,#P_FAC,n) : Check(PH(#P_FAC),eh) : Check(PL(#P_FAC),el)
+  PH(#P_FAC)=ah : PL(#P_FAC)=al
+  FpRsh(#P_FAC,#P_FAC,n) : Check(PH(#P_FAC),rh) : Check(PL(#P_FAC),rl)
+  PH(#P_SRC)=ah : PL(#P_SRC)=al
+  FpLsh(#P_FAC,#P_SRC,n) : Check(PH(#P_FAC),eh) : Check(PL(#P_FAC),el)
+  FpRsh(#P_FAC,#P_SRC,n) : Check(PH(#P_FAC),rh) : Check(PL(#P_FAC),rl) : Pump()
+ Next
+ Say("SHIFTS done failures=") : Num(Failures) : Ch(10)
+ Say("FP CHECK ") : Num(Checks) : Say(" failures=") : Num(Failures)
+ If Failures = 0 : Say(" PASS") : Else : Say(" FAIL") : EndIf
+ Ch(10) : UsbSerialFlush()
+ Repeat : Pump() : ForEver
+EndProcedure
+XIncludeFile "fp_vectors.pmi"
+Main()

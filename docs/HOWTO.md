@@ -596,3 +596,16 @@ before building programs there; on the Feather use `/dev/rk1`. The root RK05
 is small, so keep larger builds under `/usr` and check free space with `df`.
 V6's `cc` does not accept the V7 `-o` option: use `cc file.c` and run `a.out`
 (or rename it). `cc file.c` also works on V7.
+
+
+## RP2040 floating point
+
+Install the current `picow-mini-unix/firmware.uf2`, then the current
+`picow-mini-unix/minix.uf2` in a second upload. The firmware executes FP11
+instructions directly; the new guest kernel saves FP registers across
+process switches, resets them on exec and handles floating exceptions.
+
+Compile ordinary Mini-Unix floating-point programs with `cc -f -O file.c`.
+Existing FP11 binaries also use the direct implementation. F and D formats,
+word/long conversions and the FPS rounding/exception modes are supported.
+See [the kernel guide](minix/j11-pipes.md) for reproducible sources and tests.

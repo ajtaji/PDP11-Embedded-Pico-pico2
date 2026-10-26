@@ -63,6 +63,7 @@ def kernel_check(data):
     # Mini-Unix's swap stack grows DOWN from _u-2, outside the user block.
     assert end + 512 <= 0o56000, 'kernel consumes the swap stack reserve'
     assert b'_pipe' in names and b'trapem' not in names
+    assert b'_savfp' in names and b'_restfp' in names, 'kernel lacks FP context preservation'
     return end
 
 
