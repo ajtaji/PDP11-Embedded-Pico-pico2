@@ -758,6 +758,11 @@ If DeskGl = 0
   End 1
 EndIf
 DeskWin = Util_MainWindowID
+; The pointer straight through (GlUIChrome.pbi, HOSTING 5a): UI_UseCRT defaults to
+; on, and then MapPhysicalToVirtual bends every mouse position by the CRT barrel
+; curve - right at the centre, more off toward the edges, the vertical worst. The
+; window never goes through DrawRetroCRT, so it is off.
+UI_UseCRT = #False
 Neon_UIScale = DeskScale(DeskWin)
 DeskFonts(Neon_UIScale)
 GL_SetVSync(0)
@@ -788,8 +793,12 @@ Repeat
     Select ev
       Case #PB_Event_CloseWindow
         DeskQuit = 1
-      Case #PB_Event_SizeWindow
+      Case #PB_Event_SizeWindow, #PB_Event_MoveWindow
         ResizeGadget(DeskGl, 0, 0, WindowWidth(DeskWin), WindowHeight(DeskWin))
+        If DeskScale(DeskWin) <> Neon_UIScale    ; moved to a display at another scale: the fonts again (HOSTING 5a)
+          Neon_UIScale = DeskScale(DeskWin)
+          DeskFonts(Neon_UIScale)
+        EndIf
       Case #PB_Event_Menu
         If EventMenu() = 1001                    ; the engine traps Escape as a shortcut
           If DeskTab = 0 And Neon_FocusID = 0 : DeskType(27) : Else : key = #PB_Shortcut_Escape : EndIf
