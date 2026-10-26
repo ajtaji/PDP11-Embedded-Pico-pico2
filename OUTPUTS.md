@@ -189,9 +189,12 @@ themselves stay below the pack and do not write disk sectors.
 On the actual 200 MHz Pico W/LAFVIN, the PCM-meter build sustained about
 60 panel frames/s, with nonzero audio samples and zero lost/late samples.
 The final Bluetooth-linked build also sustained 60 frames/s with audio
-disabled. A speaker connection attempt received HCI page timeout (status 4);
-audible playback has not been established. The original disk bytes were
-restored after that attempt. RP2040 Unix and RP2350 demo binaries remain
+disabled. With the speaker available, the same published firmware sustained
+57.51 panel frames/s while streaming Bluetooth audio: packets advanced from
+848 to 1,603, with zero underruns, overruns, errors or late samples. Audible
+playback was confirmed by the user. The original disk bytes were restored
+after the short test, then the demo was left running silently.
+RP2040 Unix and RP2350 demo binaries remain
 byte-identical to the preceding published versions.
 
 `tools/demo_check.py --port COM7 --out work/demo.txt --audio silent|plugin|bluetooth`
@@ -208,5 +211,6 @@ the two processors for the checked faces/sizes. Live changes preserve a guest
 file and return to the same original glyph bytes after an oversized request.
 The other three resident screen drivers compile and use the NES initialization
 sequences, but their physical screens have not been validated in this PDP-11
-session. Bluetooth audio has not been listened to in this session; PCM meter
-checks do not establish audible speaker playback.
+session. RP2040 demo Bluetooth playback passed the live-stream checks and
+the user confirmed the sound. PCM meter checks alone establish sample
+generation; the RP2350 Bluetooth demo has not had a speaker test here.

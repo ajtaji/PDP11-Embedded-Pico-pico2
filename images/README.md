@@ -110,8 +110,9 @@ The firmware and settings preserve the installed disk pack. Flash normal
 firmware to return to Unix. **Installing RP2040 radio firmware for sound
 overwrites part of Mini-Unix:** back up first, then restore the pack or flash
 backup when returning to Unix. See [sound setup and measured results](../OUTPUTS.md#graphics-and-sound-demo).
-Speaker playback remains unverified after a connection page timeout; graphics
-and nonzero sound-sample generation passed on the actual Pico W.
+Speaker playback passed on the actual Pico W and was confirmed by the user.
+The same published firmware sustained 57.51 FPS with Bluetooth sound, with
+zero audio underruns, overruns, errors or synthesis delays.
 
 ## Hardware validation
 
@@ -127,8 +128,8 @@ The PSRAM boards' original flash snapshots were restored after testing.
 The RP2350 demo's guest and panel frame counters advanced on the LAFVIN panel.
 The RP2040 demo sustained 60 panel frames/s with its final public firmware and
 silent settings. Its PCM-meter build generated nonzero samples without lost
-or late samples. Bluetooth could not connect to the speaker; flash was restored
-after the attempt.
+or late samples. Bluetooth playback then passed with the speaker available;
+flash was restored after the short sound test.
 
 Live-font switching, cache-limit rejection and identical glyph data across
 RP2040/RP2350 were checked in the runtime-font work. Standard guest memory

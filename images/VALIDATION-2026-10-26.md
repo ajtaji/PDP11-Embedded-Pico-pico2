@@ -17,10 +17,14 @@ The program payloads and image hashes are listed in
 The RP2040 PCM-meter build also passed: panel/guest counters advance,
 nonzero samples increase from 751,350 to 1,041,899, peak 9,072,
 zero lost/late samples and zero dropped clock ticks. This checks the shared
-four-voice producer, not audible playback. A short Bluetooth attempt reported
-HCI status 4 (page timeout), with no stream established. The complete 2 MB
-flash backup was restored afterward, followed by the final demo firmware
-and silent settings. The board was left running the silent graphics demo.
+four-voice producer. After the speaker became available, the exact published
+Bluetooth-linked firmware passed the live sound test: 347 panel frames over
+362 vertical blanks (57.51 FPS), A2DP packets 848 to 1,603, and zero underruns,
+overruns, audio errors or synthesis delays. The user confirmed audible playback.
+An earlier attempt while the speaker was unavailable had returned HCI page
+timeout. The complete 2 MB flash backup was restored after the sound test,
+followed by the final demo firmware and silent settings. The board was left
+running the silent graphics demo. No firmware change was needed for this pass.
 
 The normal RP2040 Unix image rebuilt with the conditional device hooks is
 byte-identical to the preceding publication (`55cc5e6f...`). The shared
@@ -48,8 +52,9 @@ are unchanged. LF checkout rules keep the hashed flash-map metadata stable
 on Windows as well as Unix.
 
 The four standard screen drivers are resident. LAFVIN glass was checked on
-Pico W and Pico 2 W. Other physical screens and Bluetooth speaker playback
-were not checked in this publication run. PSRAM boards were checked through
+Pico W and Pico 2 W. Other physical screens and RP2350 Bluetooth speaker
+playback were not checked in this publication run. RP2040 demo Bluetooth
+playback passed as recorded above. PSRAM boards were checked through
 USB serial with the same glyph generator active.
 
 The runtime-font validation also checked Lato-derived and monospace faces at
