@@ -1,7 +1,7 @@
 {
   "date": "2026-10-26",
-  "runtime_source": "3f814865921c91aefba134b6179030c404896563",
-  "pack_base_revision": "3f814865921c91aefba134b6179030c404896563",
+  "runtime_source": "c431194bf14b46e5a7bf5fb05ccb18d1cdd8e43f",
+  "pack_base_revision": "c431194bf14b46e5a7bf5fb05ccb18d1cdd8e43f",
   "compiler_sha256": "ea0c04dd97636624cbfd51d4d7fbc2d854ce8548f65ddbb139b2634c99f2c94c",
   "psram_profiles": {
     "picoplus2": "Pimoroni_Pico_Plus_2_W.board",
@@ -27,13 +27,13 @@
   "files": [
     {
       "path": "images/picow-mini-unix/firmware.uf2",
-      "bytes": 364032,
-      "sha256": "1f49f122f7dc36bc693f64cb53f8683505571ceea1a80da41956a0bd45c8e661"
+      "bytes": 367104,
+      "sha256": "0a3a7a082eb05f520b858f31922809bc7b106d791c2a0c619a823f0a40320fbf"
     },
     {
       "path": "images/picow-mini-unix/firmware.uf2.regions",
       "bytes": 241,
-      "sha256": "4e328a6d11637dbefae8b0306bd2b63c4e7ffbe0e0e0c02f40b025361ee46558"
+      "sha256": "d1631ff8e0572bff0d38935fccebf2281b118cb2b02be419263ac92b9f788f03"
     },
     {
       "path": "images/pico2w-v6/firmware.uf2",
@@ -93,12 +93,12 @@
     {
       "path": "images/pico2w-demo/firmware.uf2",
       "bytes": 437248,
-      "sha256": "6bef75f31893b0c709391296114163ddc47554f1c8b0dbbb2e0dc506bcb65d03"
+      "sha256": "f616e0371ddd2cedbc654d457e790f590742f5f888a4f13112f7c2d55b55ec50"
     },
     {
       "path": "images/pico2w-demo/firmware.uf2.regions",
       "bytes": 400,
-      "sha256": "b30470d0010500097a844417e924448eab4510e601b6defd9ff6d7f17d4b3c41"
+      "sha256": "8a202294ffd216125d51ddb4ca06942cbb668fc0391cf73e3adde4eea7087292"
     },
     {
       "path": "images/output-settings/rp2040-none.uf2",
@@ -152,23 +152,23 @@
     },
     {
       "path": "images/picow-mini-unix/minix.uf2",
-      "bytes": 3167232,
-      "sha256": "0ec2c16c5201f3ed789c785174c7c1480f414197fcda6ce772600585bf0be54c"
+      "bytes": 3171328,
+      "sha256": "cd131d1109d7ac6437d3b6e6750c0c85be4ad136e32d84befbcbe26e2ddb4595"
     },
     {
       "path": "images/picow-demo/firmware.uf2",
       "bytes": 471552,
-      "sha256": "c6a8cb5cb72133798dcb79b243480b9fc6ab47ff4559ad9db349bcf200ad920d"
+      "sha256": "42a25fc158edc6a1031725f371b89c5fabf0f3219a5244c850c5c8d61d6abdeb"
     },
     {
       "path": "images/picow-demo/firmware.uf2.regions",
       "bytes": 145,
-      "sha256": "b8a3d4e42e1962e022ee6a202cae9a0a6c65da21f00e145bbed86b9c1ffdce3f"
+      "sha256": "62e8570a6e818414a6566252000a84baf816bc753c9580602dacf22834ddc6e0"
     }
   ],
   "demo_profiles": {
     "rp2040-demo": {
-      "runtime_source": "3f814865921c91aefba134b6179030c404896563",
+      "runtime_source": "c431194bf14b46e5a7bf5fb05ccb18d1cdd8e43f",
       "linked_audio": "bluetooth",
       "default_audio": "silent"
     }

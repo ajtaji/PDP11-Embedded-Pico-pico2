@@ -1,5 +1,5 @@
-S|flash|2097152|image|181960
-R|RK0|262144|1835008|rk05|disk.pico line 274 (included)
+S|flash|2097152|image|183492
+R|RK0|262144|1835008|rk05|disk.pico line 276 (included)
 F|RK0|J11_18MHz_KDJ11_BF/pico/disk.pico
 R|PDP11 outputs|258048|4096|raw|config.pmi line 11 (included)
 F|PDP11 outputs|J11_18MHz_KDJ11_BF/outputs/config.pmi

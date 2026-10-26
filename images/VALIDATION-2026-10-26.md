@@ -1,28 +1,41 @@
 # Firmware validation, 2026-10-26
 
-The latest assembly refresh is built from runtime source `3f81486`.
+The current capacity/demo refresh is built from runtime source `c431194`.
 [manifest-2026-10-26.json](manifest-2026-10-26.json) records every program/file
 hash, board profile and compiler hash. All ready builds start silent.
 
 | Image | Physical hardware | Checks |
 | --- | --- | --- |
-| Pico W standard firmware | Pico W, RP2040, 200 MHz, LAFVIN ST7796 | Mini-Unix build and read phases passed, compiler/utility results matched, 56 KB guest and 124 write blocks retained, no dropped clock ticks/lost console input |
+| Pico W standard firmware | Pico W, RP2040, 200 MHz, LAFVIN ST7796 | All four Mini-Unix phases passed in 48.15 s; 63 KB lossless overlay, real guest-kernel pipes, 56 KB guest memory; no dropped clock ticks/lost console input |
 | Pico 2 W standard firmware | Pico 2 W, RP2350, 150 MHz, LAFVIN ST7796 | All four V6 build/process/file/text/read phases passed; 152 KB guest and 248 write blocks retained; no dropped ticks/lost input |
 | Pico Plus 2 W V6 | GPIO47 PSRAM, 16 MB flash | Boot, filesystem listing, C compilation and result `42`; 18-bit MMU, 3812 KB guest memory with 224 KB SRAM window; fonts ready; no dropped ticks/lost input |
 | Feather V6 | Feather RP2350 HSTX, GPIO8 PSRAM, 8 MB flash | Same V6 checks and result `42`; correct flash/store profile; no dropped ticks/lost input |
 | Pico Plus 2 W V7 | Pico Plus 2 W | Boot, RP03 `/usr` mount, C compilation in `/usr` and result `42`; 22-bit MMU, 2040 KB guest; fonts ready; no dropped ticks/lost input |
 | Feather V7 | Feather RP2350 HSTX | Boot, RK1 `/usr` mount, C compilation and result `42`; 22-bit MMU, 2040 KB guest; fonts ready; no dropped ticks/lost input |
 
-Both rebuilt demo firmwares passed on LAFVIN panels: RP2040 advanced 362
-panel frames over 362 vertical blanks and RP2350 advanced 365 over 365,
-60 frames/s on each. Guest counters advanced, with no panel errors or HALT.
-Both tests used silent settings; the RP2040 binary links Bluetooth but does
-not start its radio with those settings. Pico W was left on the new silent
-demo; Pico 2 W was returned to the new standard Unix firmware.
+Both clean rebuilt demos passed on LAFVIN panels. In roughly 22-second
+observation windows, RP2040 advanced 1,320 panel frames and vertical blanks,
+and RP2350 advanced 1,322: about 60 frames/s each, with zero panel errors,
+dropped ticks or HALTs. A private RP2040 diagnostic seeded the animation
+counter at 0, 32760, 32767 and 65520, and exercised all ten highlight phases:
+all plasma colors remained valid and white visited all six logo levels.
+The old program reproduced invalid colors at signed-word overflow.
+Both clean tests used silent settings. RP2040 links Bluetooth but does not
+start its radio with those settings. Its full 2 MB readback matched every
+public demo program page; all original bytes from settings offset 0x3f000
+through the end of flash matched the fresh pre-test snapshot exactly.
+Pico W was left on the fixed silent demo; Pico 2 W was returned to Unix.
 
-The standard UF2s are byte-identical to those used for the complete Unix
-phases. Timings and the unchanged Mini-Unix overlay capacity limitation are
-recorded in [BENCHMARKS](../docs/BENCHMARKS.md#additional-assembly-pass-2026-10-26).
+The standard UF2s match the programs used for the fresh Unix phases.
+Both boards passed all four phases with zero lost input and dropped ticks:
+RP2040 48.15 s, RP2350 55.44 s. [Fresh timing samples and benchmark
+methodology](../docs/bench/fresh-2026-10-26.md) include Sieve and Whetstone.
+The RP2040 overlay passed 6,451 native checks. Its new guest kernel passed
+three 8,208-byte pipe-stream tests, including EOF, broken pipes, descriptor
+sharing and allocation-failure recovery.
+
+The following processor checks come from the preceding assembly pass; CPU
+instruction implementations are unchanged by this storage/demo refresh.
 
 Both chips passed 4,000 native/plain comparisons of the twelve complete
 unmapped word/byte operand handlers. RP2350 also passed 512 multi-instruction
@@ -56,8 +69,9 @@ filesystem was restored afterward. V6 compiler checks use `cc file.c` and
 Firmware-only downloads contain the same program bytes as their combined
 images. The release checker validates every hash, UF2 family, block count,
 address and settings checksum, and compares every Unix payload address and
-byte against the immutable pack-base revision. Disk payloads and pack nonces
-are unchanged. LF checkout rules keep the hashed metadata stable on Windows.
+byte against the immutable pack-base revision. RP2350 disk payloads and pack
+nonces are unchanged. RP2040 deliberately ships the new Mini-Unix kernel and
+its patched sources; the pack is committed in the recorded base revision. LF checkout rules keep the hashed metadata stable on Windows.
 
 LAFVIN glass was checked on Pico W and Pico 2 W. The other three resident
 screen drivers were compiled but not physically checked. PSRAM boards were
@@ -73,6 +87,6 @@ the user confirmed the sound. It sustained 57.51 panel frames/s, A2DP packets
 848 to 1,603, and zero underruns, overruns, audio errors or synthesis delays.
 Its PCM-meter build also produced increasing nonzero sample counts, peak
 9,072, with zero lost/late samples. The shared sound producer/transport is
-unchanged by this CPU assembly refresh. Those audio results apply to the
+unchanged by this storage/demo refresh. Those audio results apply to the
 preceding firmware; live speaker playback has not been repeated for the
 new binary. RP2350 speaker playback was not checked. See [OUTPUTS.md](../OUTPUTS.md).
