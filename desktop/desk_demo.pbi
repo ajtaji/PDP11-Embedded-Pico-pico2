@@ -55,6 +55,24 @@ Procedure DeskDisplayPane(x.f, y.f, w.f, h.f)
   Neon_Text(*Neon_FontSmall, x + S(12), y + h - S(24), info$, Neon_C_DimR, Neon_C_DimG, Neon_C_DimB)
 EndProcedure
 
+; Full screen: the frame in the rectangle given (its aspect already 320:200), or black
+; with a note while the display is off.
+Procedure DeskDisplayFull(x.f, y.f, w.f, h.f)
+  If *DeskDdSprite = 0 : ProcedureReturn : EndIf
+  CompilerIf #PB_Compiler_OS = #PB_OS_Windows
+    DdRender(*DeskDdPixels + (#DEMO_H - 1) * #DEMO_W * 4, -#DEMO_W * 4)
+  CompilerElse
+    DdRender(*DeskDdPixels, #DEMO_W * 4)
+  CompilerEndIf
+  glBindTexture_(#GL_TEXTURE_2D, *DeskDdSprite\TextureID)
+  glTexSubImage2D_(#GL_TEXTURE_2D, 0, 0, 0, #DEMO_W, #DEMO_H, #GL_BGRA_EXT, #GL_UNSIGNED_BYTE, *DeskDdPixels)
+  If DdCsr & 1
+    DrawGLSprite(*DeskDdSprite, x, y, 0.0, w / #DEMO_W, 1, 1, 1, 1, #True, -1, -1, -1, -1, #True)
+  Else
+    Neon_TextCentre(*Neon_FontUI, x, w, y + h / 2 - S(10), "display off (DCSR bit 0)", Neon_C_DimR, Neon_C_DimG, Neon_C_DimB)
+  EndIf
+EndProcedure
+
 ; ---- the sound -----------------------------------------------------------------
 #AU_RATE = 22050
 #AU_BUFS = 4

@@ -247,6 +247,28 @@ Known differences, found by those tapes and left as they are:
 - **The floating point unit is a port of SIMH's** (`pico2/fp11.pico2`, its notice kept), held to a second, separate port in Python (`tools/fp11_model.py`) and run by V7's C compiler, `awk` and the benchmarks; the DEC KDJ11 floating-point diagnostics passed on RP2350 in the 2026-10-25 CPU-core validation. The RP2040 build omits FP11. The 2026-10-26 image checks cover boot, Unix work, panels and fonts; they do not repeat the CPU-core ladder.
 - **Not modelled at all:** the cache and its registers beyond what Unix reads, memory on the Unibus itself, the red stack trap, and the registers the KDJ11-B's boot ROM uses.
 
+## The desktop version
+
+The same emulator as a Windows program, `desktop/PDP11Desktop.exe` (built and described in `desktop/README.md`).
+
+### Controls
+
+| Key | What it does |
+|---|---|
+| Letters, digits, punctuation | sent to the console as they are, when the Console tab shows (or in full screen) and no field has the focus |
+| Return | CR (015) |
+| Backspace | ^H (010); V6's and V7's erase is `#` unless `stty` says otherwise |
+| Tab | TAB (011) |
+| Delete | DEL (177), Unix's interrupt |
+| Esc | ESC (033), in the window (in full screen Esc leaves it: use Ctrl+[) |
+| Ctrl+[ | ESC (033), in the window and in full screen |
+| Ctrl+A ... Ctrl+Z | the control characters 001-032 (Ctrl+D end of file, Ctrl+S / Ctrl+Q stop and start output) |
+| Ctrl+\ | FS (034), Unix's quit |
+| Ctrl+] | GS (035) |
+| Mouse wheel | scrolls the console back through its history (any key goes back to the bottom) |
+| F11 | full screen on and off (also the Full screen button) |
+| Esc, in full screen | leaves full screen |
+
 ## Repository layout
 
 | Path | What it is |

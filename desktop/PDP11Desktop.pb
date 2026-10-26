@@ -33,13 +33,14 @@ XIncludeFile "gen/core.pbi"
 XIncludeFile "machine_run.pbi"
 XIncludeFile "machine_tape.pbi"
 XIncludeFile "machine_disasm.pbi"
+XIncludeFile "controls.pbi"                ; every key the window takes, in one table
 
 ; ---- the state of the front end ----------------------------------------------
 Global DeskWin.i, DeskGl.i
 Global DeskRunning.l                       ; the processor runs (the user's RUN, not the HALT instruction)
 Global DeskImage$
 Global DeskQuit.l
-Global DeskTab.l                           ; 0 console, 1 ladder, 2 log
+Global DeskTab.l                           ; 0 console, 1 ladder, 2 log, 3 display, 4 controls
 Global DeskViewTab.l                       ; 0 disassembly, 1 trace
 Global DeskSpeed.d, DeskSpeedN.q, DeskSpeedT.q
 Global DeskBreak.l = -1                    ; the breakpoint's virtual address, -1 none
@@ -524,16 +525,18 @@ Procedure DeskMemory(x.f, y.f, w.f, h.f)
   Next
 EndProcedure
 
-Procedure DeskTerminal(x.f, y.f, w.f, h.f)
-  Protected adv.f, lh.f, rows.l, first.l, i.l, ln.l, ty.f, flash.f, cx.f
-  adv = GetGLTextWidth(*DeskTermFont, "MMMMMMMMMM") / 10.0
-  lh = *DeskTermFont\LineHeight
+; The console's screen in a box: *f the font, rows 0 = as many as fit (the window),
+; or a fixed count (full screen: 24, the box sized to them); pad the margin.
+Procedure DeskTermDraw(*f.GLFont, x.f, y.f, w.f, h.f, rows.l, pad.f)
+  Protected adv.f, lh.f, first.l, i.l, ln.l, ty.f, flash.f, cx.f
+  adv = GetGLTextWidth(*f, "MMMMMMMMMM") / 10.0
+  lh = *f\LineHeight
   Neon_Box(x, y, w, h, 0.05, 0.06, 0.07)
   flash = 1.0 - (ElapsedMilliseconds() - DeskBell) / 250.0
   If flash > 0.0
     Neon_Box(x, y, w, h, Neon_C_AmbR, Neon_C_AmbG, Neon_C_AmbB, 0.12 * flash)
   EndIf
-  rows = (h - S(12)) / lh
+  If rows = 0 : rows = (h - 2 * pad) / lh : EndIf
   If DeskWheel And Neon_Hit(x, y, w, h)
     TermBack + DeskWheel / 40
     DeskWheel = 0
@@ -543,13 +546,13 @@ Procedure DeskTerminal(x.f, y.f, w.f, h.f)
   first = TermLast - rows + 1 - TermBack
   If first < TermFirst : first = TermFirst : EndIf
   Neon_ScissorSet(x, y, w, h)
-  ty = y + S(6)
+  ty = y + pad
   For i = 0 To rows - 1
     ln = first + i
     If ln > TermLast : Break : EndIf
-    Neon_Text(*DeskTermFont, x + S(10), ty, TermLine(ln % #TERM_KEEP), 0.70, 0.95, 0.75)
+    Neon_Text(*f, x + pad, ty, TermLine(ln % #TERM_KEEP), 0.70, 0.95, 0.75)
     If ln = TermLast And TermBack = 0 And (ElapsedMilliseconds() / 530) % 2 = 0
-      cx = x + S(10) + TermCol * adv
+      cx = x + pad + TermCol * adv
       Neon_Box(cx, ty + 1, adv, lh - 2, 0.70, 0.95, 0.75, 0.75)
     EndIf
     ty + lh
@@ -557,6 +560,126 @@ Procedure DeskTerminal(x.f, y.f, w.f, h.f)
   Neon_ScissorClear()
   If TermBack
     Neon_TextRight(*Neon_FontSmall, x + w - S(10), y + h - S(20), "scrolled back " + Str(TermBack) + " lines", Neon_C_AmbR, Neon_C_AmbG, Neon_C_AmbB)
+  EndIf
+EndProcedure
+
+Procedure DeskTerminal(x.f, y.f, w.f, h.f)
+  DeskTermDraw(*DeskTermFont, x, y, w, h, 0, S(10))
+EndProcedure
+
+; ---- the Controls tab: controls.pbi's table, as the keyboard code reads it ----------------
+Procedure DeskControlsPane(x.f, y.f, w.f, h.f)
+  Protected ty.f, kx.f = x + S(16), wx.f = x + S(200), g.l = -1, lh.f
+  Neon_Box(x, y, w, h, 0.05, 0.06, 0.07)
+  lh = *Neon_FontUI\LineHeight + S(6)
+  ty = y + S(12)
+  Neon_ScissorSet(x, y, w, h)
+  ForEach CtlRows()
+    If CtlRows()\group <> g
+      g = CtlRows()\group
+      If g = #CTL_CONSOLE
+        Neon_Text(*Neon_FontBold, kx, ty, "The console (DL11 177560): the keys the PDP-11 gets", Neon_C_AmbR, Neon_C_AmbG, Neon_C_AmbB)
+        ty + lh
+        Neon_Text(*Neon_FontUI, kx, ty, "Letters, digits, punctuation", 0.70, 0.95, 0.75)
+        Neon_Text(*Neon_FontUI, wx, ty, "as they are, when the Console tab shows (or in full screen) and no field has the focus", Neon_C_TextR, Neon_C_TextG, Neon_C_TextB)
+      Else
+        ty + S(10)
+        Neon_Text(*Neon_FontBold, kx, ty, "The window", Neon_C_AmbR, Neon_C_AmbG, Neon_C_AmbB)
+      EndIf
+      ty + lh
+    EndIf
+    Neon_Text(*Neon_FontUI, kx, ty, CtlRows()\keys$, 0.70, 0.95, 0.75)
+    Neon_Text(*Neon_FontUI, wx, ty, CtlRows()\what$, Neon_C_TextR, Neon_C_TextG, Neon_C_TextB)
+    ty + lh
+  Next
+  Neon_ScissorClear()
+EndProcedure
+
+; ---- full screen ------------------------------------------------------------------------
+; A borderless window over the window's own monitor (no display-mode change), showing
+; only the machine's screen: the console terminal, 80 x 24 in a font sized to the
+; monitor, or - when the Display tab is up - the 320 x 200 raster at a whole-number scale
+; when that loses under a tenth of the height. Centred on black; the pointer hides after
+; two idle seconds. F11 or the Full screen button toggles it; Esc leaves (controls.pbi).
+Global FullScreen.l, FsStyle.i, FsCursorHidden.l, FsMouseX.l, FsMouseY.l, FsMouseMs.q
+Global FsViewX.f, FsViewY.f, FsViewW.f, FsViewH.f, FsFontPx.l, *FsTermFont.GLFont
+Global FsPlacement.WINDOWPLACEMENT
+
+Procedure FsShowCursor(show.l)
+  If show And FsCursorHidden : ShowCursor_(#True) : FsCursorHidden = 0 : EndIf
+  If show = 0 And FsCursorHidden = 0 : ShowCursor_(#False) : FsCursorHidden = 1 : EndIf
+EndProcedure
+
+Procedure EnterFullScreen()
+  Protected hwnd.i, mi.MONITORINFO
+  If FullScreen : ProcedureReturn : EndIf
+  hwnd = WindowID(DeskWin)
+  FsPlacement\length = SizeOf(WINDOWPLACEMENT) : GetWindowPlacement_(hwnd, @FsPlacement)
+  FsStyle = GetWindowLongPtr_(hwnd, #GWL_STYLE)
+  mi\cbSize = SizeOf(MONITORINFO) : GetMonitorInfo_(MonitorFromWindow_(hwnd, 2), @mi)   ; 2: the nearest monitor
+  SetWindowLongPtr_(hwnd, #GWL_STYLE, FsStyle & ~(#WS_CAPTION | #WS_THICKFRAME | #WS_MINIMIZEBOX | #WS_MAXIMIZEBOX | #WS_SYSMENU))
+  SetWindowPos_(hwnd, #HWND_TOP, mi\rcMonitor\left, mi\rcMonitor\top, mi\rcMonitor\right - mi\rcMonitor\left, mi\rcMonitor\bottom - mi\rcMonitor\top, #SWP_FRAMECHANGED | #SWP_NOOWNERZORDER | #SWP_SHOWWINDOW)
+  FullScreen = 1 : FsMouseMs = ElapsedMilliseconds()
+  Neon_FocusID = 0                          ; the keys go to the console
+  SetActiveGadget(DeskGl)
+EndProcedure
+
+Procedure LeaveFullScreen()
+  Protected hwnd.i
+  If FullScreen = 0 : ProcedureReturn : EndIf
+  hwnd = WindowID(DeskWin)
+  SetWindowLongPtr_(hwnd, #GWL_STYLE, FsStyle)
+  SetWindowPlacement_(hwnd, @FsPlacement)
+  SetWindowPos_(hwnd, 0, 0, 0, 0, 0, #SWP_FRAMECHANGED | #SWP_NOMOVE | #SWP_NOSIZE | #SWP_NOZORDER | #SWP_NOOWNERZORDER)
+  FullScreen = 0 : FsShowCursor(1)
+  SetActiveGadget(DeskGl)
+EndProcedure
+
+Procedure DeskAction(action.l)
+  Select action
+    Case #CTL_FULLSCREEN : If FullScreen : LeaveFullScreen() : Else : EnterFullScreen() : EndIf
+    Case #CTL_LEAVEFULL : LeaveFullScreen()
+  EndSelect
+EndProcedure
+
+; The view's rectangle, in the canvas (physical pixels): the terminal's 80 x 24 cells plus
+; a margin of one cell, or the raster.
+Procedure FsLayout()
+  Protected px.l, adv.f, lh.f, sc.f, isc.l, *f.GLFont
+  If DeskTab = 3
+    sc = DeskH / #DEMO_H
+    If #DEMO_W * sc > DeskW : sc = DeskW / #DEMO_W : EndIf
+    isc = Int(sc) : If isc >= 1 And isc >= sc * 0.9 : sc = isc : EndIf
+    FsViewW = #DEMO_W * sc : FsViewH = #DEMO_H * sc
+  Else
+    ; the font's size from a 100-pixel trial: cells scale with it
+    If *FsTermFont = 0 Or FsFontPx = 0
+      *FsTermFont = Neon_CreateFontPx("Consolas", 100) : FsFontPx = 100
+      GLFontSetSnapToPixel(*FsTermFont, #True)
+    EndIf
+    adv = GetGLTextWidth(*FsTermFont, "MMMMMMMMMM") / 10.0 / FsFontPx
+    lh = *FsTermFont\LineHeight / FsFontPx
+    sc = DeskW * 0.97 / ((#TERM_COLS + 2) * adv)
+    If DeskH * 0.97 / ((#TERM_ROWS + 1) * lh) < sc : sc = DeskH * 0.97 / ((#TERM_ROWS + 1) * lh) : EndIf
+    px = Int(sc)
+    If px <> FsFontPx
+      *FsTermFont = Neon_CreateFontPx("Consolas", px) : FsFontPx = px
+      GLFontSetSnapToPixel(*FsTermFont, #True)
+    EndIf
+    adv = GetGLTextWidth(*FsTermFont, "MMMMMMMMMM") / 10.0
+    lh = *FsTermFont\LineHeight
+    FsViewW = (#TERM_COLS + 2) * adv : FsViewH = (#TERM_ROWS + 1) * lh
+  EndIf
+  FsViewX = (DeskW - FsViewW) / 2 : FsViewY = (DeskH - FsViewH) / 2
+EndProcedure
+
+Procedure DeskFullView()
+  Neon_Box(0, 0, DeskW, DeskH, 0, 0, 0)
+  FsLayout()
+  If DeskTab = 3
+    DeskDisplayFull(FsViewX, FsViewY, FsViewW, FsViewH)
+  Else
+    DeskTermDraw(*FsTermFont, FsViewX, FsViewY, FsViewW, FsViewH, #TERM_ROWS, GetGLTextWidth(*FsTermFont, "M"))
   EndIf
 EndProcedure
 
@@ -650,6 +773,8 @@ Procedure DeskTopBar(h.f)
   If Neon_Button(x, y, S(76), bh, "Trace " + StringField("off on", DeskTrace + 1, " "), DeskTrace)
     DeskTrace = 1 - DeskTrace
   EndIf
+  x + S(82)
+  If Neon_Button(x, y, S(110), bh, "Full screen  F11") : DeskAction(#CTL_FULLSCREEN) : EndIf
   ; the speed, at the right
   Protected sp$
   If DeskRunning Or DeskLadderOn
@@ -672,8 +797,9 @@ Procedure DeskDraw()
   lx = gap : rx = lx + lw + gap
   y = top + gap
   ; the left: console, ladder, log
-  DeskTab = Neon_TabStrip(10, lx, y, lw, S(30), "Console (DL11 177560)|Diagnostic ladder|Log|Display (164000)", DeskTab)
+  DeskTab = Neon_TabStrip(10, lx, y, lw, S(30), "Console (DL11 177560)|Diagnostic ladder|Log|Display (164000)|Controls", DeskTab)
   Select DeskTab
+    Case 4 : DeskControlsPane(lx, y + S(30), lw, DeskH - y - S(30) - gap - S(22))
     Case 0 : DeskTerminal(lx, y + S(30), lw, DeskH - y - S(30) - gap - S(22))
     Case 1 : DeskLadderPane(lx, y + S(30), lw, DeskH - y - S(30) - gap - S(22))
     Case 2 : DeskLogPane(lx, y + S(30), lw, DeskH - y - S(30) - gap - S(22))
@@ -724,6 +850,76 @@ Procedure DeskFonts(sc.f)
   GLFontSetSnapToPixel(*DeskTermFont, #True)
 EndProcedure
 
+; ---- --fullscreen-test ------------------------------------------------------------------
+; Full screen by its own keys, no real pointer: F11 posted to the window's GL gadget, Esc to
+; the window (where the engine's Esc shortcut catches it). Checked: the window covers its
+; monitor, the canvas is the monitor, the view has its aspect (the terminal's 82 x 25 cells,
+; the raster's 320:200) and is centred, Esc leaves, the windowed rectangle and style come back.
+; The log goes to the file named; the program then ends.
+Global FsTestOn.l, FsTestFile$, FsTestShot$, FsTestStep.l, FsTestWait.l, FsTestFails.l, FsTestLog$
+Global FsTestRect.RECT, FsTestStyle.i
+
+Procedure FsTestCheck(ok.l, what$)
+  If ok = 0 : FsTestFails + 1 : FsTestLog$ + "FAIL " : Else : FsTestLog$ + "ok   " : EndIf
+  FsTestLog$ + what$ + #LF$
+EndProcedure
+
+Procedure FsTestSaveShot(file$, pw.l, ph.l)       ; the frame just drawn (before the flip), as PNG
+  Protected *px = AllocateMemory(pw * ph * 4), img.i, yy.l, xx.l, *row, c.l
+  glReadPixels_(0, 0, pw, ph, #GL_RGBA, #GL_UNSIGNED_BYTE, *px)
+  img = CreateImage(#PB_Any, pw, ph, 24)
+  If img And StartDrawing(ImageOutput(img))
+    For yy = 0 To ph - 1
+      *row = *px + (ph - 1 - yy) * pw * 4
+      For xx = 0 To pw - 1
+        c = PeekL(*row + xx * 4)
+        Plot(xx, yy, RGB(c & $FF, (c >> 8) & $FF, (c >> 16) & $FF))
+      Next
+    Next
+    StopDrawing()
+    UsePNGImageEncoder()
+    SaveImage(img, file$, #PB_ImagePlugin_PNG)
+    FreeImage(img)
+  EndIf
+  FreeMemory(*px)
+EndProcedure
+
+Procedure FsTestTick(pw.l, ph.l)
+  Protected r.RECT, mi.MONITORINFO, hwnd.i = WindowID(DeskWin), f.i, aspect.f, want.f
+  FsTestWait + 1 : If FsTestWait < 40 : ProcedureReturn : EndIf
+  FsTestWait = 0 : FsTestStep + 1
+  Select FsTestStep
+    Case 1
+      GetWindowRect_(hwnd, @FsTestRect) : FsTestStyle = GetWindowLongPtr_(hwnd, #GWL_STYLE)
+      FsTestLog$ + "windowed: " + Str(FsTestRect\left) + "," + Str(FsTestRect\top) + " " + Str(FsTestRect\right - FsTestRect\left) + "x" + Str(FsTestRect\bottom - FsTestRect\top) + ", scale " + StrF(Neon_UIScale, 2) + ", view " + StringField("console|display", 1 + Bool(DeskTab = 3), "|") + #LF$
+      PostMessage_(GadgetID(DeskGl), #WM_KEYDOWN, #VK_F11, 0) : PostMessage_(GadgetID(DeskGl), #WM_KEYUP, #VK_F11, 0)
+    Case 2
+      GetWindowRect_(hwnd, @r) : mi\cbSize = SizeOf(MONITORINFO) : GetMonitorInfo_(MonitorFromWindow_(hwnd, 2), @mi)
+      FsTestCheck(FullScreen, "F11 entered full screen")
+      FsTestCheck(Bool(r\left = mi\rcMonitor\left And r\top = mi\rcMonitor\top And r\right = mi\rcMonitor\right And r\bottom = mi\rcMonitor\bottom), "the window covers its monitor " + Str(mi\rcMonitor\right - mi\rcMonitor\left) + "x" + Str(mi\rcMonitor\bottom - mi\rcMonitor\top))
+      FsTestCheck(Bool(pw = mi\rcMonitor\right - mi\rcMonitor\left And ph = mi\rcMonitor\bottom - mi\rcMonitor\top), "the canvas is the whole monitor (" + Str(pw) + "x" + Str(ph) + ")")
+      If DeskTab = 3
+        want = #DEMO_W / #DEMO_H
+      Else
+        want = (#TERM_COLS + 2) * (GetGLTextWidth(*FsTermFont, "MMMMMMMMMM") / 10.0) / ((#TERM_ROWS + 1) * *FsTermFont\LineHeight)
+      EndIf
+      aspect = FsViewW / FsViewH
+      FsTestCheck(Bool(Abs(aspect - want) < 0.002 And FsViewW <= pw And FsViewH <= ph), "the view " + StrF(FsViewW, 1) + "x" + StrF(FsViewH, 1) + " has its aspect " + StrF(want, 4) + " (" + StrF(aspect, 4) + ") and fits")
+      FsTestCheck(Bool(Abs(FsViewX * 2 + FsViewW - pw) <= 1 And Abs(FsViewY * 2 + FsViewH - ph) <= 1), "the view is centred at " + StrF(FsViewX, 1) + "," + StrF(FsViewY, 1))
+      If DeskTab <> 3 : FsTestLog$ + "terminal font " + Str(FsFontPx) + " px" + #LF$ : EndIf
+      If FsTestShot$ <> "" : FsTestSaveShot(FsTestShot$, pw, ph) : EndIf
+      PostMessage_(hwnd, #WM_KEYDOWN, #VK_ESCAPE, 0) : PostMessage_(hwnd, #WM_KEYUP, #VK_ESCAPE, 0)
+    Case 3
+      GetWindowRect_(hwnd, @r)
+      FsTestCheck(Bool(FullScreen = 0), "Esc left full screen")
+      FsTestCheck(Bool(r\left = FsTestRect\left And r\top = FsTestRect\top And r\right = FsTestRect\right And r\bottom = FsTestRect\bottom), "the windowed rectangle came back: " + Str(r\left) + "," + Str(r\top) + " " + Str(r\right - r\left) + "x" + Str(r\bottom - r\top))
+      FsTestCheck(Bool(GetWindowLongPtr_(hwnd, #GWL_STYLE) = FsTestStyle), "the window's frame and style came back")
+      FsTestLog$ + "fullscreen-test: " + Str(FsTestFails) + " failures" + #LF$
+      f = CreateFile(#PB_Any, FsTestFile$) : If f : WriteString(f, FsTestLog$) : CloseFile(f) : EndIf
+      DeskQuit = 1
+  EndSelect
+EndProcedure
+
 ; ---- the program ----------------------------------------------------------------------
 Define lib.i, fctx.ProtoDpiContext
 lib = OpenLibrary(#PB_Any, "user32.dll")             ; per-monitor v2 before any window (HOSTING item 8)
@@ -758,6 +954,7 @@ If DeskGl = 0
   End 1
 EndIf
 DeskWin = Util_MainWindowID
+CtlLoad()
 ; The pointer straight through (GlUIChrome.pbi, HOSTING 5a): UI_UseCRT defaults to
 ; on, and then MapPhysicalToVirtual bends every mouse position by the CRT barrel
 ; curve - right at the centre, more off toward the edges, the vertical worst. The
@@ -771,10 +968,17 @@ TermClear()
 DeskDdInit()
 DeskAudioOpen()
 
-Define img$
-If CountProgramParameters() > 0
-  img$ = ProgramParameter(0)
-Else
+Define img$, pa.l, pa$
+For pa = 0 To CountProgramParameters() - 1
+  pa$ = ProgramParameter(pa)
+  Select LCase(pa$)
+    Case "--fullscreen-test" : pa + 1 : FsTestOn = 1 : FsTestFile$ = ProgramParameter(pa)
+    Case "--fullscreen-shot" : pa + 1 : FsTestShot$ = ProgramParameter(pa)
+    Case "--tab" : pa + 1 : DeskTab = Val(ProgramParameter(pa))
+    Default : img$ = pa$
+  EndSelect
+Next
+If img$ = ""
   img$ = GetPathPart(ProgramFilename()) + "..\images\picoplus2-v7\combined.uf2"
 EndIf
 If FileSize(img$) > 0
@@ -784,7 +988,7 @@ Else
   DeskSay("no image: Open... one (images/*/combined.uf2)")
 EndIf
 
-Define ev.i, r.RECT, cw.l, chh.l, pw.l, ph.l, mx.l, my.l, down.b, key.l, keyChar.l, mods.l
+Define ev.i, r.RECT, cw.l, chh.l, pw.l, ph.l, mx.l, my.l, down.b, key.l, keyChar.l, mods.l, tv.l
 Define now.q, last.q = ElapsedMilliseconds(), dt.f, consoleKeys.l
 Repeat
   key = 0 : keyChar = 0
@@ -800,12 +1004,20 @@ Repeat
           DeskFonts(Neon_UIScale)
         EndIf
       Case #PB_Event_Menu
-        If EventMenu() = 1001                    ; the engine traps Escape as a shortcut
-          If DeskTab = 0 And Neon_FocusID = 0 : DeskType(27) : Else : key = #PB_Shortcut_Escape : EndIf
+        If EventMenu() = 1001                    ; the engine traps Escape as a shortcut: the table says what it is
+          consoleKeys = Bool(FullScreen Or (DeskTab = 0 And Neon_FocusID = 0))
+          tv = CtlFind(#PB_Shortcut_Escape, 0, FullScreen)
+          If tv >= 0 And CtlHitGroup = #CTL_WINDOW
+            DeskAction(tv)
+          ElseIf tv >= 0 And consoleKeys
+            DeskType(tv) : TermBack = 0
+          Else
+            key = #PB_Shortcut_Escape
+          EndIf
         EndIf
       Case #PB_Event_Gadget
         If EventGadget() = DeskGl
-          consoleKeys = Bool(DeskTab = 0 And Neon_FocusID = 0)
+          consoleKeys = Bool(FullScreen Or (DeskTab = 0 And Neon_FocusID = 0))
           Select EventType()
             Case #PB_EventType_MouseWheel
               DeskWheel + GetGadgetAttribute(DeskGl, #PB_OpenGL_WheelDelta) * 40
@@ -813,21 +1025,13 @@ Repeat
               key = GetGadgetAttribute(DeskGl, #PB_OpenGL_Key)
               mods = GetGadgetAttribute(DeskGl, #PB_OpenGL_Modifiers)
               If GetAsyncKeyState_(#VK_CONTROL) & $8000 : mods | #PB_OpenGL_Control : EndIf
-              If consoleKeys
-                If mods & #PB_OpenGL_Control
-                  If key >= #PB_Shortcut_A And key <= #PB_Shortcut_Z
-                    DeskType(key - #PB_Shortcut_A + 1)
-                  ElseIf key = 220                 ; Ctrl+\ (VK_OEM_5): QUIT
-                    DeskType(28)
-                  EndIf
-                Else
-                  Select key
-                    Case #PB_Shortcut_Return : DeskType(13)
-                    Case #PB_Shortcut_Back : DeskType(8)
-                    Case #PB_Shortcut_Tab : DeskType(9)
-                    Case #PB_Shortcut_Delete : DeskType(127)   ; Unix's interrupt
-                  EndSelect
-                EndIf
+              tv = -1
+              If key > 0 : tv = CtlFind(key, Bool(mods & #PB_OpenGL_Control), FullScreen) : EndIf
+              If tv >= 0 And CtlHitGroup = #CTL_WINDOW
+                DeskAction(tv)
+                key = 0
+              ElseIf consoleKeys
+                If tv >= 0 : DeskType(tv) : EndIf
                 TermBack = 0
                 key = 0
               EndIf
@@ -886,15 +1090,22 @@ Repeat
   If GetActiveWindow() = DeskWin
     down = Bool(GetAsyncKeyState_(#VK_LBUTTON) & $8000)
   EndIf
+  If mx <> FsMouseX Or my <> FsMouseY : FsMouseX = mx : FsMouseY = my : FsMouseMs = now : FsShowCursor(1) : EndIf
+  If FullScreen And now - FsMouseMs > 2000 : FsShowCursor(0) : EndIf
   Neon_ChromeBeginFrame(mx, my, down, 0, key, keyChar, dt)
   glBindFramebuffer(#GL_FRAMEBUFFER, 0)
   glDisable_(#GL_SCISSOR_TEST)
   glViewport_(0, 0, pw, ph)
   glClearColor_(Neon_C_BgR, Neon_C_BgG, Neon_C_BgB, 1.0)
   glClear_(#GL_COLOR_BUFFER_BIT)
-  DeskDraw()
+  If FullScreen
+    DeskFullView()
+  Else
+    DeskDraw()
+  EndIf
   DeskWheel = 0
   Neon_ChromeEndFrame()
+  If FsTestOn : FsTestTick(pw, ph) : EndIf
   SetGadgetAttribute(DeskGl, #PB_OpenGL_FlipBuffers, #True)
 ForEver
 End

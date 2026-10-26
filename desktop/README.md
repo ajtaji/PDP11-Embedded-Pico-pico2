@@ -59,8 +59,7 @@ cd PDP11-Embedded-Pico-pico2\desktop
 power-up: the bootstrap, then the kernel's name typed at the boot block's `@`
 and the second step at its prompt.
 
-- **Console**: type into it. Return is CR, Backspace is ^H, Delete is DEL
-  (the Unix interrupt), Ctrl+letter is the control character, Ctrl+\ is QUIT.
+- **Console**: type into it (the keys are under Controls, below).
   The mouse wheel scrolls back through the screen's history.
 - **Diagnostic ladder**: runs `media/diagnostics/ladder.txt` tape by tape and
   judges each one as `tools/tape_ladder.py` does. The machine then holds the
@@ -74,6 +73,38 @@ and the second step at its prompt.
   at a virtual address in the current mode. **Trace on** records every
   instruction. With a breakpoint or the trace on, the processor runs one
   instruction at a time, which is slower, and the speed readout says so.
+- **Controls**: every key the window takes, drawn from the same table the
+  keyboard code reads (`desktop/controls.pbi`), so the two cannot disagree.
+- **Full screen** (the button, or F11; Esc leaves): a borderless window over
+  the window's own monitor (the display mode does not change) showing only the
+  machine's screen - the console, 80 x 24 in a font sized to the monitor, or
+  the 320 x 200 raster when the Display tab is up, at a whole-number scale
+  when that loses under a tenth of the height - centred on black. The pointer
+  hides after two idle seconds. Leaving puts the window back where it was, at
+  the size it was. Esc leaves full screen, so there the terminal's ESC is
+  Ctrl+[ (in the window Esc and Ctrl+[ both send it).
+  `PDP11Desktop IMAGE --fullscreen-test log.txt [--fullscreen-shot f.png]`
+  checks it with posted keys, no pointer: the window covers its monitor, the
+  view has its aspect and is centred, Esc leaves, the windowed rectangle and
+  style come back (`--tab 3` for the raster).
+
+## Controls
+
+| Key | What it does |
+|---|---|
+| Letters, digits, punctuation | sent to the console as they are, when the Console tab shows (or in full screen) and no field has the focus |
+| Return | CR (015) |
+| Backspace | ^H (010); V6's and V7's erase is `#` unless `stty` says otherwise |
+| Tab | TAB (011) |
+| Delete | DEL (177), Unix's interrupt |
+| Esc | ESC (033), in the window (in full screen Esc leaves it: use Ctrl+[) |
+| Ctrl+[ | ESC (033), in the window and in full screen |
+| Ctrl+A ... Ctrl+Z | the control characters 001-032 (Ctrl+D end of file, Ctrl+S / Ctrl+Q stop and start output) |
+| Ctrl+\ | FS (034), Unix's quit |
+| Ctrl+] | GS (035) |
+| Mouse wheel | scrolls the console back through its history (any key goes back to the bottom) |
+| F11 | full screen on and off (also the Full screen button) |
+| Esc, in full screen | leaves full screen |
 
 ## The demo devices (desktop only, for now)
 
