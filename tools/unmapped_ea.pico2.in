@@ -1,0 +1,218 @@
+; Input template for tools/unmapped_gen.py; CPU field aliases are resolved there.
+; ---- UNMAPPED ONLY: the operand address in assembly (tools/mmu_gen.py leaves this block out) ----
+; __eau, what the unmapped handlers reach with "bl" instead of calling EaWord
+; (cpu.pico2, EaFast and MSrcWord; #ASM_EA = 1): the call, the frame and the
+; return of a Basic procedure cost more than the work - EaWord was 52% of the
+; time of a program running with memory management off (the PDP-11 demo,
+; profiled on a Pico 2 W, 2026-10-24). In: r0 = the 6-bit mode and register.
+; Out: r0 = the address, with EaReg, Tmp, Adr and the register left exactly as
+; EaWord leaves them. All seven modes are done here when every access is in
+; RAM below 160000 and even and -(SP) or @-(SP) leaves SP at or above 000400;
+; anything else goes on to EaWord itself with the spec, nothing changed, and lr
+; still the handler's, so EaWord returns straight to the handler. It clobbers
+; r0-r3, r12 and lr only. asm_check.pico2 holds it to EaWord.
+; __eaub is the byte form (EaByte): (R)+ and -(R) step by one, by two through
+; SP and PC; the other modes are EaWord's, so it goes on to __eau.
+CompilerIf #ASM_EA = 1
+  ASM
+__eau:
+    mov r12, r0
+    and.w r1, r0, #7
+    ldr r2, =global_eareg
+    str r1, [r2]
+    ubfx r0, r0, #3, #3
+    ldr r2, =global_reg
+    cmp r0, #6
+    bne __eau_m4
+    ldr r3, [r2, #28]
+    cmp.w r3, #0xE000
+    bhs __eau_slow
+    lsls r0, r3, #31
+    bne __eau_slow
+    ldr r0, =global_adr
+    str r3, [r0]
+    ldr r0, =global_mem
+    ldrh r0, [r0, r3]
+    adds r3, r3, #2
+    uxth r3, r3
+    str r3, [r2, #28]
+    ldr r3, =global_tmp
+    str r0, [r3]
+    add.w r3, r2, r1, lsl #2
+    ldr r3, [r3]
+    adds r0, r0, r3
+    uxth r0, r0
+    bx lr
+__eau_m4:
+    cmp r0, #4
+    bne __eau_m2
+    add.w r2, r2, r1, lsl #2
+    ldr r3, [r2]
+    subs r3, r3, #2
+    uxth r3, r3
+    cmp r1, #6
+    bne __eau_m4a
+    cmp.w r3, #0x100
+    blo __eau_slow
+__eau_m4a:
+    str r3, [r2]
+    ldr r2, =global_tmp
+    str r0, [r2]
+    movs r0, r3
+    bx lr
+__eau_m2:
+    cmp r0, #2
+    bne __eau_m1
+    add.w r2, r2, r1, lsl #2
+    ldr r3, [r2]
+    adds r0, r3, #2
+    uxth r0, r0
+    str r0, [r2]
+    ldr r2, =global_tmp
+    str r3, [r2]
+    movs r0, r3
+    bx lr
+__eau_m1:
+    cmp r0, #1
+    bne __eau_m3
+    ldr r3, =global_tmp
+    str r0, [r3]
+    add.w r2, r2, r1, lsl #2
+    ldr r0, [r2]
+    bx lr
+__eau_m3:
+    cmp r0, #3
+    bne __eau_m5
+    add.w r2, r2, r1, lsl #2
+    ldr r3, [r2]
+    cmp.w r3, #0xE000
+    bhs __eau_slow
+    lsls r0, r3, #31
+    bne __eau_slow
+    ldr r0, =global_adr
+    str r3, [r0]
+    ldr r0, =global_mem
+    ldrh r0, [r0, r3]
+    adds r3, r3, #2
+    uxth r3, r3
+    str r3, [r2]
+    ldr r2, =global_tmp
+    str r0, [r2]
+    bx lr
+__eau_m5:
+    cmp r0, #5
+    bne __eau_m7
+    add.w r2, r2, r1, lsl #2
+    ldr r3, [r2]
+    subs r3, r3, #2
+    uxth r3, r3
+    cmp r1, #6
+    bne __eau_m5a
+    cmp.w r3, #0x100
+    blo __eau_slow
+__eau_m5a:
+    cmp.w r3, #0xE000
+    bhs __eau_slow
+    lsls r0, r3, #31
+    bne __eau_slow
+    str r3, [r2]
+    ldr r0, =global_adr
+    str r3, [r0]
+    ldr r0, =global_mem
+    ldrh r0, [r0, r3]
+    ldr r2, =global_tmp
+    str r0, [r2]
+    bx lr
+__eau_m7:
+    cmp r0, #7
+    bne __eau_slow
+    ldr r3, [r2, #28]
+    cmp.w r3, #0xE000
+    bhs __eau_slow
+    lsls r0, r3, #31
+    bne __eau_slow
+    ldr r0, =global_mem
+    ldrh r0, [r0, r3]
+    adds r3, r3, #2
+    uxth r3, r3
+    cmp r1, #7
+    beq __eau_m7p
+    add.w r1, r2, r1, lsl #2
+    ldr r1, [r1]
+    adds r0, r0, r1
+    b __eau_m7a
+__eau_m7p:
+    adds r0, r0, r3
+__eau_m7a:
+    uxth r0, r0
+    cmp.w r0, #0xE000
+    bhs __eau_slow
+    lsls r1, r0, #31
+    bne __eau_slow
+    str r3, [r2, #28]
+    ldr r2, =global_adr
+    str r0, [r2]
+    ldr r2, =global_mem
+    ldrh r0, [r2, r0]
+    ldr r2, =global_tmp
+    str r0, [r2]
+    bx lr
+__eau_slow:
+    mov r0, r12
+    ldr r1, =global_easpec
+    str r0, [r1]
+    b eaword
+__eaub:
+    mov r12, r0
+    and.w r1, r0, #7
+    ldr r2, =global_eareg
+    str r1, [r2]
+    movs r3, #1
+    cmp r1, #6
+    blo __eaub_s
+    movs r3, #2
+__eaub_s:
+    ldr r2, =global_eastep
+    str r3, [r2]
+    ubfx r0, r0, #3, #3
+    cmp r0, #2
+    bne __eaub_m4
+    ldr r2, =global_reg
+    add.w r2, r2, r1, lsl #2
+    ldr r1, [r2]
+    adds r3, r1, r3
+    uxth r3, r3
+    str r3, [r2]
+    ldr r2, =global_tmp
+    str r1, [r2]
+    movs r0, r1
+    bx lr
+__eaub_m4:
+    cmp r0, #4
+    bne __eaub_w
+    ldr r2, =global_reg
+    add.w r2, r2, r1, lsl #2
+    ldr r0, [r2]
+    subs r3, r0, r3
+    uxth r3, r3
+    cmp r1, #6
+    bne __eaub_m4a
+    cmp.w r3, #0x100
+    bhs __eaub_m4a
+    mov r0, r12
+    ldr r1, =global_easpec
+    str r0, [r1]
+    b eabyte
+__eaub_m4a:
+    str r3, [r2]
+    ldr r2, =global_tmp
+    movs r0, #4
+    str r0, [r2]
+    movs r0, r3
+    bx lr
+__eaub_w:
+    mov r0, r12
+    b __eau
+  EndASM
+CompilerEndIf
+; ---- END UNMAPPED ONLY ----

@@ -356,6 +356,7 @@ EndProcedure
 
 Global FKind.i, FChecks.i, FFailures.i, FFirst.i = -1, FFirstOp.i, FFirstField.i, FFast.i, FSlow.i
 Global Dim FCode.i(26)
+Global FAsmTarget.Label, FRefTarget.Label
 Procedure FastOne()
   PswSet($00E0)
   FKind = RndN(26)
@@ -379,13 +380,21 @@ Procedure FastOne()
   For Oi = 1 To 3                       ; a trap into another mode pushes on that mode's stack:
     StackBank(Oi) = RndRam() + 8        ; keep it in the shadowed RAM too
   Next
+  FAsmTarget = FastAsm(FKind)
+  FRefTarget = FastRef(FKind)
+  ; RR entries are installed only for source R0-R6. Exercise a PC source
+  ; through its real generic dispatch entry, preserving that table contract.
+  If FKind >= 15 And FKind < 22 And ((TOp >> 6) & 7) = 7
+    FAsmTarget = OpTable(TOp >> 3)
+    FRefTarget = FAsmTarget
+  EndIf
   SaveState()
   LoadState()
-  RunOnce(FastAsm(FKind))
+  RunOnce(FAsmTarget)
   DbgA = MidSumNow()
   Snap(@SnapA(0), @DiffA(0), @NDiffA)
   LoadState()
-  RunOnce(FastRef(FKind))
+  RunOnce(FRefTarget)
   DbgB = MidSumNow()
   Snap(@SnapB(0), @DiffB(0), @NDiffB)
   If (DbgA <> MidSum Or DbgB <> MidSum) And DbgShown < 3
@@ -397,7 +406,7 @@ Procedure FastOne()
     For Oi = 0 To 3 : Say(" ") : Oct(SBank(Oi)) : Next
     Eol()
   EndIf
-  OpTable(TOp >> 3) = FastAsm(FKind)     ; the table as built
+  OpTable(TOp >> 3) = FAsmTarget     ; the table as built
   FChecks = FChecks + 1
   If SnapA(#SNAP_FAST) = 1
     FFast = FFast + 1

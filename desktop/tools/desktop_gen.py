@@ -70,7 +70,7 @@ FILES = ["cpu.pico2", "fp11.pico2", "instructions_mmu.pico2", "instructions.pico
 # MapF stays 64-bit whole), the fetch window (Fw, FwSave), the FPU's operand in a window (FrwA), the
 # assembly's base (GBase = @Reg(0)), and the label tables with the parameter that fills them (a label's
 # address is a host address).
-KEEP_I = {"MapHost", "MapF", "GBase", "Fw", "FwSave", "FrwA", "OpTable", "OpTableM", "OpAsmM", "OpRefM", "target"}
+KEEP_I = {"MapHost", "MapF", "GBase", "Fw", "FwSave", "FrwA", "OpTable", "OpTableM", "OpAsmM", "OpRefM", "MovAsmM", "MovRefM", "MovAsm", "MovRef", "FastAsm", "FastRef", "target"}
 # Core procedures whose names are PureBasic commands (the File library): renamed
 # everywhere, consistently.
 RENAME = {"ReadWord": "PdpReadWord", "WriteWord": "PdpWriteWord", "ReadByte": "PdpReadByte",

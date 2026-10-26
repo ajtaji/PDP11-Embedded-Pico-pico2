@@ -341,6 +341,9 @@ Global Dim FwSave.i(16)
 ; PushM and PopM's fast paths in assembly (__pushm, __popm), and JSR, RTS and DIV
 ; in assembly in front of their plain handlers (tools/mmu_gen.py, pico2_ops; held to
 ; the plain ones by asm_check.pico2). Needs #ASM_EA = 1. 0: the plain handlers alone.
+#ASM_FAST = 1                          ; unmapped native branch/register forms
+#ASM_MEM = 1                           ; unmapped native RAM access helpers
+#ASM_IMX = 1                           ; unmapped immediate/indexed forms
 #ASM_INDEXED = 1                       ; indexed CLR/TST/INC/DEC and byte CLR/TST
 #ASM_OPS = 1
 ; The FPJ11 floating point unit (fp11.pico2, included after this file): 1

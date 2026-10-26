@@ -573,7 +573,7 @@ def _writes(line, r):
 _BRANCH = re.compile(r"^b(eq|ne|lt|ge|gt|le|hs|lo|hi|ls|mi|pl|cs|cc|vs|vc|al)?(\.w)?$")
 
 
-def base_rel(text):
+def base_rel(text, mapped=True):
     lines = text.split("\n")
     labels = {}
     for i, l in enumerate(lines):
@@ -600,7 +600,7 @@ def base_rel(text):
                 return True
             if _BRANCH.match(op) or op in ("cbz", "cbnz"):
                 tgt = ops[-1]
-                if tgt.startswith("__ul_cpurunm_") or tgt not in labels:
+                if tgt.startswith("__ul_cpurunm_" if mapped else "__ul_cpurun_") or tgt not in labels:
                     ok = True                    # Basic code or a procedure: assumes nothing in r0-r3
                 elif (tgt, r) in seen:
                     ok = True
@@ -685,11 +685,12 @@ def base_rel(text):
     if n_reg < 30 or n_hot < 50:
         fail("base_rel: only %d global_reg and %d hot loads changed; teach tools/mmu_gen.py." % (n_reg, n_hot))
     text = "\n".join(lines)
-    start = "  If OpTableReadyM = 0\n    Goto BuildTableM\n  EndIf\nRunStartM:\n"
+    suffix = "M" if mapped else ""
+    start = "  If OpTableReady%s = 0\n    Goto BuildTable%s\n  EndIf\nRunStart%s:\n" % ((suffix,) * 3)
     if text.count(start) != 1:
-        fail("base_rel: CpuRunM's first lines moved; teach tools/mmu_gen.py where GBase is set.")
-    return text.replace(start, "  GBase = @Reg(0)                        ; r5, the base of the globals above (cpu.pico2)\n"
-                        + start)
+        fail("base_rel: CpuRun%s's first lines moved; teach tools/mmu_gen.py where GBase is set." % suffix)
+    return text.replace(start, ("  GBase = @Reg(0)                        ; r5, the base of the globals above (cpu.pico2)\n" if mapped else "  GBase = @Reg(0)                        ; r5, the CPU state base\n") + start)
+
 
 
 def own_tails(text):
