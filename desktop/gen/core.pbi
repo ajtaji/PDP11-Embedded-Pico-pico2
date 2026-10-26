@@ -3186,20 +3186,23 @@ EndProcedure
 ; THE OPERAND IN ONE PASS (#ASM_FP = 1). FpOpAsm forms an F or D operand's
 ; address (modes 1-7; not mode 0, an accumulator, and not 027, an immediate)
 ; and reads the operand into pair FrP (FrWr = 0) or writes pair FrP to it
-; (FrWr = 1), FrLn bytes (4 or 8), all through the current mode's fast
+; (FrWr = 1), FrLn bytes (4 or 8; 2 is a word: PH(FrP) = the word << 16 and
+; PL(FrP) = 0, or PH(FrP) >> 16 written, as FpRdW / FpWrW), all through the current mode's fast
 ; windows, with memory management on. It is FpEa followed by FpReadF or
 ; FpWriteF when every word it touches - an X(R)'s index word, a deferred
 ; mode's pointer, the operand - is in its window: the same address, the same
 ; space, the same register change (the PC's at once, any other's left in
 ; FpChgReg/FpChgVal/FpChgOn for the end of the instruction). Anything else -
 ; memory management off, an odd address, a word outside a window, -(R)/@-(R)
-; of SP near the stack limit, (R)+/-(R)/@-(R) of the PC - and it changes no
+; of SP near the stack limit, -(R)/@-(R) of the PC - and it changes no
 ; register and nothing in FpChg*, sets FrwFast = 0, and the caller goes on to
 ; the plain procedures, which do it all again. FrwFast = 1: done. (Before it,
 ; FpEa, FpReadF, FpRdW and FpWriteF were 27% of Whetstone's time, 2026-10-25.)
 ; FpSrc and FpDst are what the instructions call; asm_check.pico2 holds them to
 ; FpEa with FpReadF / FpWriteF (ASMCHECK fpop). Free here: r0-r3, r12, and r6
-; and lr saved.
+; and lr saved. The PC's (R)+ (027) is FpEa's immediate: one word, in I
+; space, the PC changed at once, whatever FrLn says, as FpReadF and FpWriteF
+; take it.
 Global FrDs.l, FrLn.l, FrP.l, FrWr.l
 Procedure FpOpAsm()
 EndProcedure
@@ -3627,9 +3630,10 @@ Procedure FpExecRef()
 EndProcedure
 
 ; ---- the common instructions in assembly (#ASM_FP = 1) ---------------------
-; FpExecAsm does MULf (171), ADDf (172), LDf (172.4), SUBf (173), STf (174)
-; and DIVf (174.4) - every 17xxxx whose bits 11-8 are 2, 4, 5, 6, 8 or 9 -
-; the way FpExecRef's cases do them: the same prologue (FpBackupPc, FpChgOn,
+; FpExecAsm does CFCC, SETF, SETI, SETD, SETL, LDFPS and STFPS (the word
+; through FpOpAsm, FrLn = 2), CLRf, TSTf, ABSf, NEGf, MULf, ADDf, LDf, SUBf,
+; STf and DIVf - every 17xxxx whose bits 11-8 are 0 (but STST), 1, 2, 4, 5,
+; 6, 8 or 9 - the way FpExecRef's cases do them: the same prologue (FpBackupPc, FpChgOn,
 ; FpQuit, FxAc, FxDs, FxQd, FxLenf), the operand through FpSrc / FpDst (a
 ; memory operand through FpOpAsm directly, as they would, and through them
 ; only when it says no), the

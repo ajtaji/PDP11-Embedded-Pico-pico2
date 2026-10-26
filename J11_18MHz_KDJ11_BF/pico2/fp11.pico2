@@ -1211,20 +1211,23 @@ EndProcedure
 ; THE OPERAND IN ONE PASS (#ASM_FP = 1). FpOpAsm forms an F or D operand's
 ; address (modes 1-7; not mode 0, an accumulator, and not 027, an immediate)
 ; and reads the operand into pair FrP (FrWr = 0) or writes pair FrP to it
-; (FrWr = 1), FrLn bytes (4 or 8), all through the current mode's fast
+; (FrWr = 1), FrLn bytes (4 or 8; 2 is a word: PH(FrP) = the word << 16 and
+; PL(FrP) = 0, or PH(FrP) >> 16 written, as FpRdW / FpWrW), all through the current mode's fast
 ; windows, with memory management on. It is FpEa followed by FpReadF or
 ; FpWriteF when every word it touches - an X(R)'s index word, a deferred
 ; mode's pointer, the operand - is in its window: the same address, the same
 ; space, the same register change (the PC's at once, any other's left in
 ; FpChgReg/FpChgVal/FpChgOn for the end of the instruction). Anything else -
 ; memory management off, an odd address, a word outside a window, -(R)/@-(R)
-; of SP near the stack limit, (R)+/-(R)/@-(R) of the PC - and it changes no
+; of SP near the stack limit, -(R)/@-(R) of the PC - and it changes no
 ; register and nothing in FpChg*, sets FrwFast = 0, and the caller goes on to
 ; the plain procedures, which do it all again. FrwFast = 1: done. (Before it,
 ; FpEa, FpReadF, FpRdW and FpWriteF were 27% of Whetstone's time, 2026-10-25.)
 ; FpSrc and FpDst are what the instructions call; asm_check.pico2 holds them to
 ; FpEa with FpReadF / FpWriteF (ASMCHECK fpop). Free here: r0-r3, r12, and r6
-; and lr saved.
+; and lr saved. The PC's (R)+ (027) is FpEa's immediate: one word, in I
+; space, the PC changed at once, whatever FrLn says, as FpReadF and FpWriteF
+; take it.
 Global FrDs.i, FrLn.i, FrP.i, FrWr.i
 ProcedureRAM FpOpAsm()
   ASM
@@ -1264,10 +1267,15 @@ __fpo_m1:
     movs r6, #1
     b __fpo_have
 __fpo_m2:
-    cmp.w r12, #7
-    beq __fpo_slow
     ldr.w r0, [r2, r12, lsl #2]
+    cmp.w r12, #7
+    beq __fpo_imm
     mov lr, r1
+    b __fpo_have
+__fpo_imm:
+    movs r1, #2
+    mov lr, r1
+    movs r6, #1
     b __fpo_have
 __fpo_m4:
     cmp.w r12, #7
@@ -1450,6 +1458,14 @@ __fpo_hd:
     ldr r6, [r6]
     lsls r6, r6, #2
     ldrh r0, [r3, #0]
+    cmp r1, #2
+    bne __fpo_r2
+    lsls r0, r0, #16
+    ldr r2, =global_ph
+    str r0, [r2, r6]
+    movs r0, #0
+    b __fpo_rl
+__fpo_r2:
     ldrh r2, [r3, #2]
     orr.w r0, r2, r0, lsl #16
     ldr r2, =global_ph
@@ -1478,6 +1494,12 @@ __fpo_w:
     lsls r6, r6, #2
     ldr r2, =global_ph
     ldr r0, [r2, r6]
+    cmp r1, #2
+    bne __fpo_w2
+    lsrs r0, r0, #16
+    strh r0, [r3, #0]
+    b __fpo_commit
+__fpo_w2:
     strh r0, [r3, #2]
     lsrs r0, r0, #16
     strh r0, [r3, #0]
@@ -1943,9 +1965,10 @@ ProcedureRAM FpExecRef()
 EndProcedure
 
 ; ---- the common instructions in assembly (#ASM_FP = 1) ---------------------
-; FpExecAsm does MULf (171), ADDf (172), LDf (172.4), SUBf (173), STf (174)
-; and DIVf (174.4) - every 17xxxx whose bits 11-8 are 2, 4, 5, 6, 8 or 9 -
-; the way FpExecRef's cases do them: the same prologue (FpBackupPc, FpChgOn,
+; FpExecAsm does CFCC, SETF, SETI, SETD, SETL, LDFPS and STFPS (the word
+; through FpOpAsm, FrLn = 2), CLRf, TSTf, ABSf, NEGf, MULf, ADDf, LDf, SUBf,
+; STf and DIVf - every 17xxxx whose bits 11-8 are 0 (but STST), 1, 2, 4, 5,
+; 6, 8 or 9 - the way FpExecRef's cases do them: the same prologue (FpBackupPc, FpChgOn,
 ; FpQuit, FxAc, FxDs, FxQd, FxLenf), the operand through FpSrc / FpDst (a
 ; memory operand through FpOpAsm directly, as they would, and through them
 ; only when it says no), the
@@ -1963,7 +1986,7 @@ ProcedureRAM FpExecAsm()
     ubfx r0, r8, #8, #4
     movs r1, #1
     lsl.w r1, r1, r0
-    movw r2, #0x374
+    movw r2, #0x377
     tst r1, r2
     beq __fx_no
     ldr r2, =global_fpready
@@ -1999,6 +2022,14 @@ __fx_len:
     str r2, [r3]
     cmp r0, #8
     beq __fx_st
+    cmp r0, #0
+    beq __fx_c0
+    cmp r0, #1
+    bne __fx_src
+    ubfx r1, r8, #6, #2
+    cmp r1, #0
+    beq __fx_clr
+__fx_src:
     and.w r1, r8, #0x3f
     cmp r1, #7
     ble __fx_srcb
@@ -2026,7 +2057,7 @@ __fx_len:
     movs r0, #12
     bl fpnotrap
     cmp r0, #0
-    beq __fx_end
+    beq __fx_srcfail
     b __fx_srcok
 __fx_srcs:
     ldr r2, =global_fxlenf
@@ -2036,13 +2067,15 @@ __fx_srcb:
     and.w r1, r8, #0x3f
     bl fpsrc
     cmp r0, #0
-    beq __fx_end
+    beq __fx_srcfail
 __fx_srcok:
     ubfx r6, r8, #6, #2
     lsls r6, r6, #2
     ubfx r0, r8, #8, #4
     cmp r0, #5
     beq __fx_ld
+    cmp r0, #1
+    beq __fx_c1
     ldr r1, =global_frh
     ldr r1, [r1, r6]
     ldr r2, =global_ph
@@ -2148,6 +2181,11 @@ __fx_st:
 __fx_stl:
     ldr r3, =global_pl
     str r1, [r3, #0]
+    movs r6, #0
+    b __fx_dst
+__fx_clr:
+    movs r6, #13
+__fx_dst:
     and.w r1, r8, #0x3f
     ldr r2, =global_fxlenf
     ldr r2, [r2]
@@ -2157,9 +2195,8 @@ __fx_stl:
     str r1, [r3]
     ldr r3, =global_frln
     str r2, [r3]
-    movs r0, #0
     ldr r3, =global_frp
-    str r0, [r3]
+    str r6, [r3]
     movs r0, #1
     ldr r3, =global_frwr
     str r0, [r3]
@@ -2167,13 +2204,198 @@ __fx_stl:
     ldr r0, =global_frwfast
     ldr r0, [r0]
     cmp r0, #0
-    bne __fx_end
+    bne __fx_dsted
     and.w r1, r8, #0x3f
     ldr r2, =global_fxlenf
     ldr r2, [r2]
 __fx_dstb:
-    movs r0, #0
+    movs r0, r6
     bl fpdst
+__fx_dsted:
+    cmp r6, #13
+    bne __fx_end
+    ldr r2, =global_fpquit
+    ldr r2, [r2]
+    cmp r2, #0
+    bne __fx_end
+    ldr r3, =global_fps
+    ldr r2, [r3]
+    bic.w r2, r2, #15
+    orr.w r2, r2, #4
+    str r2, [r3]
+    b __fx_end
+__fx_srcfail:
+    ubfx r0, r8, #6, #6
+    cmp r0, #5
+    bne __fx_end
+    ldr r2, =global_fpquit
+    ldr r2, [r2]
+    cmp r2, #0
+    bne __fx_end
+    ldr r2, =global_fec
+    ldr r2, [r2]
+    cmp r2, #12
+    bne __fx_end
+    ldr r2, =global_ph
+    ldr r1, [r2, #4]
+    movs r0, #0
+    b __fx_cc
+__fx_c1:
+    ubfx r0, r8, #6, #2
+    ldr r2, =global_ph
+    ldr r1, [r2, #4]
+    cmp r0, #1
+    bne __fx_an
+    movs r0, #0
+    b __fx_cc
+__fx_an:
+    tst.w r1, #0x7f800000
+    bne __fx_an1
+    movs r1, #0
+    str r1, [r2, #4]
+    ldr r3, =global_pl
+    str r1, [r3, #4]
+    b __fx_anw
+__fx_an1:
+    cmp r0, #2
+    bne __fx_neg
+    bic.w r1, r1, #0x80000000
+    str r1, [r2, #4]
+    b __fx_anw
+__fx_neg:
+    eor.w r1, r1, #0x80000000
+    str r1, [r2, #4]
+__fx_anw:
+    movs r0, #1
+    and.w r1, r8, #0x3f
+    ldr r2, =global_fxlenf
+    ldr r2, [r2]
+    bl fpwritef
+    ldr r2, =global_fpquit
+    ldr r2, [r2]
+    cmp r2, #0
+    bne __fx_end
+    ldr r2, =global_ph
+    ldr r1, [r2, #4]
+    movs r0, #0
+    b __fx_cc
+__fx_c0:
+    ubfx r1, r8, #6, #2
+    cmp r1, #0
+    beq __fx_c00
+    cmp r1, #3
+    beq __fx_no
+    and.w r0, r8, #0x3f
+    cmp r1, #2
+    beq __fx_stfps
+    cmp r0, #7
+    bgt __fx_ldfm
+    ldr r2, =global_reg
+    ldr.w r1, [r2, r0, lsl #2]
+    b __fx_ldfs
+__fx_ldfm:
+    ldr r3, =global_frds
+    str r0, [r3]
+    movs r0, #2
+    ldr r3, =global_frln
+    str r0, [r3]
+    movs r0, #1
+    ldr r3, =global_frp
+    str r0, [r3]
+    movs r0, #0
+    ldr r3, =global_frwr
+    str r0, [r3]
+    bl fpopasm
+    ldr r0, =global_frwfast
+    ldr r0, [r0]
+    cmp r0, #0
+    beq __fx_no
+    ldr r2, =global_ph
+    ldr r1, [r2, #4]
+    lsrs r1, r1, #16
+__fx_ldfs:
+    movw r2, #0xcfff
+    ands r1, r1, r2
+    ldr r3, =global_fps
+    str r1, [r3]
+    b __fx_end
+__fx_stfps:
+    ldr r3, =global_fps
+    ldr r1, [r3]
+    movw r2, #0xcfff
+    ands r1, r1, r2
+    cmp r0, #7
+    bgt __fx_stfm
+    str r1, [r3]
+    ldr r2, =global_reg
+    str.w r1, [r2, r0, lsl #2]
+    b __fx_end
+__fx_stfm:
+    lsls r1, r1, #16
+    ldr r2, =global_ph
+    str r1, [r2, #4]
+    ldr r3, =global_frds
+    str r0, [r3]
+    movs r0, #2
+    ldr r3, =global_frln
+    str r0, [r3]
+    movs r0, #1
+    ldr r3, =global_frp
+    str r0, [r3]
+    ldr r3, =global_frwr
+    str r0, [r3]
+    bl fpopasm
+    ldr r0, =global_frwfast
+    ldr r0, [r0]
+    cmp r0, #0
+    beq __fx_no
+    ldr r3, =global_fps
+    ldr r1, [r3]
+    movw r2, #0xcfff
+    ands r1, r1, r2
+    str r1, [r3]
+    b __fx_end
+__fx_c00:
+    and.w r0, r8, #0x3f
+    ldr r3, =global_fps
+    ldr r2, [r3]
+    cmp r0, #0
+    beq __fx_cfcc
+    cmp r0, #1
+    bne __fx_c02
+    bic.w r2, r2, #0x80
+    b __fx_setx
+__fx_c02:
+    cmp r0, #2
+    bne __fx_c09
+    bic.w r2, r2, #0x40
+    b __fx_setx
+__fx_c09:
+    cmp r0, #9
+    bne __fx_c0a
+    orr.w r2, r2, #0x80
+    b __fx_setx
+__fx_c0a:
+    cmp r0, #10
+    bne __fx_no
+    orr.w r2, r2, #0x40
+__fx_setx:
+    str r2, [r3]
+    b __fx_end
+__fx_cfcc:
+    ubfx r0, r2, #3, #1
+    ubfx r1, r2, #2, #1
+    bl setnz
+    ldr r3, =global_fps
+    ldr r2, [r3]
+    ubfx r0, r2, #1, #1
+    lsls r0, r0, #15
+    ldr r1, =global_flagv
+    str r0, [r1]
+    and.w r0, r2, #1
+    lsls r0, r0, #16
+    ldr r1, =global_flagc
+    str r0, [r1]
 __fx_end:
     ldr r2, =global_fpchgon
     ldr r2, [r2]

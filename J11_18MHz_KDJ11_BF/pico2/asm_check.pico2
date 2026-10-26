@@ -856,6 +856,9 @@ Procedure FpOpOne()
   Fm = (FoSpec >> 3) & 7
   Fn = FoSpec & 7
   FoLn = 4 + 4 * RndN(2)
+  If RndN(5) = 0
+    FoLn = 2
+  EndIf
   FoWr = RndN(2)
   If (Fm = 6 Or Fm = 7) And RndN(4) <> 0
     Fq = PickPc()
@@ -889,10 +892,19 @@ Procedure FpOpOne()
   If FoWr
     For Fq = 0 To #RAM_WORDS - 1 : Shadow(Fq) = Mem(Fq) : Next
   EndIf
+  If FoLn = 2 And FoSpec <= 7
+    FoSpec = FoSpec | $10               ; a word has no register form here
+  EndIf
   SaveState()
   LoadState()
   FoPrep()
-  If FoWr
+  If FoLn = 2                           ; a word: FpOpAsm alone, against FpEa with FpRdW / FpWrW
+    FrDs = FoSpec : FrLn = 2 : FrP = #P_SRC : FrWr = FoWr
+    If FoSpec > 7
+      FpOpAsm()
+    EndIf
+    GK = 0
+  ElseIf FoWr
     FpDst(#P_SRC, FoSpec, FoLn)
     GK = 0
   Else
@@ -902,16 +914,32 @@ Procedure FpOpOne()
   FoSnap(@FoA(0))
   LoadState()
   FoPrep()
-  FpEa(FoSpec, FoLn)
-  If FoWr
-    FpWriteF(#P_SRC, FoSpec, FoLn)
+  If FoLn = 2
     GK = 0
-  ElseIf FpQuit
-    GK = 0
+    If Fv                               ; it did it: the plain way must give the same
+      FpEa(FoSpec, 2)
+      If FoWr
+        FpWrW(FpAdr, FpSpace, (PH(#P_SRC) >> 16) & $FFFF)
+      Else
+        PH(#P_SRC) = FpRdW(FpAdr, FpSpace) << 16
+        PL(#P_SRC) = 0
+      EndIf
+    EndIf                               ; it did not: nothing may have changed (FpAdr, FpSpace aside)
   Else
-    GK = FpReadF(#P_SRC, FoSpec, FoLn)
+    FpEa(FoSpec, FoLn)
+    If FoWr
+      FpWriteF(#P_SRC, FoSpec, FoLn)
+      GK = 0
+    ElseIf FpQuit
+      GK = 0
+    Else
+      GK = FpReadF(#P_SRC, FoSpec, FoLn)
+    EndIf
   EndIf
   FoSnap(@FoB(0))
+  If FoLn = 2 And Fv = 0
+    FoA(11) = 0 : FoA(12) = 0 : FoB(11) = 0 : FoB(12) = 0
+  EndIf
   FoChecks = FoChecks + 1
   FoFast = FoFast + Fv
   FoField = -1
@@ -1103,6 +1131,13 @@ Procedure FpxOne()
       Fxk = 9
     EndIf
     FxOp = $F000 | (Fxk << 8) | (RndN(4) << 6) | FoSpec
+    If RndN(4) = 0                      ; CLRf TSTf ABSf NEGf
+      FxOp = (FxOp & $F0FF) | $0100
+    ElseIf RndN(5) = 0                  ; LDFPS STFPS (STST too)
+      FxOp = (FxOp & $F0FF) | ((RndN(3) + 1) << 6)
+    ElseIf RndN(6) = 0                  ; CFCC SETF SETI SETD SETL, and the illegal ones round them
+      FxOp = $F000 | RndN(12)
+    EndIf
   Else
     FxOp = $F000 | RndN($1000)
   EndIf
