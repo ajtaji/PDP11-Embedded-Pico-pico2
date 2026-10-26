@@ -1389,7 +1389,21 @@ EndProcedure
 ; A floating operand into pair p (FpEa then FpReadF); 0 = the instruction is NOP'd.
 ProcedureRAM.i FpSrc(p.i, spec.i, ln.i)
 CompilerIf #ASM_FP = 1
-  If spec > 7
+  If spec <= 5                                ; AC0-AC5: FpEa's mode 0 and FpReadF's copy
+    FpAdr = 0 : FpSpace = 0
+    PH(p) = FrH(spec)
+    If ln = #FP_QUAD
+      PL(p) = FrL(spec)
+    Else
+      PL(p) = 0
+    EndIf
+    If (PH(p) & #FP_SIGN) <> 0 And FpExpOf(PH(p)) = 0
+      If FpNoTrap(#FEC_UNDFV) = 0
+        ProcedureReturn 0
+      EndIf
+    EndIf
+    ProcedureReturn 1
+  ElseIf spec > 7
     FrDs = spec : FrLn = ln : FrP = p : FrWr = 0
     FpOpAsm()
     If FrwFast
@@ -1476,7 +1490,8 @@ EndProcedure
 
 ; ---- the instruction -----------------------------------------------------
 ; Op is the instruction, Reg(7) the PC after it (the handler synced it).
-ProcedureRAM FpExec()
+; FpExecRef is all of it in Basic; FpExec (below) tries FpExecAsm first.
+ProcedureRAM FpExecRef()
   If FpReady = 0
     FpInit()
   EndIf
@@ -1793,3 +1808,219 @@ ProcedureRAM FpExec()
   EndIf
 EndProcedure
 
+; ---- the common instructions in assembly (#ASM_FP = 1) ---------------------
+; FpExecAsm does MULf (171), ADDf (172), LDf (172.4), SUBf (173), STf (174)
+; and DIVf (174.4) - every 17xxxx whose bits 11-8 are 2, 4, 5, 6, 8 or 9 -
+; the way FpExecRef's cases do them: the same prologue (FpBackupPc, FpChgOn,
+; FpQuit, FxAc, FxDs, FxQd, FxLenf), the operand through FpSrc / FpDst, the
+; accumulator into #P_FAC, the arithmetic procedure (FpMulOp, FpAddOp,
+; FpDivOp; a SUBf flips a nonzero source's sign first, a DIVf by a zero
+; exponent is FpNoTrap(#FEC_DZRO) and nothing more), the accumulator back, the
+; condition codes as FpSetCc sets them, and the register change at the end.
+; Op is r8, which every procedure leaves alone. Any other instruction, or the
+; unit not yet set up, and it sets FxDone = 0 and FpExec goes on to
+; FpExecRef. asm_check.pico2 holds FpExec to FpExecRef (ASMCHECK fpx).
+Global FxDone.i
+ProcedureRAM FpExecAsm()
+  ASM Uses Op
+    push {r6, lr}
+    ubfx r0, r8, #8, #4
+    movs r1, #1
+    lsl.w r1, r1, r0
+    movw r2, #0x374
+    tst r1, r2
+    beq __fx_no
+    ldr r2, =global_fpready
+    ldr r2, [r2]
+    cmp r2, #0
+    beq __fx_no
+    ldr r2, =global_reg
+    ldr r2, [r2, #28]
+    ldr r3, =global_fpbackuppc
+    str r2, [r3]
+    movs r2, #0
+    ldr r3, =global_fpchgon
+    str r2, [r3]
+    ldr r3, =global_fpquit
+    str r2, [r3]
+    ubfx r2, r8, #6, #2
+    ldr r3, =global_fxac
+    str r2, [r3]
+    and.w r2, r8, #0x3f
+    ldr r3, =global_fxds
+    str r2, [r3]
+    ldr r3, =global_fps
+    ldr r3, [r3]
+    and.w r3, r3, #0x80
+    ldr r2, =global_fxqd
+    str r3, [r2]
+    movs r2, #4
+    cmp r3, #0
+    beq __fx_len
+    movs r2, #8
+__fx_len:
+    ldr r3, =global_fxlenf
+    str r2, [r3]
+    cmp r0, #8
+    beq __fx_st
+    movs r0, #1
+    and.w r1, r8, #0x3f
+    bl fpsrc
+    cmp r0, #0
+    beq __fx_end
+    ubfx r6, r8, #6, #2
+    lsls r6, r6, #2
+    ubfx r0, r8, #8, #4
+    cmp r0, #5
+    beq __fx_ld
+    ldr r1, =global_frh
+    ldr r1, [r1, r6]
+    ldr r2, =global_ph
+    str r1, [r2, #0]
+    movs r1, #0
+    ldr r3, =global_fxqd
+    ldr r3, [r3]
+    cmp r3, #0
+    beq __fx_facl
+    ldr r1, =global_frl
+    ldr r1, [r1, r6]
+__fx_facl:
+    ldr r2, =global_pl
+    str r1, [r2, #0]
+    cmp r0, #2
+    beq __fx_mul
+    cmp r0, #9
+    beq __fx_div
+    cmp r0, #6
+    bne __fx_add
+    ldr r2, =global_ph
+    ldr r1, [r2, #4]
+    tst.w r1, #0x7f800000
+    beq __fx_add
+    eor.w r1, r1, #0x80000000
+    str r1, [r2, #4]
+__fx_add:
+    bl fpaddop
+    b __fx_store
+__fx_mul:
+    bl fpmulop
+    b __fx_store
+__fx_div:
+    ldr r2, =global_ph
+    ldr r1, [r2, #4]
+    tst.w r1, #0x7f800000
+    bne __fx_divok
+    movs r0, #4
+    bl fpnotrap
+    b __fx_end
+__fx_divok:
+    bl fpdivop
+__fx_store:
+    ubfx r6, r8, #6, #2
+    lsls r6, r6, #2
+    ldr r2, =global_ph
+    ldr r1, [r2, #0]
+    ldr r3, =global_frh
+    str r1, [r3, r6]
+    ldr r3, =global_fxqd
+    ldr r3, [r3]
+    cmp r3, #0
+    beq __fx_cc
+    ldr r2, =global_pl
+    ldr r2, [r2, #0]
+    ldr r3, =global_frl
+    str r2, [r3, r6]
+    b __fx_cc
+__fx_ld:
+    ldr r2, =global_ph
+    ldr r1, [r2, #4]
+    ldr r3, =global_frh
+    str r1, [r3, r6]
+    ldr r3, =global_fxqd
+    ldr r3, [r3]
+    cmp r3, #0
+    beq __fx_ldcc
+    ldr r2, =global_pl
+    ldr r2, [r2, #4]
+    ldr r3, =global_frl
+    str r2, [r3, r6]
+__fx_ldcc:
+    movs r0, #0
+__fx_cc:
+    ldr r3, =global_fps
+    ldr r2, [r3]
+    bic.w r2, r2, #15
+    orrs r2, r2, r0
+    cmp r1, #0
+    bge __fx_ccn
+    orr.w r2, r2, #8
+__fx_ccn:
+    tst.w r1, #0x7f800000
+    bne __fx_ccz
+    orr.w r2, r2, #4
+__fx_ccz:
+    str r2, [r3]
+    b __fx_end
+__fx_st:
+    ubfx r6, r8, #6, #2
+    lsls r6, r6, #2
+    ldr r1, =global_frh
+    ldr r1, [r1, r6]
+    ldr r3, =global_ph
+    str r1, [r3, #0]
+    movs r1, #0
+    ldr r3, =global_fxqd
+    ldr r3, [r3]
+    cmp r3, #0
+    beq __fx_stl
+    ldr r1, =global_frl
+    ldr r1, [r1, r6]
+__fx_stl:
+    ldr r3, =global_pl
+    str r1, [r3, #0]
+    movs r0, #0
+    and.w r1, r8, #0x3f
+    ldr r2, =global_fxlenf
+    ldr r2, [r2]
+    bl fpdst
+__fx_end:
+    ldr r2, =global_fpchgon
+    ldr r2, [r2]
+    cmp r2, #0
+    beq __fx_done
+    ldr r2, =global_fpquit
+    ldr r2, [r2]
+    cmp r2, #0
+    bne __fx_done
+    ldr r2, =global_fpchgreg
+    ldr r2, [r2]
+    lsls r2, r2, #2
+    ldr r3, =global_reg
+    ldr r1, [r3, r2]
+    ldr r0, =global_fpchgval
+    ldr r0, [r0]
+    adds r1, r1, r0
+    uxth r1, r1
+    str r1, [r3, r2]
+__fx_done:
+    movs r0, #1
+    b __fx_out
+__fx_no:
+    movs r0, #0
+__fx_out:
+    ldr r2, =global_fxdone
+    str r0, [r2]
+    pop {r6, lr}
+  EndASM
+EndProcedure
+
+ProcedureRAM FpExec()
+CompilerIf #ASM_FP = 1
+  FpExecAsm()
+  If FxDone = 0
+    FpExecRef()
+  EndIf
+CompilerElse
+  FpExecRef()
+CompilerEndIf
+EndProcedure

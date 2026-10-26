@@ -1017,6 +1017,115 @@ Procedure FpAddOne()
   Next
 EndProcedure
 
+; ---- the FP instruction (fp11.pico2, FpExec with FpExecAsm) -------------------
+; FpExec (FpExecAsm first) against FpExecRef from the same state: the random map
+; and registers of the fpop check, an FP instruction - mostly one FpExecAsm
+; does (MULf ADDf LDf SUBf STf DIVf), the rest any 17xxxx - with any
+; accumulator and spec (the operand mostly in a window), six random
+; accumulators (zeros, undefined variables, exponents near the ends now and
+; then), a random FPS. Compared: R0-R7, the six accumulators, FPS, FEC, FEA,
+; the trap, FpQuit, the CPU's N Z V C, the CPU error, the yellow stack,
+; MMR0/1, and memory.
+Global FxChecks.i, FxFailures.i, FxFirst.i, FxOp.i, Fxk.i
+Global Dim FxSH.i(6)
+Global Dim FxSL.i(6)
+Global Dim FxA.i(40)
+Global Dim FxB.i(40)
+
+Procedure FxSnap(*s.i)
+  GS = *s
+  For GI = 0 To 7 : PokeL(GS + GI * 4, Reg(GI)) : Next
+  For GI = 0 To 5
+    PokeL(GS + 32 + GI * 8, FrH(GI))
+    PokeL(GS + 36 + GI * 8, FrL(GI))
+  Next
+  PokeL(GS + 80, Fps)
+  PokeL(GS + 84, Fec)
+  PokeL(GS + 88, Fea)
+  PokeL(GS + 92, TrapVector)
+  PokeL(GS + 96, FpQuit)
+  PokeL(GS + 100, NzRead())
+  PokeL(GS + 104, FlagV & $8000)
+  PokeL(GS + 108, FlagC & $10000)
+  PokeL(GS + 112, CpuErr)
+  PokeL(GS + 116, StackYellow)
+  PokeL(GS + 120, Mmr0)
+  PokeL(GS + 124, Mmr1)
+  GN2 = 0 : GK2 = 0
+  For GI = 0 To #RAM_WORDS - 1
+    If Mem(GI) <> Shadow(GI)
+      GN2 = GN2 + 1
+      GK2 = GK2 * 31 + (GI << 16) + Mem(GI)
+      Mem(GI) = Shadow(GI)
+    EndIf
+  Next
+  PokeL(GS + 128, GN2)
+  PokeL(GS + 132, GK2)
+EndProcedure
+
+Procedure FxPrep()
+  For GI = 0 To 5 : FrH(GI) = FxSH(GI) : FrL(GI) = FxSL(GI) : Next
+  Fps = Fps0 : Fec = 0 : Fea = 0 : FpQuit = 0 : FpChgOn = 0
+  Op = FxOp
+EndProcedure
+
+Procedure FpxOne()
+  FpOpOne()                             ; a random map, registers, spec and operand words (its own check too)
+  LoadState()
+  Fxk = RndN(10)
+  If Fxk < 7
+    Fxk = RndN(6)
+    If Fxk = 0
+      Fxk = 2
+    ElseIf Fxk = 1
+      Fxk = 4
+    ElseIf Fxk = 2
+      Fxk = 5
+    ElseIf Fxk = 3
+      Fxk = 6
+    ElseIf Fxk = 4
+      Fxk = 8
+    Else
+      Fxk = 9
+    EndIf
+    FxOp = $F000 | (Fxk << 8) | (RndN(4) << 6) | FoSpec
+  Else
+    FxOp = $F000 | RndN($1000)
+  EndIf
+  For Fxk = 0 To 5
+    FxSH(Fxk) = (RndW() & ~#FP_EXP) | (FaExp() << 23)
+    If RndN(2)
+      FxSL(Fxk) = RndW()
+    Else
+      FxSL(Fxk) = 0
+    EndIf
+  Next
+  Fps0 = RndN($10000) & #FPS_RW
+  For Fq = 0 To #RAM_WORDS - 1 : Shadow(Fq) = Mem(Fq) : Next
+  SaveState()
+  LoadState()
+  FxPrep()
+  FpExec()
+  FxSnap(@FxA(0))
+  Fv = FxDone
+  LoadState()
+  FxPrep()
+  FpExecRef()
+  FxSnap(@FxB(0))
+  FxChecks = FxChecks + 1
+  For Fxk = 0 To 33
+    If FxA(Fxk) <> FxB(Fxk)
+      FxFailures = FxFailures + 1
+      If FxFirst < 0
+        FxFirst = FxChecks
+        Say("FPX FIRST FAIL op=") : Oct(FxOp) : Say(" fps=") : Oct(Fps0) : Say(" field=") : Num(Fxk)
+        Say(" asm=") : Num(FxA(Fxk)) : Say(" plain=") : Num(FxB(Fxk)) : Say(" done=") : Num(Fv) : Eol()
+      EndIf
+      Break
+    EndIf
+  Next
+EndProcedure
+
 ; ---- JSR, RTS and DIV (tools/mmu_gen.py, pico2_ops) -------------------------
 ; Each assembly handler (OpAsmM) against its plain one (OpRefM), from the same
 ; random state as the MOV check: JSR of every mode (0, illegal, too), RTS of
@@ -1245,6 +1354,7 @@ Procedure Main()
   FpFirst = -1
   FoFirst = -1
   FaFirst = -1
+  FxFirst = -1
   OpFirst = -1
   EdgeW(0) = 0 : EdgeW(1) = $FFFF : EdgeW(2) = $7FFF : EdgeW(3) = $8000
   EdgeW(4) = 1 : EdgeW(5) = 2 : EdgeW(6) = $FFFE : EdgeW(7) = $8001
@@ -1362,6 +1472,19 @@ Procedure Main()
       Say(" PASS")
     Else
       Say(" FAIL first=") : Num(FaFirst)
+    EndIf
+    Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
+    Mt0 = Micros()
+    For Mr = 1 To #ROUND * 2
+      FpxOne()
+      UsbSerialTask()
+      SafetyPet()
+    Next
+    Say("ASMCHECK fpx checks=") : Num(FxChecks) : Say(" failures=") : Num(FxFailures)
+    If FxFailures = 0
+      Say(" PASS")
+    Else
+      Say(" FAIL first=") : Num(FxFirst)
     EndIf
     Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
     Mt0 = Micros()

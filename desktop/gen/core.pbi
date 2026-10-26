@@ -1,6 +1,6 @@
 ; desktop/gen/core.pbi - WRITTEN BY desktop/tools/desktop_gen.py from the Pico 2's
 ; sources; do not edit (edit the board's files and run the tool again).
-; cpu.pico2 (7 ASM blocks dropped); fp11.pico2 (4 ASM blocks dropped); instructions_mmu.pico2 (315 ASM blocks dropped); instructions.pico2 (3 ASM blocks dropped); kw11.pico2 (0 ASM blocks dropped); rk11.pico2 (0 ASM blocks dropped); rp11.pico2 (0 ASM blocks dropped)
+; cpu.pico2 (7 ASM blocks dropped); fp11.pico2 (5 ASM blocks dropped); instructions_mmu.pico2 (315 ASM blocks dropped); instructions.pico2 (3 ASM blocks dropped); kw11.pico2 (0 ASM blocks dropped); rk11.pico2 (0 ASM blocks dropped); rp11.pico2 (0 ASM blocks dropped)
 
 Declare SmpBarrier()
 Declare CpuEventIn(k.l)
@@ -104,6 +104,8 @@ Declare FpWriteI(v.l, spec.l, ln.l)
 Declare FpLoadAc(p.l, ac.l, qd.l)
 Declare FpStoreAc(ac.l, p.l, qd.l)
 Declare FpCpuCc()
+Declare FpExecRef()
+Declare FpExecAsm()
 Declare FpExec()
 Declare OpsM(from.l, count.l, target.i)
 Declare.l CpuRunM(n.l)
@@ -3183,7 +3185,21 @@ EndProcedure
 ; A floating operand into pair p (FpEa then FpReadF); 0 = the instruction is NOP'd.
 Procedure.l FpSrc(p.l, spec.l, ln.l)
 CompilerIf #ASM_FP = 1
-  If spec > 7
+  If spec <= 5                                ; AC0-AC5: FpEa's mode 0 and FpReadF's copy
+    FpAdr = 0 : FpSpace = 0
+    PH(p) = FrH(spec)
+    If ln = #FP_QUAD
+      PL(p) = FrL(spec)
+    Else
+      PL(p) = 0
+    EndIf
+    If (PH(p) & #FP_SIGN) <> 0 And FpExpOf(PH(p)) = 0
+      If FpNoTrap(#FEC_UNDFV) = 0
+        ProcedureReturn 0
+      EndIf
+    EndIf
+    ProcedureReturn 1
+  ElseIf spec > 7
     FrDs = spec : FrLn = ln : FrP = p : FrWr = 0
     FpOpAsm()
     If FrwFast
@@ -3270,7 +3286,8 @@ EndProcedure
 
 ; ---- the instruction -----------------------------------------------------
 ; Op is the instruction, Reg(7) the PC after it (the handler synced it).
-Procedure FpExec()
+; FpExecRef is all of it in Basic; FpExec (below) tries FpExecAsm first.
+Procedure FpExecRef()
   If FpReady = 0
     FpInit()
   EndIf
@@ -3587,6 +3604,32 @@ Procedure FpExec()
   EndIf
 EndProcedure
 
+; ---- the common instructions in assembly (#ASM_FP = 1) ---------------------
+; FpExecAsm does MULf (171), ADDf (172), LDf (172.4), SUBf (173), STf (174)
+; and DIVf (174.4) - every 17xxxx whose bits 11-8 are 2, 4, 5, 6, 8 or 9 -
+; the way FpExecRef's cases do them: the same prologue (FpBackupPc, FpChgOn,
+; FpQuit, FxAc, FxDs, FxQd, FxLenf), the operand through FpSrc / FpDst, the
+; accumulator into #P_FAC, the arithmetic procedure (FpMulOp, FpAddOp,
+; FpDivOp; a SUBf flips a nonzero source's sign first, a DIVf by a zero
+; exponent is FpNoTrap(#FEC_DZRO) and nothing more), the accumulator back, the
+; condition codes as FpSetCc sets them, and the register change at the end.
+; Op is r8, which every procedure leaves alone. Any other instruction, or the
+; unit not yet set up, and it sets FxDone = 0 and FpExec goes on to
+; FpExecRef. asm_check.pico2 holds FpExec to FpExecRef (ASMCHECK fpx).
+Global FxDone.l
+Procedure FpExecAsm()
+EndProcedure
+
+Procedure FpExec()
+CompilerIf #ASM_FP = 1
+  FpExecAsm()
+  If FxDone = 0
+    FpExecRef()
+  EndIf
+CompilerElse
+  FpExecRef()
+CompilerEndIf
+EndProcedure
 
 ; ======== instructions_mmu.pico2 (J11_18MHz_KDJ11_BF/pico2) ========
 ; ======================================================================
