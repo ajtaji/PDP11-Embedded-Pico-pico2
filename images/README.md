@@ -2,21 +2,23 @@
 
 ## 2026-10-26 builds
 
-The fresh complete Unix rerun takes **48.15 s on Pico W** and **55.44 s on
-Pico 2 W**; see [fresh Sieve/Whetstone and Unix results](../docs/bench/fresh-2026-10-26.md).
+The fresh complete Unix rerun takes **48.29 s on Pico W** and **55.44 s on
+Pico 2 W**; see [fresh Sieve/Whetstone and Unix results](../docs/bench/fp-2026-10-26.md).
+
+RP2040 now executes FP11 F/D instructions directly, with general Thumb-1 arithmetic. Whetstone improves from 5.80 to 241.1 KWIPS; broad correctness and Unix process-state tests also pass. Install both its firmware and disk pack to enable this safely under Unix.
 
 These builds include the CPU optimizations, standard panel console and live
 TrueType fonts. This refresh adds complete native operand handlers on both
 chips and faster mapped fetch/address dispatch on RP2350. Measured Unix
 work takes 1.6% less time on Pico W and 2.1% less on Pico 2 W; see
 [BENCHMARKS](../docs/BENCHMARKS.md#additional-assembly-pass-2026-10-26).
-Runtime source: `c431194`. The PSRAM build tool now selects
+Runtime source: `526ca8a` for RP2040 direct FP11 and the matching Mini-Unix FP context kernel. RP2350 program bytes are unchanged from the preceding release. The PSRAM build tool now selects
 the actual board profile, including its flash size and PSRAM chip select.
 The [manifest](manifest-2026-10-26.json) records program/file hashes, compiler
 hash and board profiles. [SHA256SUMS](SHA256SUMS) covers the supplied files.
 
 The RP2350 Unix disk payloads and pack nonces remain **byte-for-byte unchanged**.
-The Pico W pack now includes the board-built J-11 Mini-Unix pipe kernel,
+The Pico W pack now includes the board-built J-11 Mini-Unix pipe/FP-context kernel,
 patched sources and `/rkmx.prev` fallback. Its firmware has a 63 KB lossless
 compressed RAM write overlay. See [the kernel guide](../docs/minix/j11-pipes.md).
 Both demo programs include the animation-counter fix for long-running plasma
@@ -30,13 +32,13 @@ Unix pack and, on PSRAM boards, its saved changes. Output settings also survive.
 Use **Compiler > Flash Prebuilt File...** in PureMetal Forge, or copy the file
 to the BOOTSEL drive.
 
-For RP2040 pipe support, also install the new `picow-mini-unix/minix.uf2`
+For RP2040 pipes and safe direct floating-point process state, also install the new `picow-mini-unix/minix.uf2`
 in a second upload. Updating firmware alone retains the installed guest
 kernel. The disk-pack file replaces the installed Mini-Unix pack.
 
 | File | Bytes | SHA-256 |
 | --- | ---: | --- |
-| [picow-mini-unix/firmware.uf2](picow-mini-unix/firmware.uf2) | 367,104 | `0a3a7a082eb05f520b858f31922809bc7b106d791c2a0c619a823f0a40320fbf` |
+| [picow-mini-unix/firmware.uf2](picow-mini-unix/firmware.uf2) | 395,264 | `bf2891418c0ac6289180e07daa296065b4dd1f834872467a1e2588f8cf6c6de1` |
 | [pico2w-v6/firmware.uf2](pico2w-v6/firmware.uf2) | 399,872 | `def17d528839940b344b186437465ce4f728e21990048d355cae29d6d98e6317` |
 | [picoplus2/firmware.uf2](picoplus2/firmware.uf2) | 457,728 | `25782f045bb0f1be6d18039601a021a564e235acb8f33ac3caf26682789a9aa1` |
 | [feather/firmware.uf2](feather/firmware.uf2) | 457,728 | `7c8f848e7deabc51a77487e2bef95a78f7f5a8f8602a0bd12b106afd80f8681b` |
@@ -55,7 +57,7 @@ map for the IDE, with repository-relative source references.
 | File | Bytes | SHA-256 |
 | --- | ---: | --- |
 | [pico2w-v6/combined.uf2](pico2w-v6/combined.uf2) | 3,332,608 | `9c371ca24c6d165506b1c574449a69b8ca8972751ba48c6dddb6e111c456bfbc` |
-| [picow-mini-unix/minix.uf2](picow-mini-unix/minix.uf2) | 3,171,328 | `cd131d1109d7ac6437d3b6e6750c0c85be4ad136e32d84befbcbe26e2ddb4595` |
+| [picow-mini-unix/minix.uf2](picow-mini-unix/minix.uf2) | 3,171,328 | `faa6b1f0987bfdb45f6f3d97b1fe0e4a826cbae9df39f5b1ae97b026bdc3e3d3` |
 | [picoplus2/combined.uf2](picoplus2/combined.uf2) | 9,559,040 | `ed34e9ca65b7f3e3210ddf5ca97ffb11c6f4c7d402d680e381eefe1befa39159` |
 | [picoplus2-v7/combined.uf2](picoplus2-v7/combined.uf2) | 22,944,768 | `ac29c2ec4807b2dc4167c297db1605d92f0a9020561931e3716b70961b68acc4` |
 | [feather/combined.uf2](feather/combined.uf2) | 9,559,040 | `9e80a45185adcaceb8aff28dfd7525206863fa46398201787260dc9e3c404aa9` |
@@ -111,14 +113,13 @@ silent builds or PCM meter example.
 | File | Bytes | SHA-256 |
 | --- | ---: | --- |
 | [pico2w-demo/firmware.uf2](pico2w-demo/firmware.uf2) | 437,248 | `f616e0371ddd2cedbc654d457e790f590742f5f888a4f13112f7c2d55b55ec50` |
-| [picow-demo/firmware.uf2](picow-demo/firmware.uf2) | 471,552 | `42a25fc158edc6a1031725f371b89c5fabf0f3219a5244c850c5c8d61d6abdeb` |
+| [picow-demo/firmware.uf2](picow-demo/firmware.uf2) | 499,200 | `be7972086723f9c16906f29519a8b89e79b88211abb881a5534deb797ffc99a3` |
 
 Flash the firmware matching the chip, then its [silent panel settings](output-settings/).
 The built-in demo starts automatically with a centered 320 x 200 picture.
 RP2350 uses 64 KB of guest memory and a silent backend. RP2040 uses 56 KB,
 disables disks and links the optional Bluetooth backend; silent saved settings
-keep its radio off. Both demo programs use runtime source `3f81486`, matching the refreshed Unix
-firmware. The manifest records the RP2040 Bluetooth link profile separately.
+keep its radio off. The RP2040 demo includes direct FP11 from `526ca8a`; RP2350 demo bytes are unchanged. The manifest records the RP2040 Bluetooth link profile separately.
 
 The firmware and settings preserve the installed disk pack. Flash normal
 firmware to return to Unix. **Installing RP2040 radio firmware for sound

@@ -1,12 +1,12 @@
 # Firmware validation, 2026-10-26
 
-The current capacity/demo refresh is built from runtime source `c431194`.
+The RP2040 floating-point refresh uses runtime source `526ca8a`. RP2350 programs and disks are byte-identical to the preceding publication; their earlier hardware checks below remain applicable.
 [manifest-2026-10-26.json](manifest-2026-10-26.json) records every program/file
 hash, board profile and compiler hash. All ready builds start silent.
 
 | Image | Physical hardware | Checks |
 | --- | --- | --- |
-| Pico W standard firmware | Pico W, RP2040, 200 MHz, LAFVIN ST7796 | All four Mini-Unix phases passed in 48.15 s; 63 KB lossless overlay, real guest-kernel pipes, 56 KB guest memory; no dropped clock ticks/lost console input |
+| Pico W standard firmware | Pico W, RP2040, 200 MHz, LAFVIN ST7796 | All four Mini-Unix phases passed again in 48.29 s; 63 KB lossless overlay, real guest-kernel pipes, 56 KB guest memory; no dropped clock ticks/lost console input |
 | Pico 2 W standard firmware | Pico 2 W, RP2350, 150 MHz, LAFVIN ST7796 | All four V6 build/process/file/text/read phases passed; 152 KB guest and 248 write blocks retained; no dropped ticks/lost input |
 | Pico Plus 2 W V6 | GPIO47 PSRAM, 16 MB flash | Boot, filesystem listing, C compilation and result `42`; 18-bit MMU, 3812 KB guest memory with 224 KB SRAM window; fonts ready; no dropped ticks/lost input |
 | Feather V6 | Feather RP2350 HSTX, GPIO8 PSRAM, 8 MB flash | Same V6 checks and result `42`; correct flash/store profile; no dropped ticks/lost input |
@@ -90,3 +90,39 @@ Its PCM-meter build also produced increasing nonzero sample counts, peak
 unchanged by this storage/demo refresh. Those audio results apply to the
 preceding firmware; live speaker playback has not been repeated for the
 new binary. RP2350 speaker playback was not checked. See [OUTPUTS.md](../OUTPUTS.md).
+
+## RP2040 direct FP11 refresh
+
+The final 197,528-byte normal program was tested on the physical Pico W at
+200 MHz. It keeps the full 56 KB guest, 63 KB compressed overlay, panels and
+live fonts. Code SRAM is 49,136 bytes; 248 bytes remain beyond reserved
+stacks/windows. The demo is 249,572 bytes, below the 0x3f000 settings sector.
+
+- 22,528 native arithmetic checks cover full unsigned products, fraction
+  products, scaled quotient/remainder and all 64-bit shift counts. A private
+  deliberately incorrect quotient produced 989 failures.
+- DEC JFPAA1 and JFPBA0 both complete with zero errors using the final program.
+- General Unix tests pass for precision, integer conversion, matrices,
+  sqrt, sin/cos, atan, exp/log, all six accumulators/FPS across fork and
+  blocking pipes, live state reset on exec, and signal 8 on divide by zero.
+  The previous kernel fails the state check; the new kernel passes.
+- The Mini-Unix kernel was compiled/assembled/linked on the physical Pico W.
+  Its nine patched source files match the packaged filesystem. Kernel end
+  is 22,700, leaving 852 bytes below the swap stack. All three swap users
+  retain consistent process-slot addressing.
+- The complete Unix workload passes in 48.286163 s; three Sieve runs return
+  1,899 primes, median 0.840355 s normalized to ten passes. Three 3,000-KWhetstone
+  runs take 12.443447, 12.438980 and 12.441653 s, all X=9311/10000:
+  241.1255 KWIPS, about 41.6 times the earlier guest interpreter result.
+
+These are general FP11 and guest kernel changes, with no benchmark matching.
+Full results and methodology: [floating point and Unix rerun](../docs/bench/fp-2026-10-26.md).
+The old same-day benchmark page is retained as historical evidence.
+
+The final RP2040 demo was installed after restoring the pre-test whole-flash
+snapshot. A full 2 MB native flash readback matches every published demo
+program page; every byte from 0x3f000 to the end matches the original
+snapshot, preserving settings, Unix pack and radio data. The panel and guest
+frame/vertical-blank counters advanced by 1,322 over roughly 22 seconds,
+with zero panel errors, dropped ticks or audio transport errors in silent
+mode. Speaker playback was not repeated for this FP-only update.
