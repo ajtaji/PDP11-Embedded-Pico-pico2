@@ -939,6 +939,7 @@ EndProcedure
 ; (the low word 0) and D; FPS D, T and the overflow and underflow enables at
 ; random, FID sometimes. Compared: #P_FAC, the result (V), FPS, FEC, FEA and
 ; the trap.
+Global FaMul.i, FmChecks.i, FmFailures.i
 Global FaChecks.i, FaFailures.i, FaFirst.i, FaH.i, FaL.i, FbH.i, FbL.i, FaFps.i, FaK.i
 Global Dim FaA.i(8)
 Global Dim FaB.i(8)
@@ -998,18 +999,31 @@ Procedure FpAddOne()
   EndIf
   FpBackupPc = RndN($10000)
   FaPrep()
-  FpAddOpAsm()
+  If FaMul
+    FpMulOpAsm()
+  Else
+    FpAddOpAsm()
+  EndIf
   FaSnap(@FaA(0), FaRet)
   FaPrep()
-  FaK = FpAddOpRef()
+  If FaMul
+    FaK = FpMulOpRef()
+    FmChecks = FmChecks + 1
+  Else
+    FaK = FpAddOpRef()
+    FaChecks = FaChecks + 1
+  EndIf
   FaSnap(@FaB(0), FaK)
-  FaChecks = FaChecks + 1
   For FaK = 0 To 6
     If FaA(FaK) <> FaB(FaK)
-      FaFailures = FaFailures + 1
+      If FaMul
+        FmFailures = FmFailures + 1
+      Else
+        FaFailures = FaFailures + 1
+      EndIf
       If FaFirst < 0
-        FaFirst = FaChecks
-        Say("FPADD FIRST FAIL fac=") : Num(FaH) : Ch(32) : Num(FaL) : Say(" src=") : Num(FbH) : Ch(32) : Num(FbL)
+        FaFirst = FaChecks + FmChecks
+        Say("FPADD/MUL FIRST FAIL mul=") : Num(FaMul) : Say(" fac=") : Num(FaH) : Ch(32) : Num(FaL) : Say(" src=") : Num(FbH) : Ch(32) : Num(FbL)
         Say(" fps=") : Oct(FaFps) : Say(" field=") : Num(FaK) : Say(" asm=") : Num(FaA(FaK)) : Say(" plain=") : Num(FaB(FaK)) : Eol()
       EndIf
       Break
@@ -1469,6 +1483,21 @@ Procedure Main()
     Next
     Say("ASMCHECK fpadd checks=") : Num(FaChecks) : Say(" failures=") : Num(FaFailures)
     If FaFailures = 0
+      Say(" PASS")
+    Else
+      Say(" FAIL first=") : Num(FaFirst)
+    EndIf
+    Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
+    Mt0 = Micros()
+    FaMul = 1
+    For Mr = 1 To #ROUND * 10
+      FpAddOne()
+      UsbSerialTask()
+      SafetyPet()
+    Next
+    FaMul = 0
+    Say("ASMCHECK fpmul checks=") : Num(FmChecks) : Say(" failures=") : Num(FmFailures)
+    If FmFailures = 0
       Say(" PASS")
     Else
       Say(" FAIL first=") : Num(FaFirst)

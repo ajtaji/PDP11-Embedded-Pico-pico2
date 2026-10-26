@@ -1,6 +1,6 @@
 ; desktop/gen/core.pbi - WRITTEN BY desktop/tools/desktop_gen.py from the Pico 2's
 ; sources; do not edit (edit the board's files and run the tool again).
-; cpu.pico2 (7 ASM blocks dropped); fp11.pico2 (5 ASM blocks dropped); instructions_mmu.pico2 (315 ASM blocks dropped); instructions.pico2 (3 ASM blocks dropped); kw11.pico2 (0 ASM blocks dropped); rk11.pico2 (0 ASM blocks dropped); rp11.pico2 (0 ASM blocks dropped)
+; cpu.pico2 (7 ASM blocks dropped); fp11.pico2 (6 ASM blocks dropped); instructions_mmu.pico2 (315 ASM blocks dropped); instructions.pico2 (3 ASM blocks dropped); kw11.pico2 (0 ASM blocks dropped); rk11.pico2 (0 ASM blocks dropped); rp11.pico2 (0 ASM blocks dropped)
 
 Declare SmpBarrier()
 Declare CpuEventIn(k.l)
@@ -86,6 +86,8 @@ Declare FpFracMul()
 Declare FpDivQRef()
 Declare FpDivQAsm()
 Declare FpDivQ()
+Declare.l FpMulOpRef()
+Declare FpMulOpAsm()
 Declare.l FpMulOp()
 Declare.l FpModOp()
 Declare.l FpDivOp()
@@ -2856,7 +2858,7 @@ CompilerElse
 CompilerEndIf
 EndProcedure
 
-Procedure.l FpMulOp()                         ; mulfp11
+Procedure.l FpMulOpRef()                      ; mulfp11: the plain version (FpMulOpAsm)
   Define fe.l, se.l
   fe = FpExpOf(PH(#P_FAC))
   se = FpExpOf(PH(#P_SRC))
@@ -2873,6 +2875,26 @@ Procedure.l FpMulOp()                         ; mulfp11
     FpLsh1(#P_FF) : fe = fe - 1
   EndIf
   ProcedureReturn FpRoundPack(#P_FAC, fe, #P_FF, 1)
+EndProcedure
+
+; mulfp11 in assembly (#ASM_FP = 1): FpMulOpRef with the operands in
+; registers - a zero exponent gives zero; the fractions with their hidden
+; bits, the exponent fe + se - 128, the product's top 64 bits by FpFracMulAsm's
+; three UMAALs (ff times sf << 3, bits 56-119), the one-bit normalize, then
+; FpRoundPack's rounding, guard shift and pack as FpAddOpAsm does them, the
+; sign the two signs' exclusive or. The result is #P_FAC and FaRet; the
+; working pairs are left alone (nothing reads them after). asm_check.pico2
+; holds it to FpMulOpRef (ASMCHECK fpmul).
+Procedure FpMulOpAsm()
+EndProcedure
+
+Procedure.l FpMulOp()                         ; mulfp11
+CompilerIf #ASM_FP = 1
+  FpMulOpAsm()
+  ProcedureReturn FaRet
+CompilerElse
+  ProcedureReturn FpMulOpRef()
+CompilerEndIf
 EndProcedure
 
 Procedure.l FpModOp()                         ; modfp11: integer to #P_FAC, fraction to #P_MOD
@@ -3608,7 +3630,9 @@ EndProcedure
 ; FpExecAsm does MULf (171), ADDf (172), LDf (172.4), SUBf (173), STf (174)
 ; and DIVf (174.4) - every 17xxxx whose bits 11-8 are 2, 4, 5, 6, 8 or 9 -
 ; the way FpExecRef's cases do them: the same prologue (FpBackupPc, FpChgOn,
-; FpQuit, FxAc, FxDs, FxQd, FxLenf), the operand through FpSrc / FpDst, the
+; FpQuit, FxAc, FxDs, FxQd, FxLenf), the operand through FpSrc / FpDst (a
+; memory operand through FpOpAsm directly, as they would, and through them
+; only when it says no), the
 ; accumulator into #P_FAC, the arithmetic procedure (FpMulOp, FpAddOp,
 ; FpDivOp; a SUBf flips a nonzero source's sign first, a DIVf by a zero
 ; exponent is FpNoTrap(#FEC_DZRO) and nothing more), the accumulator back, the
