@@ -1,0 +1,11 @@
+S|flash|8388608|image|230580
+R|radio firmware|2097152|262144|reserved|flash_layout.pico2 line 53 (included)
+F|radio firmware|J11_18MHz_KDJ11_BF/pico2/flash_layout.pico2
+R|RK0|2359296|2498560|rk05|flash_layout.pico2 line 56 (included)
+F|RK0|J11_18MHz_KDJ11_BF/pico2/flash_layout.pico2
+R|RK1|4980736|2052096|rk05|flash_layout.pico2 line 57 (included)
+F|RK1|J11_18MHz_KDJ11_BF/pico2/flash_layout.pico2
+R|store|7340032|1048576|reserved|flash_layout.pico2 line 58 (included)
+F|store|J11_18MHz_KDJ11_BF/pico2/flash_layout.pico2
+R|PDP11 outputs|323584|4096|raw|config.pmi line 11 (included)
+F|PDP11 outputs|J11_18MHz_KDJ11_BF/outputs/config.pmi

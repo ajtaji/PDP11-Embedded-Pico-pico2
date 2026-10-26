@@ -14,7 +14,7 @@ are in [bench/](bench/).
 | Dhrystone 2.1 (Weicker; netlib's C source unchanged, `cc -O -DHZ=60`, 20,000 runs) | V7 | **1,125.7 Dhrystones/s** (888 us a run), 0.64 DMIPS (VAX-11/780 = 1757); every "should be" in its self-check right | - |
 | Whetstone, double precision (netlib's C Whetstone, Painter 1998; [V7 port](bench/v7/whet.c): K&R declarations only) | V7 | 30 loops (3,000 KWhetstones) in 16.4 s CPU: **about 183 KWIPS** | PDP-11/70 with FPP, RSTS/E FORTRAN-IV-PLUS, double precision: 479 (the DECUS RSX80A Whetstone listing, `whet.ftn`); single precision 632 |
 | Whetstone, double precision ([V6 port](bench/v6/whet.c): the same arithmetic in 1975 C, int loop counts) | V6 | 1,000 KWhetstones in 4.4 s CPU (4.78 s from the host): **about 227 KWIPS** | the same |
-| Sieve of Eratosthenes (Gilbreath, BYTE September 1981: 8190 flags, 10 iterations, 1899 primes) | V7 | **2.5 s CPU** (2.9 s from the host) | C on a PDP-11/70: just over 1.12 s (BYTE 1981, as summarised by Wikipedia's "Byte Sieve") |
+| Sieve of Eratosthenes (Gilbreath, BYTE September 1981: 8190 flags, 10 iterations, 1899 primes) | V7 | **2.5 s CPU** (2.9 s from the host) | C/Unix V6 on a PDP-11/70: **1.52 s** (BYTE January 1983, table 1 continued, printed page 298; [original scan](https://calentamientoglobalacelerado.net/benchmarkzone/download/criba_sieve_byte_1983.pdf)) |
 | the same ([V6 port](bench/v6/sieve.c): `=+`) | V6 | **2.5 s CPU** (2.83 s from the host) | the same |
 | givens (E. J. Olson's pichart PDP-11 version: Givens-rotation least squares in double precision, golden run and consistency check at every size; unchanged, `cc -O -DKANDR -DASCII`) | V7 | **85,175 FLOPS at 4x4 to 103,697 at 42x42**; 63x63 ends "Error allocating" (64 KB of data per process) | - |
 
@@ -24,9 +24,7 @@ compile the floating point differently; the arithmetic done is the same.
 Dhrystone 2.1 needs `typedef` and `enum`, which V6's C compiler does not
 have, so it runs on V7 only.
 
-So, roughly: integer work at about half a PDP-11/70 (the Sieve), floating
-point at about 40% of an 11/70 with its FP11-C running DEC's optimising
-FORTRAN.
+These are historical measurements of the 2026-10-21 firmware. They do not describe the newer CPU optimizations or the 2026-10-26 panel/font builds. The earlier 1.12 s attribution for the real PDP-11/70 was incorrect; the scanned BYTE table gives 1.52 s for C under Unix V6. No matched real-machine full-Unix timing is claimed.
 
 ## How to repeat them
 

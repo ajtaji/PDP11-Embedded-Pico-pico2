@@ -1,16 +1,40 @@
 # PDP-11 (J-11) emulator for the Pico W and Pico 2 W
 
-A DEC J-11 (KDJ11-BF) PDP-11 emulated on a Raspberry Pi Pico W (RP2040) or Pico 2 W (RP2350), written in PureMetal and built with PureMetal Forge. It boots Unix straight from the board's flash and talks to you over the USB serial port: **Sixth Edition (V6) on the Pico 2 W and Mini-Unix on the Pico W.**
+A DEC J-11 (KDJ11-BF) PDP-11 emulated on a Raspberry Pi Pico W (RP2040) or Pico 2 W (RP2350), written in PureMetal and built with PureMetal Forge. It boots Unix straight from the board's flash, displays its console on a supported panel, and keeps the USB serial console available: **Sixth Edition (V6) on the Pico 2 W and Mini-Unix on the Pico W.**
 
-The emulated machine has a console on the USB serial port, an RK11 disk controller with an RK05 pack held in the board's flash, a KW11-L line clock and, on the J-11, memory management. The emulated processor runs alone on the chip's first core, with its hot run loop in SRAM; the second core does USB, the console, the disk's storage and the line clock's 60 Hz.
+The emulated machine has a panel and USB serial console, an RK11 disk controller with an RK05 pack held in the board's flash, a KW11-L line clock and, on the J-11, memory management. The emulated processor runs alone on the chip's first core, with its hot run loop in SRAM; the second core does USB, the console, the disk's storage and the line clock's 60 Hz.
 
 ![Mini-Unix booting on a Pico W](boot-mini-unix.png)
 
 *Mini-Unix on a Pico W, seen in a terminal on Linux: the `@rkmx` boot, the licence notice, then a directory listing at the `#` prompt.*
 
 - **How-to:** [docs/HOWTO.md](docs/HOWTO.md) (flashing, serial settings, booting, building)
+- **Panels, live fonts and sound modules:** [OUTPUTS.md](OUTPUTS.md)
+- **Firmware downloads and checksums:** [images/README.md](images/README.md)
 - **Host tools:** [docs/TOOLS.md](docs/TOOLS.md)
 - **Forum:** <https://forum.ajtaji.com>
+
+## Current firmware: 2026-10-26
+
+The ready-to-flash images now include the CPU optimizations, standard panel
+console, and runtime TrueType fonts. LAFVIN ST7796 is the default screen on
+both processors; Display Pack 2 ST7789, ILI9341 and HX8357D use the same
+firmware with a small [screen settings UF2](images/output-settings/).
+Only the LAFVIN glass has been checked in this update.
+
+Lato-derived Terminal Sans at 14 pixels is the default. The Pico rasterizes
+the TrueType outlines itself and uses natural letter spacing. At the USB
+console, press **Ctrl-]**, release it, then **f** to switch faces, **+** to
+increase size, or **-** to decrease it. The guest keeps running. A monospace
+face is included for aligned columns. Oversized requests are refused and
+the previous font is restored.
+
+Existing installations need only their board's **firmware.uf2**, not another
+disk download. Full combined images are for installing the firmware and Unix
+packs together. [Downloads, hashes and validation](images/README.md) list both.
+All packaged builds use silent audio; the shared PCM interface supports an
+optional Bluetooth backend or a custom output module ([details](OUTPUTS.md)).
+The [graphics demo](images/pico2w-demo/firmware.uf2) is RP2350-only.
 
 ## Status per board
 
@@ -20,12 +44,12 @@ The emulated machine has a console on the USB serial port, an RK11 disk controll
 | Kernel booted | `rkunix` | `rkmx` |
 | Memory management | on | off (Mini-Unix does not use it; the stats block says `MMU off (16-bit)`) |
 | PDP-11 memory | 152 KB (000000-457777) plus the I/O page; V6 says `mem = 556` (56 KB, 000000-157777, with memory management off) | 56 KB (000000-157777) plus the I/O page |
-| Speed, measured on the boards (2026-10-20, with the hot paths in assembly) | V6 `time od /rkunix` in 10.4 s, timed from the host (13.9 s on 2026-10-04); the bench loop with memory management off ran at about 2,440,000 instructions per second on 2026-10-04 | Mini-Unix `time od /rkmx` in 4.6 s (5.9 s on 2026-10-04); the bench loop ran at about 2,550,000 instructions per second on 2026-10-04 |
-| Console ready after port open | `#` after 3.4 s | `#` after 3.2 s |
-| RAM for writes | 112-block swap RAM disk plus 254 blocks for file-system writes | 124 blocks shared by swap and file writes |
+| Speed, historical measurements on the boards (2026-10-20, with the hot paths in assembly) | V6 `time od /rkunix` in 10.4 s, timed from the host (13.9 s on 2026-10-04); the bench loop with memory management off ran at about 2,440,000 instructions per second on 2026-10-04 | Mini-Unix `time od /rkmx` in 4.6 s (5.9 s on 2026-10-04); the bench loop ran at about 2,550,000 instructions per second on 2026-10-04 |
+| Console ready after port open (historical serial measurements) | `#` after 3.4 s | `#` after 3.2 s |
+| RAM for writes | 112-block swap RAM disk plus 248 blocks for file-system writes in the standard panel build | 124 blocks shared by swap and file writes |
 | Flash images | `combined.uf2` (one file) | `firmware.uf2` then `minix.uf2` (two files) |
 | Disk | RK05 pack in flash, read-only | RK05 pack in flash, read-only |
-| DEC diagnostic ladder | 17 of 19 pass (the other two halt by design for a J-11) | 17 of 19 pass (the same two) |
+| CPU-core diagnostic validation (2026-10-25) | 19 of 21 pass, including floating point; two expected J-11 model HALTs | 17 applicable integer tests pass; two expected J-11 model HALTs; no FP11 in this build |
 | Seventh Edition (V7) | on the Pico Plus 2 W: `images/picoplus2-v7/combined.uf2`, boots itself ([Seventh Edition and floating point](#seventh-edition-v7-and-floating-point)) | not supported |
 
 ## Features
@@ -37,7 +61,10 @@ The emulated machine has a console on the USB serial port, an RK11 disk controll
 | RP11 controller, RP03 drive | PSRAM boards: V7's whole `/usr` on `/dev/rp3`, as V7 shipped it |
 | Saving to flash | PSRAM boards (the V7 image): changes are saved by themselves a few seconds after the disks go quiet, or at once with Ctrl-] `w`, into a wear-levelled store that a power cut cannot spoil |
 | KW11-L line clock | 60 Hz, kept by core 1 |
-| Console | USB serial, no baud rate to set |
+| Console | Panel output and USB serial; input remains on USB serial |
+| Live TrueType fonts | Lato-derived proportional and JetBrains-derived monospace faces; Ctrl-] then f / + / - |
+| Panel drivers | LAFVIN ST7796, Display Pack 2 ST7789, ILI9341 and HX8357D, selected by saved settings |
+| Sound interface | Silent default, modular signed 48 kHz PCM, optional Bluetooth/custom sink |
 | Auto-boot | Powers up into Unix with no typing; Esc within 2 s for the diagnostic console |
 | Live statistics | Ctrl-] then `s` |
 | Serial tape reader | Loads DEC diagnostic paper tapes over the serial port |
@@ -59,7 +86,7 @@ The emulated machine has a console on the USB serial port, an RK11 disk controll
    - **Pico 2 W:** one file, `combined.uf2` (firmware and disk pack together).
    - **Pico W:** two files in two separate BOOTSEL sessions, firmware first, then `minix.uf2`. On the RP2040 a single combined file leaves the disk area unwritten (the start-up line then says `RK0: no pack`).
    - **With the PureMetal Forge IDE** instead of the button: choose the board in the **Board** menu and use **Compiler > Flash Prebuilt File...** with the same file(s); to change the firmware, open `diag.pico2` (or `diag.pico`) and **Compile + Upload**: the pack on the board is kept. See [docs/HOWTO.md, section 11](docs/HOWTO.md#11-flash-and-build-from-the-puremetal-forge-ide).
-3. Open the board's serial port at 115200 8N1 **within 30 s of power-up** (a COM port on Windows, `/dev/ttyACM0` or similar on Linux). The baud rate does not matter: it is USB.
+3. With the default panel enabled, Unix boots and displays its console without a serial terminal open. Open USB serial at 115200 8N1 for keyboard input or a second view (a COM port on Windows, `/dev/ttyACM0` or similar on Linux). With the `none` panel setting, the firmware waits up to 30 s for the serial port. The baud rate does not matter: it is USB.
 4. The board boots Unix by itself. At `#` you are root; there is no login. Type in lower case (both systems print in capitals).
 
 ```
@@ -185,7 +212,7 @@ Measured on a Pico Plus 2 W on 2026-10-21 ([docs/BENCHMARKS.md](docs/BENCHMARKS.
 | BYTE Sieve, 10 iterations | 2.5 s | 2.5 s (the Pico 2 W too) |
 | givens (pichart), double precision | 85,000-104,000 FLOPS | - |
 
-For comparison, a PDP-11/70 with its FP11 ran the double precision Whetstone at 479 under DEC's FORTRAN-IV-PLUS, and the Sieve in C in just over 1.1 s. Against another PDP-11 emulator on the same board and clock (Pico_1140, the same V6 and the same benchmarks), this one is 1.25 to 2.7 times as fast: [docs/COMPARISON.md](docs/COMPARISON.md).
+For comparison, a PDP-11/70 with its FP11 ran the double precision Whetstone at 479 under DEC's FORTRAN-IV-PLUS, and the Sieve in C under Unix V6 in **1.52 s**, as recorded in [BYTE January 1983, table 1, page 298](https://calentamientoglobalacelerado.net/benchmarkzone/download/criba_sieve_byte_1983.pdf). Against another PDP-11 emulator on the same board and clock (Pico_1140, the same V6 and the same benchmarks), this one is 1.25 to 2.7 times as fast: [docs/COMPARISON.md](docs/COMPARISON.md).
 
 ## Known limits
 
@@ -216,7 +243,7 @@ Known differences, found by those tapes and left as they are:
 - **A memory-management abort and an odd address in one instruction** (CKKTB test 13: the stacked PC is 4 higher than the 11/44 tape wants) and **the address errors of CKKTB test 34:** not settled by the manuals read.
 - **PDR bit 15 does not read back** (CKKTA test 31). On the KDJ11 it is the bit that bypasses the cache; the emulated machine has no cache.
 - **Tests of the F-11 tape that a J-11 must fail:** test 405 wants no trap from a word reference to an odd address (the F-11 has none; the J-11 traps: table B-1, item 21) and test 410 wants MFPT to answer 3 (the J-11 answers 5). The emulator behaves as the J-11 there; the tape was not run further.
-- **The floating point unit is a port of SIMH's** (`pico2/fp11.pico2`, its notice kept), held to a second, separate port in Python (`tools/fp11_model.py`) and run by V7's C compiler, `awk` and the benchmarks; no DEC floating point diagnostic has been run on it (they are on an MSCP disk image, and the emulator has no MSCP controller).
+- **The floating point unit is a port of SIMH's** (`pico2/fp11.pico2`, its notice kept), held to a second, separate port in Python (`tools/fp11_model.py`) and run by V7's C compiler, `awk` and the benchmarks; the DEC KDJ11 floating-point diagnostics passed on RP2350 in the 2026-10-25 CPU-core validation. The RP2040 build omits FP11. The 2026-10-26 image checks cover boot, Unix work, panels and fonts; they do not repeat the CPU-core ladder.
 - **Not modelled at all:** the cache and its registers beyond what Unix reads, memory on the Unibus itself, the red stack trap, and the registers the KDJ11-B's boot ROM uses.
 
 ## Repository layout

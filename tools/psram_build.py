@@ -8,7 +8,7 @@ psram_build.py - build the PSRAM boards' V6 image from this repository.
     compiler's own uploader, to the running board found there (tools/pack_install.py
     finds boards the same way; the packs are its job)
 
-Both boards ran these builds on 2026-10-07 (V6 reports mem = 1036; the
+Both boards ran the earlier builds on 2026-10-07 (V6 reports mem = 1036; the
 README's PSRAM section has what each printed). The same image runs on the
 desk in the PureMetal ARM emulator with its PSRAM model (arm_run ...
 flash=8M psram=8M, or flash=16M psram=8M,cs=47).
@@ -22,7 +22,7 @@ THE BOARDS
                Pico Plus 2 W.
 
 WHAT IT DOES
-    1. Compiles J11_18MHz_KDJ11_BF/pico2/diag.pico2 with the board's three
+    1. Compiles J11_18MHz_KDJ11_BF/pico2/diag.pico2 with the board's actual profile and three
        constants (#PSRAM = 1, #PSRAM_CS_PIN, #FLASH_CHIP) - from a copy
        written beside diag.pico2 and removed afterwards; diag.pico2 itself
        is never changed. The one other difference from the Pico 2 W build:
@@ -60,7 +60,8 @@ CONSTS = [("#PSRAM = 0 ", "#PSRAM = 1 "),
 
 def run(cmd, **kw):
     print("psram_build: " + " ".join(cmd))
-    r = subprocess.run(cmd, **kw)
+    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, **kw)
+    print(r.stdout, end="", flush=True)
     if r.returncode != 0:
         sys.exit("psram_build: that step failed (exit %d); nothing past it was built." % r.returncode)
 
@@ -102,7 +103,8 @@ def main():
     tmp = os.path.join(SRC, "diag_%s.pico2" % a.board)
     fw = os.path.join(out, "diag.bin")
     open(tmp, "wb").write(text.encode("utf-8"))
-    cmd = [a.compiler, "--compile", tmp, "-t", "rp2350", "-o", fw]
+    profile = "Pimoroni_Pico_Plus_2_W.board" if a.board == "picoplus2" else "Adafruit_Feather_RP2350_HSTX.board"
+    cmd = [a.compiler, "--compile", tmp, "-t", "rp2350", "--board", profile, "-o", fw]
     if a.hub_port is not None or a.usb_serial:
         sys.path.insert(0, HERE)
         import pack_install                  # the board by where it is plugged in, or by its serial number

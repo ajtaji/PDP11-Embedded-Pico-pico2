@@ -1,11 +1,12 @@
 # How to use the PDP-11 emulator
 
-Step-by-step instructions for the [PDP-11 emulator for the Pico W and Pico 2 W](../README.md): flash a board, connect a terminal, boot Unix, set the date, re-flash without the button, build your own disk image and build the firmware.
+Step-by-step instructions for the [PDP-11 emulator for the Pico W and Pico 2 W](../README.md): flash a board, select a panel, change fonts live, connect a terminal, boot Unix, set the date, re-flash without the button, build your own disk image and build the firmware.
 
 | Step | Section |
 |---|---|
 | Put the emulator on a board | [2. Flash the Pico 2 W](#2-flash-the-pico-2-w-rp2350), [3. Flash the Pico W](#3-flash-the-pico-w-rp2040-two-steps) |
-| See its console | [4. Connect a serial terminal](#4-connect-a-serial-terminal) |
+| See its console | [4. Panel and USB console](#4-panel-and-usb-console) |
+| Choose a screen, font or sound module | [13. Panels, live TrueType fonts and sound](#13-panels-live-truetype-fonts-and-sound) |
 | Use Unix | [5. Boot and use Unix](#5-boot-and-use-unix) |
 | Re-flash without the button | [6. Re-flash without the BOOTSEL button](#6-re-flash-without-the-bootsel-button) |
 | Your own disk | [7. Build your own disk image](#7-build-your-own-disk-image) |
@@ -52,9 +53,11 @@ The Pico W takes **two files in two separate BOOTSEL sessions**. On the RP2040 a
 
 If the start-up line says `RK0: no pack`, the second file is missing: repeat steps 3 and 4.
 
-## 4. Connect a serial terminal
+<a id="4-connect-a-serial-terminal"></a>
 
-The board is a USB serial device: a COM port on Windows, `/dev/ttyACM0` or similar on Linux.
+## 4. Panel and USB console
+
+The default LAFVIN ST7796 panel shows the boot messages and Unix console without opening a serial terminal. For the wiring and other panels, see [section 13](#13-panels-live-truetype-fonts-and-sound). USB serial remains available for keyboard input and a second view: a COM port on Windows, `/dev/ttyACM0` or similar on Linux.
 
 | Setting | Value |
 |---|---|
@@ -62,7 +65,7 @@ The board is a USB serial device: a COM port on Windows, `/dev/ttyACM0` or simil
 | Data / parity / stop | 8N1 |
 | Line endings | CR, LF and CR LF are all accepted; pasted text is fine |
 
-Open the port **within 30 s of power-up**: the firmware waits up to 30 s for the port to open before it starts, so the first lines are not lost.
+With panel output enabled, boot proceeds without waiting for a USB terminal. If you select the `none` panel profile, the firmware waits up to 30 s for the serial port before starting. Open the port during that interval to capture the first serial lines.
 
 Linux example (minicom, as in the screenshots below):
 
@@ -271,9 +274,7 @@ byte); ten `od` runs and more now leave the overlay at 53 of 124 blocks
 stays on the pack as `/rkmx.dist`; `/mx`, whose symbols `ps` reads, is
 linked to the kernel that runs.
 
-The compiler's output is the same byte for byte from the same source and
-the same compiler. With main `b9b70ed1` these reproduce the committed
-files; compare with the SHA-256 values in `images/README.md`. The firmware's
+The compiler's output is reproducible with the same source, compiler, board profile and options. The current builds use the runtime source and compiler hash in `images/manifest-2026-10-26.json`; follow `images/README.md` for the current build commands and SHA-256 values. The firmware's
 defaults (`#DISK_BACKEND = 2`, `#DISK_READ_ONLY = 1`, `#DESK_PROBE = 0` at
 the top of `diag.pico(2)`) are the ones the images use.
 
@@ -319,9 +320,9 @@ first bell.
 
 ## 10. The PSRAM boards
 
-**Read first (2026-10-22).** `images/picoplus2/combined.uf2` and `images/feather/combined.uf2` are built from the current source (packs at 0x10240000 and 0x104C0000, the store of saved changes in the top 1 MB of the flash) and ran on a Pico Plus 2 W and a Feather RP2350 HSTX.
+**Current images (2026-10-26).** `images/picoplus2/combined.uf2` and `images/feather/combined.uf2` contain the updated panel/font firmware and unchanged V6 packs, and were run on both boards. Their `firmware.uf2` downloads update an existing V6 or V7 installation without replacing the packs. The packs start at 0x10240000 and 0x104C0000; the saved-change store remains in the top 1 MB of flash.
 
-The Pimoroni Pico Plus 2 W and the Adafruit Feather RP2350 HSTX run V6 with 248 KB of memory. Their images are `images/picoplus2/combined.uf2` and `images/feather/combined.uf2`.
+The supplied V6 kernel on the Pimoroni Pico Plus 2 W and Adafruit Feather RP2350 HSTX uses an 18-bit address space (up to 248 KB); the firmware provides 3812 KB for 22-bit guests. The V7 pack asks for 2040 KB. Their images are `images/picoplus2/combined.uf2` and `images/feather/combined.uf2`.
 
 **With the boot drive.** Hold BOOT while plugging the board in and copy the board's `combined.uf2` to the drive, as in section 2.
 
@@ -379,7 +380,7 @@ A ready UF2 is sent exactly as it is, so the firmware and the disk pack land whe
 1. **File > Open** `J11_18MHz_KDJ11_BF/pico2/diag.pico2` (Pico 2 W) or `J11_18MHz_KDJ11_BF/pico/diag.pico` (Pico W). If the Board menu then shows the board without the W (Raspberry Pi Pico 2, or Pico), that is fine: same chip, same build, same upload.
 2. **Compiler > Compile + Upload.** The firmware goes on the board and **the disk pack already there is kept**: the upload writes only the firmware's part of the flash. The board restarts and boots Unix from the pack.
 
-So a board needs the ready image once (above), and after that every change is Compile + Upload. The firmware the IDE builds from the repository as it is equals the firmware inside `images/` byte for byte (the same check as section 8).
+So a board needs the ready image once (above), and after that every change is Compile + Upload. For byte-for-byte reproduction, use the same compiler and build command recorded in [the image documentation](../images/README.md). Board profile, source filename and build options must match; the image manifest records the runtime source and compiler hash.
 
 `tape_image.pico` and `tape_image.pico2` are in the repository as the **empty** tape, which is what Unix and the serial tape reader use, so the firmware compiles as it comes. Building a diagnostic tape in (section 9, `tools/tape2pico.py TAPE`) replaces them; run `python tools/tape2pico.py --empty`, or check the two files out again, before going back to Unix.
 
@@ -538,3 +539,49 @@ each against a golden run, and prints FLOPS per size; it ends at 63x63 with
 
 Dhrystone, Whetstone and the BYTE Sieve, and how to run them, are in
 [BENCHMARKS.md](BENCHMARKS.md).
+
+## 13. Panels, live TrueType fonts and sound
+
+The 2026-10-26 images enable the panel console by default on both Pico W and
+Pico 2 W. The PSRAM firmware includes the same output modules. USB serial
+continues to accept keyboard input, tape-loader commands and firmware uploads.
+
+**Choose a screen without rebuilding.** Flash the settings UF2 for your chip
+and panel from [images/output-settings](../images/output-settings/), using
+**Compiler > Flash Prebuilt File...** or BOOTSEL. For example, use
+`rp2040-ili9341.uf2` with an ILI9341 on a Pico W. Use `rp2350-none.uf2` on a
+headless RP2350 board. Settings survive firmware-only updates; they take effect
+after reboot and occupy a dedicated sector outside the Unix pack. To restore
+the standard screen, flash the chip's `lafvin` settings file. The resident
+profiles and wiring are listed in [OUTPUTS.md](../OUTPUTS.md).
+
+**Change fonts live.** Press Ctrl-], release it, then `f` to switch between
+Lato-derived Terminal Sans and the monospace face. Use Ctrl-] then `+` or `-`
+to change the pixel size. The screen reflows and Unix keeps running. The Pico
+reads actual TrueType outlines and rasterizes glyphs at the selected size.
+The 4 KB glyph cache bounds the sizes available; a request that does not fit
+is refused and the previous font is regenerated. These live choices reset
+to the boot font after a restart. The default is Lato-derived 14 pixels.
+
+To generate a compact boot setting or another configuration:
+
+```text
+py -3 tools/output_config.py --target rp2350 --panel lafvin --font compact --out settings.uf2
+```
+
+**Sound.** Ready builds are silent. Source builds can link the Bluetooth
+backend or a custom signed 16-bit mono PCM sink at 48 kHz. The included custom
+sink is a silent meter example. Console BEL and the RP2350 demo's voices use
+the same producer. See [OUTPUTS.md](../OUTPUTS.md) for build flags, runtime
+settings, memory costs and the RP2040 pack/radio overlap restriction.
+
+**Graphics demo.** Flash [images/pico2w-demo/firmware.uf2](../images/pico2w-demo/firmware.uf2)
+on an RP2350. It starts the built-in demo, using the selected panel. It does
+not replace the Unix disk pack. To return to Unix, flash the normal board
+firmware. A graphics-demo build for RP2040 is not included.
+
+**V7 build workspace.** On the Pico Plus 2 W, mount `/dev/rp3` on `/usr`
+before building programs there; on the Feather use `/dev/rk1`. The root RK05
+is small, so keep larger builds under `/usr` and check free space with `df`.
+V6's `cc` does not accept the V7 `-o` option: use `cc file.c` and run `a.out`
+(or rename it). `cc file.c` also works on V7.

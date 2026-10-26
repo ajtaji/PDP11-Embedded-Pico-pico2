@@ -2,3 +2,9 @@ media/unix/v7/c.o binary
 media/unix/v7/l.o binary
 media/unix/v7/date binary
 media/unix/v7/rp.o binary
+
+# Firmware bytes and hashed metadata must survive checkout unchanged.
+*.uf2 binary
+*.uf2.regions text eol=lf
+images/SHA256SUMS text eol=lf
+images/manifest-*.json text eol=lf

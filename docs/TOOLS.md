@@ -457,3 +457,29 @@ These exist outside the repository and would be worth adding:
 - a screenshot renderer: turns a transcript into 80-column terminal images;
 
 (A UF2 merge script used before is replaced by `rk_image.py --combined`.)
+
+## Panel, font and release tools
+
+- `output_build.py --target rp2040|rp2350 --compiler EXE --out firmware.uf2`
+  builds the standard emulator; `--audio silent|bluetooth|plugin` selects the
+  linked sound transport. The default is silent.
+- `output_config.py --target rp2040|rp2350 --panel NAME --font readable|compact
+  --out settings.uf2` writes the small persistent output-settings sector.
+- `font_pack.py` prepares the bundled ASCII TrueType outline assets.
+  `--check` verifies reproducibility. It requires FontTools; rasterization
+  itself runs on the Pico. `term_font.py` forwards to this tool.
+- `font_capture.py --port COM7 --out work/font --exercise` captures the actual
+  glyph cache and checks live font changes on a board. Requires pyserial and
+  Pillow; take the board lease before using it.
+- `demo_build.py --compiler EXE --out build_demo` builds the RP2350 graphics
+  demo and its settings file. `--panel` and `--font` choose its settings;
+  `--speaker` selects the optional Bluetooth backend. Keep personal speaker
+  settings private. `--port` also uploads the settings after building.
+- `firmware_release.py --build-dir DIR --date YYYY-MM-DD --compiler-sha256 HASH` publishes the
+  prepared firmware set, checksums and metadata. It uses `uf2_firmware.py` to
+  replace code while verifying that every existing Unix pack byte and nonce
+  is unchanged. See [images/README.md](../images/README.md) for the directory
+  layout and build commands.
+
+Panel wiring, APIs, live-font controls and audio module contracts are in
+[OUTPUTS.md](../OUTPUTS.md).

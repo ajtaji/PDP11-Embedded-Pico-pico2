@@ -89,7 +89,7 @@ py -3 tools/output_build.py --target rp2350 --compiler PATH/TO/PureMetalForge.ex
 ```
 
 Build without a hardware lease; use the normal lease/uploader for flashing.
-Existing dated release images remain snapshots; build current source for these features.
+The 2026-10-26 [ready images](images/README.md) include these features. Firmware-only downloads update an existing installation without downloading the disk packs again.
 The existing `tools/term_build.py` filename wrapper remains supported for
 RP2350. `tools/demo_build.py` builds the optional graphics/sound demo.
 

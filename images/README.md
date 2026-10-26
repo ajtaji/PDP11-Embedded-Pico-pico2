@@ -1,232 +1,146 @@
-# Ready-to-flash Unix images
+# Ready-to-flash firmware and Unix images
 
-**Read this first (2026-10-24, evening).** The five RP2350 files carry new firmware again, built from
-a clean `git archive` of `d58922d` with the same release compiler (`37314eeb8`): the operand address in
-assembly for the loop that runs with memory management off (boot, the diagnostics), and saves to the
-store that wait for less erasing on the PSRAM boards (a used store's 165-block save 1.9 s -> 0.65-0.9 s).
-Firmware SHA-256: Pico 2 W `c2191254...1e93`, Pico Plus 2 W `d50fc4fc...a5fd`, Feather `9741f875...4bdb`.
-**The disk packs are byte for byte the earlier ones, nonce included** (`tools/uf2_firmware.py`), so the
-PSRAM boards keep what Unix saved. Run on 2026-10-24, the Pico 2 W file sent whole through the compiler's
-uploader, the PSRAM files' packs with a fresh nonce (an empty store: the boards' old saves were not
-replayed) through `tools/pack_install.py` and the firmware after them:
+## 2026-10-26 builds
 
-| File | Board | Run |
-|---|---|---|
-| `pico2w-v6` | Pico 2 W | `mem = 556`, `cc -O` builds and runs a program, `time od /rkunix` real 9.0 (8.7 s from the host, as before: V6 runs mapped), 0 clock ticks dropped; diagnostic ladder 19 of 21 (the two HALTs a J-11 gives) |
-| `picoplus2` | Pico Plus 2 W | `mem = 1036`, `cc -O` builds and runs a program, `od` real 9.0, a save of 9 blocks in 46 ms |
-| `picoplus2-v7` | Pico Plus 2 W | `mem = 2012672`, `df` lists `/dev/rk0` and `/dev/rp3`, a `double` program prints 6.285714, `od /unix` real 14.0, `icheck` missing 0 |
-| `feather` | Feather RP2350 HSTX | `mem = 1036`, `cc -O` builds and runs a program, `od` real 9.0 |
-| `feather-v7` | Feather RP2350 HSTX | `mem = 2012672`, the `double` program prints 6.285714, `od /unix` real 14.0, `icheck` of rk0 and rk1 missing 0 |
+These builds include the CPU optimizations, standard panel console and live
+TrueType fonts. Runtime source: `3272aff`. The PSRAM build tool now selects
+the actual board profile, including its flash size and PSRAM chip select.
+The [manifest](manifest-2026-10-26.json) records program/file hashes, compiler
+hash and board profiles. [SHA256SUMS](SHA256SUMS) covers the supplied files.
 
-The Pico W files are unchanged. What follows is the record of the earlier files.
+The existing Unix disk payloads and pack nonces are **byte-for-byte unchanged**.
+The firmware was replaced with `tools/uf2_firmware.py`; the release tool
+checks every preserved address and payload. The Pico W disk remains the
+same Mini-Unix pack. Unix licensing remains in [Caldera-license.pdf](../Caldera-license.pdf).
 
-**Read this first (2026-10-24).** The five RP2350 files (`pico2w-v6`, `picoplus2`, `picoplus2-v7`,
-`feather`, `feather-v7`) carry new firmware, built from a clean `git archive` of `ad32bcd` with
-PureMetal Forge's release binaries of 2026-10-19 (compiler `37314eeb8`): the hot paths of 2026-10-23
-in assembly (MFPI/MTPI and MOV's general handler). Firmware SHA-256: Pico 2 W `db6f6803...1e90`, Pico
-Plus 2 W `38a8fe64...e4f6`, Feather `010b0393...6f3f`. **The disk packs are byte for byte the ones of
-2026-10-22**, nonce included (`tools/uf2_firmware.py` put the new firmware in and refused any change to
-the packs), so on the PSRAM boards what Unix saved with the 2026-10-22 files is still there after
-flashing these. Each file was copied to its board's boot drive and run on 2026-10-24:
+## Updating an existing installation
 
-| File | Board | Run |
-|---|---|---|
-| `pico2w-v6` | Pico 2 W | `mem = 556`, `time od /rkunix` real 8.0 user 8.3 (8.80 s from the host; 9.45 s with the 2026-10-21 file), `cc` builds and runs a program, 0 clock ticks dropped |
-| `picoplus2` | Pico Plus 2 W | PSRAM on GPIO47, `mem = 1036`, RK1 mounts on `/usr/source`, `od` real 8.0 user 8.4, `cc` builds and runs a program |
-| `picoplus2-v7` | Pico Plus 2 W | an empty store (the same packs with a fresh nonce, so the board's old saves were not replayed): `mem = 2012672`, `df` lists `/dev/rk0` and `/dev/rp3`, `od /unix` real 14.0 user 13.8, a `double` program compiles and prints 3.142857 |
-| `feather` | Feather RP2350 HSTX | PSRAM on GPIO8, `mem = 1036`, RK1 mounts, `od` real 9.0 user 8.4, `cc` builds and runs a program, its saved blocks were replayed |
-| `feather-v7` | Feather RP2350 HSTX | `mem = 2012672`, `df` lists `/dev/rk0` and `/dev/rk1`, `od /unix` real 15.0 user 13.7, the `double` program prints 3.142857, its 53 saved blocks were replayed |
+Download only the firmware for the board. These small files keep the installed
+Unix pack and, on PSRAM boards, its saved changes. Output settings also survive.
+Use **Compiler > Flash Prebuilt File...** in PureMetal Forge, or copy the file
+to the BOOTSEL drive.
 
-The Pico W files are unchanged (the RP2040 source has not changed since `658cc72`). What follows is the
-record of the 2026-10-22 files, whose packs these are.
+| File | Bytes | SHA-256 |
+| --- | ---: | --- |
+| [picow-mini-unix/firmware.uf2](picow-mini-unix/firmware.uf2) | 366,592 | `55cc5e6fcf434eb9a29d7351a7aedbf949637d1d45d10e98a00e28e92b9ab4fe` |
+| [pico2w-v6/firmware.uf2](pico2w-v6/firmware.uf2) | 404,480 | `d2949fdc804bc77fa8decd0e970380843ee13712000dc4ac719e2c352ce4adc7` |
+| [picoplus2/firmware.uf2](picoplus2/firmware.uf2) | 461,824 | `072d3e99917e307a88d7eeaaf22b0fc2581d427e8dad3765be1612d8ee169ae1` |
+| [feather/firmware.uf2](feather/firmware.uf2) | 461,312 | `f3ec86e0bf584c11f6e64d7f46a630a534c2c4cc9ff7c8e0e24625fde6ba53b3` |
 
-**Read this first (2026-10-22).** The Pico 2 W and both Pico Plus 2 W files carry firmware built on
-2026-10-22 from a clean `git archive` of the current source (`ce1436f` and its successors, the same
-firmware bytes): the RP03 and the store of saved changes on the PSRAM boards, and the floating point
-fixes DEC's KDJ11 FPA diagnostics found. The DEC diagnostic ladder gives 19 of 21 on the Pico 2 W
-(the two J-11 HALTs; `../media/diagnostics/ladder.txt`). The Pico W files are from `658cc72`; the
-RP2040 source (`../J11_18MHz_KDJ11_BF/pico/`) has not changed since. Each file was run on its board
-as described below. The RP2350 files keep their packs at 0x10240000 and up, clear of the region a
-radio's firmware is kept in (`J11_18MHz_KDJ11_BF/pico2/flash_layout.pico2`), and the PSRAM files their
-store in the top 1 MB of the flash. The Feather file was rebuilt the same day from the same source and run on a Feather RP2350 HSTX. Built with PureMetal Forge's release binaries of 2026-10-19
-(compiler `37314eeb8`).
+- Pico W: `picow-mini-unix/firmware.uf2`, RP2040 at 200 MHz.
+- Pico 2 W: `pico2w-v6/firmware.uf2`, RP2350 at 150 MHz.
+- Pico Plus 2 / 2 W: `picoplus2/firmware.uf2`, GPIO47 PSRAM, 16 MB flash.
+- Feather RP2350 HSTX: `feather/firmware.uf2`, GPIO8 PSRAM, 8 MB flash.
 
-Each board **powers up into Unix**: the firmware boots the disk pack by
-itself and Unix's `#` prompt appears with no typing. Press **Esc** within
-2 s of the `auto-boot:` line to stay in the diagnostic console instead.
-How to flash, connect and use them, and how to rebuild them from
-`../media/unix/` with the tools, is in **[../README.md](../README.md)**.
+The same PSRAM board firmware supports its V6 and V7 installations. Choose by
+**board**, not by Unix version. The `.uf2.regions` companions contain the flash
+map for the IDE, with repository-relative source references.
 
-They run the emulated processor alone on core 0, with its run loop in
-SRAM, and USB, the console and the disk's storage on core 1. The Pico 2 W and Pico W
-files are **read-only**: the emulator never writes the flash. Swap
-and every disk write go to RAM and are lost at power-off, so a board can be
-unplugged at any time and always starts again from the pack as flashed. The
-PSRAM boards' files (both Pico Plus 2 W files and the Feather's) save what Unix writes into the flash
-(their sections below).
+## First installation: firmware and Unix
 
-The UNIX files inside the disk packs are covered by the Caldera licence in
-`../Caldera-license.pdf`.
+| File | Bytes | SHA-256 |
+| --- | ---: | --- |
+| [pico2w-v6/combined.uf2](pico2w-v6/combined.uf2) | 3,337,216 | `6c03ca0c57e0a0d851fb7be16b769ad7869950c4570d1cb8d8eee65da418abc1` |
+| [picow-mini-unix/minix.uf2](picow-mini-unix/minix.uf2) | 3,167,232 | `0ec2c16c5201f3ed789c785174c7c1480f414197fcda6ce772600585bf0be54c` |
+| [picoplus2/combined.uf2](picoplus2/combined.uf2) | 9,563,136 | `5d26657f483d63d1bb5e0795d48e3481c4adf46383ba51c0a278b3c185948b3c` |
+| [picoplus2-v7/combined.uf2](picoplus2-v7/combined.uf2) | 22,948,864 | `8cf785650b4b736158561e505b51520be6f6144c270667e6f381a5dae674d794` |
+| [feather/combined.uf2](feather/combined.uf2) | 9,562,624 | `60fce16006ee521284deb9a99f6fabc57a66c1eb606e872149528bf97c4e9721` |
+| [feather-v7/combined.uf2](feather-v7/combined.uf2) | 9,562,624 | `e730f3128022b7bf22470cf2a54cdfe26cfb98285b5b7e5124136bd6cef0704a` |
 
-## Pico 2 W (RP2350): Sixth Edition Unix, memory management on
+**Pico W needs two separate flashes:** first its `firmware.uf2` above, then
+`minix.uf2`. On RP2040, combining the firmware and pack into one file can
+leave the disk area unwritten. A board reporting `RK0: no pack` still needs
+the disk file. The Pico W's pack occupies the radio firmware area, so its
+current Mini-Unix installation cannot use Bluetooth.
 
-| File | Size | SHA-256 |
-|---|---|---|
-| `pico2w-v6/combined.uf2` | 3,247,616 | `9c05765e9d20926cd24def73f936499fa71eb6241fb10966ed5ed4c0a41021d2` |
+**RP2350 boards use one `combined.uf2`** for a first installation. Pico 2 W
+boots V6. The PSRAM folders offer V6 or V7; use the folder matching the board.
+V7 on the Pico Plus 2 W has the whole distribution `/usr` on an emulated RP03;
+the Feather uses the smaller RK1 `/usr` because its flash is 8 MB.
+V6's kernel uses its 18-bit address space; V7 asks for 2040 KB. The PSRAM
+firmware provides up to 3812 KB, with the hot 224 KB window in SRAM.
 
-Firmware and disk pack in one UF2: hold BOOTSEL, plug in, copy the file to
-the `RP2350` drive. At the serial console:
+Pico W and Pico 2 W use read-only flash packs: disk changes live in RAM and
+are lost at reset. PSRAM boards save disk changes to their flash store.
+See [HOWTO](../docs/HOWTO.md) for booting, saving, mounting `/usr` and updating.
 
-```
-auto-boot: RK0, switches 173030, then "rkunix" at the @ prompt. Press Esc within 2 s for the diagnostic console.
-booting RK0, switches 173030
-@rkunix
-mem = 556
-#
-```
+## Panels and live fonts
 
-Its firmware was rebuilt on 2026-10-22 from a clean `git archive` of `ce1436f` (SHA-256 `101e0eab...003a`: the
-floating point fixes that DEC's KDJ11 FPA diagnostics found, and the RP11 and store code, which this board
-does not use); the pack is the one below, unchanged. With it, on a Pico 2 W: `mem = 556`, `time od /rkunix
->/dev/null` 9.0 s by V6's `time` (whole seconds), and the ladder 19 of 21 (`../media/diagnostics/ladder.txt`,
-the two J-11 HALTs). `time od /rkunix >/dev/null` takes 9.45 s timed from the host on a Pico 2 W with the file
-of 2026-10-21 ( 10.46 s with the file built from `658cc72`, 10.36 s timed from the host with the file of 2026-10-20; 13.24 s before the hot paths in assembly of 2026-10-19, 13.86 s before
-the paste fix, 14.22 s before the dispatch tails in assembly, 17.43 s before the compiler's code
-generation pass of 2026-10-03, 19.3 s before the dispatch pass of 2026-10-03, 21.7 s before the
-speed pass of 2026-10-02). No clock ticks are dropped. The file was copied to the `RP2350`
-drive, as above, and booted by itself; the DEC diagnostics pass with firmware built from the
-same source (above). Text pasted into
-the terminal arrives whole (the README's Pasting text section). The file-write overlay is 254
-blocks; the C compiler builds and runs a program, and `dc` runs. The pack is the V6 root pack (`../media/unix/v6root.gz`) with V6's
-own `rkuboot` installed in block 0.
+LAFVIN ST7796 is the default. A board with this panel boots and shows Unix
+without a serial terminal open. USB serial is still used for keyboard input.
+Use a tiny settings UF2 to select another resident screen driver:
 
-The pack is changed with `tools/v6fs.py` (see `../README.md`): `/dev/rk0`,
-`/dev/rrk0` and `/dev/swap` added, `/unix` linked to the kernel that runs,
-and the kernel's swap sized to the firmware's 112-block swap RAM disk. `ps`
-works; use `df /dev/rk0` (plain `df` looks for V6's built-in `/dev/rk2` and
-`/dev/rp0`). The machine has 152 KB of memory (V6 says `mem = 556`).
+| Panel | RP2040 settings | RP2350 settings |
+| --- | --- | --- |
+| LAFVIN ST7796, default | [lafvin](output-settings/rp2040-lafvin.uf2) | [lafvin](output-settings/rp2350-lafvin.uf2) |
+| Display Pack 2 ST7789 | [display-pack2](output-settings/rp2040-display-pack2.uf2) | [display-pack2](output-settings/rp2350-display-pack2.uf2) |
+| ILI9341 SPI1 | [ili9341](output-settings/rp2040-ili9341.uf2) | [ili9341](output-settings/rp2350-ili9341.uf2) |
+| HX8357D SPI1 | [hx8357d](output-settings/rp2040-hx8357d.uf2) | [hx8357d](output-settings/rp2350-hx8357d.uf2) |
+| No panel, USB serial only | [none](output-settings/rp2040-none.uf2) | [none](output-settings/rp2350-none.uf2) |
 
-## PSRAM boards: Pimoroni Pico Plus 2 W and Adafruit Feather RP2350 HSTX (V6, 248 KB)
+These files select silent audio and Lato-derived Terminal Sans at 14 pixels.
+They write only the output-settings sector. Other font/audio combinations can
+be made with `tools/output_config.py`. Wiring and APIs: [OUTPUTS.md](../OUTPUTS.md).
+The LAFVIN physical panel is hardware checked; the other controllers are
+implemented and compiled, with physical-screen validation still pending.
 
-| Board | File | Size | SHA-256 |
-|---|---|---|---|
-| Pimoroni Pico Plus 2 W ([PIM726](https://shop.pimoroni.com/products/pimoroni-pico-plus-2-w)): RP2350B, PSRAM chip select GPIO47, 16 MB flash | `picoplus2/combined.uf2` | 9,469,952 | `8a205b3c483a1a765770be88d7630896a7d08817a639c9b89be9829a9d794562` |
-| Adafruit Feather RP2350 with HSTX port and 8 MB PSRAM ([6130](https://www.adafruit.com/product/6130)): RP2350A, GPIO8, 8 MB flash | `feather/combined.uf2` | 9,469,952 | `3a9a37c391b1cc6c73f8e3be7f8f4a19ea03c08ba23efcbc3a07cf2de1801d7e` |
+The Pico rasterizes real TrueType outlines at runtime, caching glyphs in RAM.
+Press **Ctrl-]**, release it, then **f** to change face, **+** to increase size,
+or **-** to decrease it. Natural spacing is used; a monospace face is also
+available. The guest continues running, and an oversized request restores the
+previous font. Standard images are silent; optional audio modules are built
+from source as described in OUTPUTS.md. Speaker playback is not claimed by the
+silent builds or PCM meter example.
 
-Each is one UF2 with the firmware, RK0 (the V6 root pack, as in `pico2w-v6/`,
-plus `/dev/rk1`) and RK1 (V6's source pack, `../media/unix/v6src.gz`).
+## RP2350 graphics demo
 
-`picoplus2/combined.uf2` was rebuilt on 2026-10-22 from a clean `git archive` (firmware SHA-256
-`abccd1ee...9526`, the same bytes as the V7 file's) and copied to a Pico Plus 2 W's boot drive: `mem =
-1036`, `/etc/mount /dev/rk1 /usr/source`, the C compiler builds and runs a program, `time od /rkunix
->/dev/null` takes 9.0 s by V6's `time` (whole seconds; 9.32 s timed from the host with the file of
-2026-10-21, 13.37 s before the hot paths in assembly), and a file written and synced was saved by
-itself and was there after the same file was flashed again. The pack regions have the checksums the
-board prints at start-up (`RK0 F83C278F 752B2FB0 RK1 E88F7498 87385286`). V7 is in `picoplus2-v7/` (below; rebuilt on 2026-10-22: the whole `/usr`, saves to flash by itself). It is for the Pico Plus 2 and the Pico Plus
-2 W (same chip, pin and flash by the makers' board files); the radio is not used.
+| File | Bytes | SHA-256 |
+| --- | ---: | --- |
+| [pico2w-demo/firmware.uf2](pico2w-demo/firmware.uf2) | 441,344 | `12c31d16e4738b11028c4cc9a61c5d73a740e7bf1021b4aca4f11719b472557f` |
 
-`feather/combined.uf2` was rebuilt on 2026-10-22 from a clean `git archive` (firmware SHA-256
-`5a2ccc1c...7e5d`) and copied to an Adafruit Feather RP2350 HSTX's boot drive: `PSRAM: 8 MB on GPIO8`,
-`mem = 1036`, `/etc/mount /dev/rk1 /usr/source`, the C compiler builds and runs a program, `time od
-/rkunix >/dev/null` takes 9.0 s by V6's `time`, and a file written and synced was saved by itself (its
-store is the top 1 MB of the Feather's 8 MB, 0x10700000 up) and was there after the same file was
-flashed again. Pack checksums at start-up: `RK0 132574A5 10266B90 RK1 0378C1AE CAEA1666`. The
-2026-10-07 build of the earlier layout ran DFKAA, DFKAB and DFKAC and a swap test there; its
-transcripts are in `../docs/psram/`.
+Flash this firmware on an RP2350. The built-in demo starts automatically and
+uses the selected panel. Its 320 × 200 picture is centered on the screen.
+This build is silent and uses 64 KB of guest memory. It keeps the disk pack;
+flash the normal board firmware to return to Unix. The RP2040 graphics demo
+is not implemented in this release.
 
-```
-python tools/tape2pico.py --empty
-python tools/psram_build.py --board picoplus2 --compiler PureMetalForge.exe
-python tools/psram_build.py --board feather   --compiler PureMetalForge.exe
+## Hardware validation
+
+Detailed checks are in [VALIDATION-2026-10-26.md](VALIDATION-2026-10-26.md).
+
+The exact combined Unix images were uploaded to their corresponding boards.
+The firmware-only files contain byte-identical program payloads. Boot,
+filesystem access and statistics were checked on Pico W and Pico 2 W; a C
+program compiled and printed `42` under V6 and V7 on both PSRAM boards.
+The V7 Pico Plus 2 test used a clean temporary store and a workspace under
+`/usr`, isolating the board's previously full saved root filesystem.
+The PSRAM boards' original flash snapshots were restored after testing.
+The RP2350 demo's guest and panel frame counters advanced on the LAFVIN panel.
+
+Live-font switching, cache-limit rejection and identical glyph data across
+RP2040/RP2350 were checked in the runtime-font work. Standard guest memory
+remains 56 KB on RP2040 and 152 KB on Pico 2 W. The Pico W keeps 124 write
+blocks. Pico 2 W has 248 file-write blocks plus 112 swap blocks; runtime font
+workspace uses six former file-write blocks. Optional audio builds have the
+separate memory budgets listed in OUTPUTS.md.
+
+## Rebuild this set
+
+Use the matching PureMetal Forge compiler and SDK libraries. From the root:
+
+```text
+py -3 tools/output_build.py --target rp2040 --compiler PureMetalForge.exe --out build_release/rp2040.uf2
+py -3 tools/output_build.py --target rp2350 --compiler PureMetalForge.exe --out build_release/rp2350.uf2
+py -3 tools/psram_build.py --board picoplus2 --compiler PureMetalForge.exe --out build_release/picoplus2
+py -3 tools/psram_build.py --board feather --compiler PureMetalForge.exe --out build_release/feather
+py -3 tools/demo_build.py --compiler PureMetalForge.exe --out build_release/demo
+py -3 tools/firmware_release.py --build-dir build_release --date 2026-10-26 --compiler-sha256 COMPILER_SHA256
 ```
 
-## Pimoroni Pico Plus 2 W: Seventh Edition Unix (V7), 2 MB, floating point, the whole /usr, saved to flash
-
-| File | Size | SHA-256 |
-|---|---|---|
-| `picoplus2-v7/combined.uf2` | 22,855,680 | `4f0171bdcc113d233c4dc34fc21ab9ed5b64820f442d3a777aef0e2ad1463f7b` |
-
-Rebuilt on 2026-10-22 from a clean `git archive` of commit `ce1436f` (the same as `0fd25ce`'s file but for the
-floating point fixes DEC's KDJ11 FPA diagnostics found; booted on a Pico Plus 2 W: an empty store, `df`, `od /unix`
-in 14.0 s): the PSRAM firmware (SHA-256 `abccd1ee...9526`, with the J-11's floating point unit, the RP11 controller, `../J11_18MHz_KDJ11_BF/pico2/rp11.pico2`,
-and the store of saved changes, `store.pico2`) and V7's two disks: RK0 the root file system and kernel
-(`tools/v7_pack.py`), and an RP03 holding the distribution's whole `/usr` - sources, documents, dictionary,
-games - on `/dev/rp3`, 20,800 blocks, stored mapped where RK1 would go (`tools/rk_image.py --rp`). This
-build is **not read-only**: what Unix writes is saved into the top 1 MB of the flash by itself a few seconds
-after the disks go quiet, or at once with `sync` and Ctrl-] `w`, and comes back at the next power-up
-(HOWTO section 12, Saving). Copied to a Pico Plus 2 W's boot drive, it boots by itself:
-
-```
-auto-boot: RK0, switches 000000, then "boot" at the @ prompt, then "rk(0,0)rkunix" at the : prompt. Press Esc within 2 s for the diagnostic console.
-memory 2040 KB, as the pack asks
-booting RK0, switches 000000
-@boot
-Boot
-: rk(0,0)rkunix
-mem = 2012672
-#
-```
-
-Tried on the board with this file (2026-10-22): it boots by itself as above, its banner saying `the store: 0
-saved blocks copied over the packs (generation 0, 256 of 256 sectors free)`; `df` lists `/dev/rk0` and
-`/dev/rp3`; a file written and synced was saved by itself (4 saves, 35 blocks); `time od /unix >/dev/null`
-takes 15.0 s (V7's `time` counts whole seconds: 14.0 to 15.0 s in runs of the earlier builds; 15.03 s with
-the file of 2026-10-21, 17.00 s with the one built from `658cc72`); Ctrl-D to multi-user, where `/etc/rc`
-mounts `/dev/rp3` on `/usr` and root logs in with no password. With firmware and packs built the same way
-from the working tree that became `0fd25ce`:
-- a save by itself, then a restart: the files and the date came back;
-- 25 saves of 400 blocks each (1,477 sector writes, 1,367 erases): the newest version came back;
-- a fold of more than the store holds, then a save into the store, then a restart: everything intact, and
-  `icheck` is clean on `/dev/rp3` and `/dev/rk0`;
-- raw reads of `/dev/rrp3` equal block reads.
-The pack checksum the board prints: `RK0 27BA27C0 D8CF36A0` (the RP disk is not summed; `76789AFF 4F8A12D0`, given here before 2026-10-24, was an earlier build's). HOWTO section 12
-has the use and the build.
-
-## Adafruit Feather RP2350 HSTX: Seventh Edition Unix (V7), 2 MB, floating point, saved to flash
-
-| File | Size | SHA-256 |
-|---|---|---|
-| `feather-v7/combined.uf2` | 9,469,952 | `92940d735d9813f304622ffa2353d592791bd065c56dfc87ad828ef9f6728dfb` |
-
-Built on 2026-10-22 from a clean `git archive` of the current source with the same firmware as
-`feather/combined.uf2` (SHA-256 `5a2ccc1c...7e5d`), and V7's packs: RK0 the root file system and kernel,
-RK1 a 4,000-block `/usr` - the libraries and nroff's macros, the manual, the headers (`tools/v7_pack.py
---usr`). The Feather's 8 MB of flash cannot hold the whole `/usr` the Pico Plus 2 W's RP03 has. What Unix
-writes is saved into the top 1 MB of the flash by itself, or at once with `sync` and Ctrl-] `w`.
-
-Copied to a Feather RP2350 HSTX's boot drive on 2026-10-22, it boots by itself (`mem = 2012672`, as on
-the Pico Plus 2 W); `df` lists `/dev/rk0` and `/dev/rk1`, a C program with `double` arithmetic compiles
-and prints 3.142857, `time od /unix >/dev/null` takes 14.0 s, Ctrl-D goes multi-user (`/etc/rc` mounts RK1
-on `/usr`, root logs in with no password), and a file written to `/usr` and synced was saved by itself
-(12 saves, 53 blocks) and was there after the same file was flashed again. Pack checksums at start-up:
-`RK0 0A8F9683 5201E310 RK1 68FF2FAA B29A1646`. HOWTO section 12 has the use.
-
-## Pico W (RP2040): Mini-Unix
-
-| File | Size | SHA-256 |
-|---|---|---|
-| `picow-mini-unix/firmware.uf2` | 294,912 | `210df6b08117180b872b9652ac3e04118609b8d0777cfa9a6e6cc553d2a5814f` |
-| `picow-mini-unix/minix.uf2` | 3,167,232 | `0ec2c16c5201f3ed789c785174c7c1480f414197fcda6ce772600585bf0be54c` |
-
-**Flash these as two separate copies**, firmware first, then the pack, each
-from a fresh BOOTSEL (the `RPI-RP2` drive). On the RP2040 a single combined
-UF2 leaves the pack area unwritten. The pack holds only the used blocks of
-the Mini-Unix pack (`../mini-unix.rk05`, mapped) so it fits the Pico W's flash, with
-Mini-Unix's kernel with swap by process slot as `/rkmx` (`../media/unix/rkmx-slotswap`; the
-distribution's kernel stays as `/rkmx.dist`, and `/mx`, which `ps` reads, is the kernel that
-runs; HOWTO section 8). It boots `rkmx` by itself. Mini-Unix runs with memory management off
-(the stats block says `MMU off (16-bit)`). `time od /rkmx >/dev/null` takes real 4.0-5.0 s,
-user 4.1-4.2 s on a Pico W (4.0 s real with this file on 2026-10-21), timed from the host 4.62 s a run (5.88 s before the hot paths in
-assembly of 2026-10-19, 7.09 s before the compiler's code generation pass of 2026-10-03 and
-the dispatch tails in assembly, 8.09 s before the MOV handlers by addressing mode, 8.64 s
-before the speed pass of 2026-10-03). No clock ticks are dropped, and DFKAA, DFKAB and DFKAC
-pass with firmware built from the same source; these two files were copied to a Pico W and
-boot Mini-Unix by themselves.
-
-The RAM for disk writes (124 blocks, shared with swap) no longer fills after a few commands:
-the distribution's kernel swapped each process to a place set by its process number, which
-moves on with every command, and walked the whole swap area; the kernel in this pack swaps by
-process slot. Ten `od` runs and `ls -l /bin`, `ps`, `sum` and `df` leave 53 of the 124 blocks
-used (`../docs/minix/transcript-picow-swap-proof.txt`). Files written still use the same RAM,
-and are lost at power-off.
-
+The release step takes the existing combined images' disk payloads. It does
+not replace them with newly generated packs or change their nonces. This
+matters when `media/unix/rk70unix` is absent: rebuilding a PSRAM pack from
+incomplete inputs would otherwise change the kernel selection. The manifest
+records the unchanged payload hashes. Source font preparation requires
+FontTools only when regenerating `truetype_assets.pmi`; normal firmware builds
+use the committed outline assets.

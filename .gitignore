@@ -1,0 +1,8 @@
+# Local build outputs and device snapshots.
+/work/
+/build_release/
+/build_demo/
+/build_term/
+/build_feather/
+/build_picoplus2/
+/tools/__pycache__/
