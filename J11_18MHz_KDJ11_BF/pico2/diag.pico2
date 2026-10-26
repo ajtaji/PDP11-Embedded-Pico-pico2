@@ -825,6 +825,9 @@ Procedure StatsBlock()
   CompilerIf #OUTPUT_AUDIO_DRIVER = 2
     StatLine("pcm     consumed ") : Num(OutputSinkSamples) : Say(" nonzero ") : Num(OutputSinkNonzero) : Say(" peak ") : Num(OutputSinkPeak) : Say(" lost ") : Num(OutputPcmLost) : Say(" late ") : Num(OutputAudioLate)
   CompilerEndIf
+  CompilerIf #OUTPUT_AUDIO_DRIVER = 1
+    StatLine("a2dp    live ") : Num(BtAudioLive()) : Say(" packets ") : Num(BtAudioPackets()) : Say(" underruns ") : Num(BtAudioUnderruns()) : Say(" overruns ") : Num(BtAudioOverruns()) : Say(" error ") : Num(BtAudioError()) : Say(" late ") : Num(OutputAudioLate)
+  CompilerEndIf
   CompilerEndIf
   CompilerIf #DEMO_DEV = 1
     StatLine("display 164000: DPCSR ") : Oct(DdCsr & $C1) : Say(", DPBASE ") : Oct(DdBase) : Say(", ")

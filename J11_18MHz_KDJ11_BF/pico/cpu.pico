@@ -166,6 +166,11 @@
 #DL11_TX_INSTRUCTIONS = 100 ; how long one character takes to send
 #DL11_RX_INSTRUCTIONS = 2000 ; the least time between two characters received (THE RECEIVER'S PACE)
 #CON_SIZE    = 256          ; each console queue, a power of two
+CompilerIf #DEMO_DEV = 1     ; the demo's display and tone generator (outputs/demo.pmi, tools/demo_build.py)
+#DEMO_BASE   = $E800        ; 164000-164177
+#INT_DEMO    = 32           ; its frame interrupt's IntReq bit, BR4
+#VEC_DEMO    = $D0          ; 000320 (300/304 are kept for a second DL11, docs/TERMINALS.md)
+CompilerEndIf
 #INT_DL11_RX = 1            ; IntReq bits: the console receiver ...
 #INT_DL11_TX = 2            ; ... and transmitter (both BR4)
 #INT_RK      = 4            ; the RK11 disk controller, BR5 (rk11.pico)
@@ -891,6 +896,11 @@ EndProcedure
 ;  shown. The KDJ11-B has no switches; the diagnostics read them anyway.
 ; ======================================================================
 ProcedureRAM.i IoRead(a.i)                  ; a is even and past the end of RAM
+  CompilerIf #DEMO_DEV = 1
+    If (a & $FF80) = #DEMO_BASE
+      ProcedureReturn DdRead(a)
+    EndIf
+  CompilerEndIf
   If a = #PSW_ADDR
     ProcedureReturn PswGet()
   ElseIf a = #DL11_RCSR
@@ -936,6 +946,12 @@ EndProcedure
 ; v's low byte is the new value of the register's low byte; the DL11 has
 ; nothing in its high bytes. The PSW is not handled here (see WriteWord).
 ProcedureRAM IoWrite(a.i, v.i)              ; a is even and past the end of RAM
+  CompilerIf #DEMO_DEV = 1
+    If (a & $FF80) = #DEMO_BASE
+      DdWrite(a, v)
+      ProcedureReturn
+    EndIf
+  CompilerEndIf
   If a = #DL11_RCSR
     If v & $40
       If Dl11RxIe = 0 And Dl11RxDone = 1
@@ -1083,6 +1099,12 @@ ProcedureRAM WriteByte(a.i, v.i)
   If a = #MAINT_ADDR + 1                 ; the maintenance register's high byte: nothing to write
     ProcedureReturn
   EndIf
+  CompilerIf #DEMO_DEV = 1
+    If (a & $FF80) = #DEMO_BASE
+      DdWriteByte(a, v)
+      ProcedureReturn
+    EndIf
+  CompilerEndIf
   If a & 1                               ; a device's high byte: nothing there
     If (a & $FFFE) < #DL11_RCSR Or (a & $FFFE) > #SWR_ADDR
       CpuErr = CpuErr | #CPUE_IO
@@ -1886,6 +1908,9 @@ ProcedureRAM DevService()
   If DevActive
     DevPoll()
   EndIf
+  CompilerIf #DEMO_DEV = 1
+    DdPoll()
+  CompilerEndIf
   ; an interrupt, if one is asked for and the priority lets it in: the
   ; highest bus request level first (clock BR6, disk BR5, console BR4),
   ; and on the console the receiver first, as it sits nearer the processor

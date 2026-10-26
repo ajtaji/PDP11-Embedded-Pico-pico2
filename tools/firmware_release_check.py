@@ -15,7 +15,7 @@ for entry in manifest['files']:
   family,pages=read_uf2(path)
   assert family in FAMILY.values()
   if path.name=='firmware.uf2':
-   target='rp2040' if 'picow-mini-unix' in entry['path'] else 'rp2350'
+   target='rp2040' if path.parent.name in ('picow-mini-unix','picow-demo') else 'rp2350'
    assert family==FAMILY[target] and min(pages)==0x10000000
    assert max(pages)+256<=0x10000000+TARGETS[target][0]
   if 'output-settings' in entry['path']:
