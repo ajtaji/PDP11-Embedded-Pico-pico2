@@ -1,0 +1,163 @@
+--- a/pipe.c
++++ b/pipe.c
+@@ -0,0 +1,113 @@
++#
++#include "param.h"
++#include "systm.h"
++#include "user.h"
++#include "reg.h"
++#include "file.h"
++#include "inode.h"
++
++/* Bounded anonymous byte streams, using an unlinked inode and existing
++ * block buffers. No additional permanent kernel buffer is required. */
++#define PIPESIZE 4096
++
++plock(aip)
++struct inode *aip;
++{
++ register struct inode *ip;
++ ip = aip;
++ while(ip->i_flag&ILOCK) {
++  ip->i_flag =| IWANT;
++  runrun++;
++  sleep(ip, PINOD);
++ }
++ ip->i_flag =| ILOCK;
++}
++
++pipe()
++{
++ register struct inode *ip;
++ register struct file *rf, *wf;
++ int fd;
++ ip = ialloc(rootdev);
++ if(ip==NULL) return;
++ ip->i_mode = IALLOC;
++ ip->i_flag =| IUPD;
++ if((rf=falloc())==NULL) { iput(ip); return; }
++ fd = u.u_ar0[R0];
++ if((wf=falloc())==NULL) {
++  u.u_ofile[fd] = NULL;
++  rf->f_count = 0;
++  iput(ip);
++  return;
++ }
++ u.u_ar0[R1] = u.u_ar0[R0];
++ u.u_ar0[R0] = fd;
++ rf->f_flag = FREAD|FPIPE;
++ wf->f_flag = FWRITE|FPIPE;
++ rf->f_inode = wf->f_inode = ip;
++ ip->i_count++;
++ prele(ip);
++}
++
++readp(afp)
++struct file *afp;
++{
++ register struct inode *ip;
++ register struct file *fp;
++ fp = afp;
++ ip = fp->f_inode;
++ if(u.u_count==0) return;
++ for(;;) {
++  plock(ip);
++  if(fp->f_offset[1] != ip->i_size1) break;
++  if(ip->i_count < 2) { prele(ip); return; }
++  prele(ip);
++  runrun++;
++  sleep(ip, PPIPE);
++ }
++ u.u_offset[1] = fp->f_offset[1];
++ readi(ip);
++ fp->f_offset[1] = u.u_offset[1];
++ if(fp->f_offset[1] == ip->i_size1) {
++  fp->f_offset[1] = 0;
++  ip->i_size1 = 0;
++  ip->i_flag =| IUPD;
++ }
++ prele(ip);
++ wakeup(ip);
++}
++
++writep(fp)
++struct file *fp;
++{
++ register struct inode *ip;
++ register n, rest;
++ ip = fp->f_inode;
++ while(u.u_count!=0 && u.u_error==0) {
++  plock(ip);
++  if(ip->i_count < 2) {
++   prele(ip);
++   u.u_error = EPIPE;
++   psignal(u.u_procp, SIGPIPE);
++   return;
++  }
++  n = PIPESIZE-ip->i_size1;
++  if(n==0 || (u.u_count<=PIPESIZE && u.u_count>n)) {
++   prele(ip);
++   wakeup(ip);
++   runrun++;
++  sleep(ip, PPIPE);
++   continue;
++  }
++  n = min(n, u.u_count);
++  rest = u.u_count-n;
++  u.u_count = n;
++   u.u_offset[1] = ip->i_size1;
++  writei(ip);
++  n = n-u.u_count;
++  u.u_count =+ rest;
++  prele(ip);
++  wakeup(ip);
++  if(n==0) return;
++ }
++}
+--- a/sys2.c
++++ b/sys2.c
+@@ -46,4 +46,6 @@
+-	if(m==FREAD)
+-		readi(fp->f_inode); else
+-		writei(fp->f_inode);
+-	dpadd(fp->f_offset, u.u_arg[1]-u.u_count);
++	if(fp->f_flag&FPIPE) {
++		if(m==FREAD) readp(fp); else writep(fp);
++	} else {
++		if(m==FREAD) readi(fp->f_inode); else writei(fp->f_inode);
++		dpadd(fp->f_offset, u.u_arg[1]-u.u_count);
++	}
+--- a/sys1.c
++++ b/sys1.c
+@@ -206 +206 @@
+-	p = getblk(swapdev, p->p_pid*SWPSIZ+SWPLO);
++	p = getblk(swapdev, (p-&proc[0])*SWPSIZ+SWPLO);
+@@ -248 +248 @@
+-			bp = bread(swapdev, p->p_pid*SWPSIZ+SWPLO);
++			bp = bread(swapdev, (p-&proc[0])*SWPSIZ+SWPLO);
+--- a/fio.c
++++ b/fio.c
+@@ -46 +46,5 @@
+-	if(rfp->f_count <= 1)
++	if(rfp->f_count <= 1) {
++		if(rfp->f_flag&FPIPE) {
++			plock(rfp->f_inode);
++			wakeup(rfp->f_inode);
++		}
+@@ -47,0 +52 @@
++	}
+--- a/bio.c
++++ b/bio.c
+@@ -340 +340 @@
+-	swbuf.b_blkno = SWPLO+rp->p_pid*SWPSIZ;
++	swbuf.b_blkno = SWPLO+(rp-&proc[0])*SWPSIZ;
+--- a/sysent.c
++++ b/sysent.c
+@@ -52 +52 @@
+-	0, &nosys,			/* 42 = pipe */
++	0, &pipe,			/* 42 = pipe */
+--- a/low.s
++++ b/low.s
+@@ -6 +6 @@
+-eis = 0
++eis = 1

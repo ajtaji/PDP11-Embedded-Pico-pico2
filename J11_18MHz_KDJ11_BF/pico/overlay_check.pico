@@ -1,0 +1,127 @@
+; Native RP2040 overlay roundtrip, sharing, collection and atomic-full checks.
+EnableExplicit
+XIncludeFile "RP2040/Lib/clocks.pico"
+XIncludeFile "RP2040/Lib/timer.pico"
+XIncludeFile "RP2040/Lib/uart.pico"
+XIncludeFile "RP2040/Lib/usb_serial.pico"
+XIncludeFile "RP2040/Lib/safety.pico"
+#DK_BLOCKS = 4872
+Global Dim DkBuf.u(256)
+Global DkWhy.i, DkFatal.i, DkOvUsed.i, DkOvWrites.i, DkOvFull.i
+XIncludeFile "overlay.pmi"
+Global Dim SavedSeed.i(1024)
+Global Dim SavedKind.a(1024)
+Global Checks.i, Failures.i, MaxWriteUs.i, MaxReadUs.i, MaxMoveUs.i
+
+Procedure Ch(c.i)
+  UsbSerialWrite(c)
+EndProcedure
+Procedure Say(*s.i)
+  Define p.i = *s
+  While PeekA(p) <> 0 : Ch(PeekA(p)) : p = p + 1 : Wend
+EndProcedure
+Procedure Num(n.i)
+  Define p.i = 1
+  If n < 0 : Ch(45) : n = -n : EndIf
+  While n / p >= 10 : p = p * 10 : Wend
+  While p > 0 : Ch(48 + (n / p) % 10) : p = p / 10 : Wend
+EndProcedure
+Procedure Eol()
+  Ch(13) : Ch(10) : UsbSerialFlush() : UsbSerialTask() : SafetyPet()
+EndProcedure
+Procedure.i Pattern(seed.i, kind.i, i.i)
+  Define x.i
+  If kind = 1 : ProcedureReturn 0 : EndIf
+  If kind = 2 : ProcedureReturn ((i & 15) * 73 + seed * 23) & $FFFF : EndIf
+  If kind = 3 And i < 128 : ProcedureReturn 0 : EndIf
+  x = seed + i * $9E3779B9
+  x = x ! (x << 13) : x = x ! ((x >> 17) & $7FFF) : x = x ! (x << 5)
+  ProcedureReturn (x ! (x >> 16)) & $FFFF
+EndProcedure
+Procedure Fill(seed.i, kind.i)
+  Define i.i
+  For i = 0 To 255 : DkBuf(i) = Pattern(seed, kind, i) : Next
+EndProcedure
+Procedure.i Put(blk.i, seed.i, kind.i)
+  Define rc.i, turns.i, t.i, dt.i
+  Fill(seed, kind)
+  Repeat
+    t = Micros() : rc = DkOverlayWrite(blk) : dt = Micros() - t
+    If dt > MaxWriteUs : MaxWriteUs = dt : EndIf
+    If rc <> 0 : Break : EndIf
+    t = Micros() : DkOverlayGcStep() : dt = Micros() - t
+    If dt > MaxMoveUs : MaxMoveUs = dt : EndIf
+    turns = turns + 1 : UsbSerialTask() : SafetyPet()
+    If turns > 10000 : Failures = Failures + 1 : ProcedureReturn -1 : EndIf
+  ForEver
+  If rc = 1 : SavedSeed(blk) = seed : SavedKind(blk) = kind : EndIf
+  ProcedureReturn rc
+EndProcedure
+Procedure Check(blk.i)
+  Define i.i, rc.i, t.i, dt.i
+  t = Micros() : rc = DkOverlayRead(blk) : dt = Micros() - t
+  If dt > MaxReadUs : MaxReadUs = dt : EndIf
+  Checks = Checks + 1
+  If rc <> 1
+    Failures = Failures + 1 : Say("READ FAIL block ") : Num(blk) : Eol() : ProcedureReturn
+  EndIf
+  For i = 0 To 255
+    If DkBuf(i) <> Pattern(SavedSeed(blk), SavedKind(blk), i)
+      Failures = Failures + 1 : Say("DATA FAIL block ") : Num(blk) : Say(" word ") : Num(i) : Eol() : Break
+    EndIf
+  Next
+  UsbSerialTask() : SafetyPet()
+EndProcedure
+Procedure Main()
+  Define i.i, n.i, rc.i, accepted.i, kind.i
+  SafetyBoot() : ClockInitKhz(200000) : UsbSerialInit() : SafetyOk()
+  While UsbSerialReady() = 0 : UsbSerialTask() : SafetyPet() : Wend
+  DkOverlayReset()
+  ; Exercise unsigned 8-bit slot IDs above 127 before the sharing test.
+  For i = 0 To 199
+    If Put(i, i + 300, 2) <> 1 : Failures = Failures + 1 : EndIf
+  Next
+  For i = 0 To 199 : Check(i) : Next
+  If DkRecords <> 200 : Failures = Failures + 1 : EndIf
+  DkOverlayReset()
+  For i = 0 To 999
+    If Put(i, (i % 32) + 1, 2) <> 1 : Failures = Failures + 1 : EndIf
+    UsbSerialTask() : SafetyPet()
+  Next
+  For i = 0 To 999 : Check(i) : Next
+  If DkOvUsed <> 1000 Or DkRecords <> 32 : Failures = Failures + 1 : EndIf
+  Say("OVERLAY sharing checks=") : Num(Checks) : Say(" records=") : Num(DkRecords) : Say(" failures=") : Num(Failures) : Eol()
+  For n = 0 To 3999
+    i = n & 63
+    kind = (n / 64) % 3
+    If kind = 0 : kind = 2 : ElseIf kind = 1 : kind = 1 : Else : kind = 3 : EndIf
+    If Put(i, n + 1000, kind) <> 1 : Failures = Failures + 1 : EndIf
+    Check(i)
+  Next
+  For i = 0 To 999 : Check(i) : Next
+  If DkCollections = 0 : Failures = Failures + 1 : EndIf
+  Say("OVERLAY collection checks=") : Num(Checks) : Say(" compactions=") : Num(DkCollections) : Say(" failures=") : Num(Failures) : Eol()
+  DkOverlayReset()
+  rc = Put(0, 0, 1)
+  For i = 1 To 199
+    rc = Put(i, i * 17, 0)
+    If rc <> 1 : Break : EndIf
+    accepted = i
+  Next
+  If accepted < 124 Or rc <> -1 : Failures = Failures + 1 : EndIf
+  For i = 0 To accepted : Check(i) : Next
+  rc = Put(0, 98765, 0)
+  If rc <> -1 : Failures = Failures + 1 : EndIf
+  Check(0)
+  rc = Put(accepted, 0, 1)
+  If rc <> 1 : Failures = Failures + 1 : EndIf
+  rc = Put(0, 98765, 0)
+  If rc <> 1 : Failures = Failures + 1 : EndIf
+  For i = 0 To accepted : Check(i) : Next
+  Say("OVERLAY final checks=") : Num(Checks) : Say(" failures=") : Num(Failures)
+  Say(" max-write-us=") : Num(MaxWriteUs) : Say(" max-read-us=") : Num(MaxReadUs) : Say(" max-move-us=") : Num(MaxMoveUs)
+  If Failures = 0 : Say(" PASS") : Else : Say(" FAIL") : EndIf
+  Eol()
+  Repeat : UsbSerialTask() : SafetyPet() : ForEver
+EndProcedure
+Main()

@@ -102,7 +102,9 @@ main()
 	X = 0.75;
 	for (I = 1; I <= N11; I++)
 		X = sqrt(exp(log(X)/T1));
-	printf("1000 KWhetstones done; X = %d/10000\n", X*10000.0);
+	/* V6 printf has no prototype: explicitly convert the double for %d. */
+	R = X*10000.0;
+	printf("1000 KWhetstones done; X = %d/10000\n", R);
 }
 
 PA(E)

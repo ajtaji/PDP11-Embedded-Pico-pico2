@@ -97,8 +97,10 @@
 ;  flash: swap need not outlive a reset, and it is where a swapping Unix
 ;  writes most. #DK_OV_SLOTS blocks fit; a swap block past them goes to
 ;  flash as any other (DkSwapSpill counts them). In the READ-ONLY build
-;  every written block goes to the overlay, and one past its room is
-;  refused (DRE, the firmware says so).
+;  every written block goes to the lossless compressed/deduplicated RAM
+;  overlay (overlay.pmi). Its byte pool is finite: if a replacement cannot
+;  fit, DRE is reported and the old data is preserved. Compaction moves one
+;  record per DiskTask call, keeping USB and clocks serviced between moves.
 ;
 ;  THE SWAP RAM DISK (read-only builds, #DK_SWAP_BLOCKS > 0). The first
 ;  #DK_SWAP_BLOCKS blocks of the swap area are a RAM disk of their own,
@@ -284,16 +286,21 @@ CompilerEndIf
 Global DkInitWhy.i                ; why DiskInit found no pack: 1 magic, 2 version, 3 size
 Global DkPresent.i, DkMapped.i, DkStored.i, DkMapSectors.i, DkData.i, DkSlots.i, DkNext.i
 Global DkFatal.i                 ; the flash failed a write-back three times: no more writes
-#DK_OV_SLOTS  = 124               ; the RAM overlay, 512 bytes a block (see THE RAM OVERLAY); 124 x 512 fits the window above the USB buffers (the run loop takes the SRAM below)
-Global Dim DkOvIdx.a(#DK_BLOCKS) ; block -> overlay slot + 1, 0 = not in the overlay
-Global Dim DkOv.u(#DK_OV_SLOTS * 256)
 Global DkOvUsed.i, DkSwapLo.i, DkSwapEnd.i
 Global DkOvWrites.i, DkSwapSpill.i
+Global DkSwapWrites.i, DkOvFull.i
+CompilerIf #DISK_READ_ONLY = 1
+XIncludeFile "overlay.pmi"
+CompilerElse
+#DK_OV_SLOTS = 124
+Global Dim DkOvIdx.a(#DK_BLOCKS)
+Global Dim DkOv.u(#DK_OV_SLOTS * 256)
+CompilerEndIf
 #DK_SWAP_BLOCKS = 0              ; the swap RAM disk (see THE SWAP RAM DISK); 0 = none, swap uses the overlay
 Global Dim DkSwapRam.u(#DK_SWAP_BLOCKS * 256 + 1)
 Global DkSwapN.i                 ; blocks of the swap area the RAM disk holds (the header's, at most #DK_SWAP_BLOCKS)
 Global DkSwapTop.i               ; the highest swap block written + 1 (relative): what Unix has used
-Global DkSwapWrites.i, DkOvFull.i ; writes to the swap RAM disk; writes refused because the overlay was full
+; DkSwapWrites and DkOvFull are declared with the overlay counters above.
 Global DkHits.i, DkMisses.i      ; block reads served from RAM (cache line, overlay) and from flash
 CompilerIf #DISK_READ_ONLY = 1                 ; nothing is ever written back: no write cache,
 Global Dim DkMap.u(1)                          ; and the block map is read from the flash itself
@@ -593,6 +600,9 @@ Procedure DiskInit()
   Define k.i
   Define m.i
   DkPresent = 0
+  CompilerIf #DISK_READ_ONLY = 1
+    DkOverlayReset()
+  CompilerEndIf
   For k = 0 To #DK_LINES - 1
     DkLineAt(k) = -1
     DkLineDirty(k) = 0
@@ -773,6 +783,9 @@ Procedure.i DiskRead(d.i, blk.i)
     DkWhy = 1
     ProcedureReturn -1
   EndIf
+  If blk < 0 Or blk >= #DK_BLOCKS
+    DkWhy = 2 : ProcedureReturn -1
+  EndIf
   CompilerIf #DISK_READ_ONLY = 1 And #DK_SWAP_BLOCKS > 0
     If blk >= DkSwapLo And blk < DkSwapLo + DkSwapN   ; the swap RAM disk
       DkHits = DkHits + 1
@@ -785,11 +798,15 @@ Procedure.i DiskRead(d.i, blk.i)
   CompilerEndIf
   If DkOvIdx(blk)                        ; in the RAM overlay
     DkHits = DkHits + 1
+    CompilerIf #DISK_READ_ONLY = 1
+      ProcedureReturn DkOverlayRead(blk)
+    CompilerElse
     b = (DkOvIdx(blk) - 1) * 256
     For i = 0 To 255
       DkBuf(i) = DkOv(b + i)
     Next
     ProcedureReturn 1
+    CompilerEndIf
   EndIf
   If DkMapped = 0 And blk >= DkStored    ; past a truncated dense pack: never written, so zeros
     For i = 0 To 255
@@ -837,6 +854,9 @@ Procedure.i DiskWrite(d.i, blk.i)
     DkWhy = 1
     ProcedureReturn -1
   EndIf
+  If blk < 0 Or blk >= #DK_BLOCKS
+    DkWhy = 2 : ProcedureReturn -1
+  EndIf
   CompilerIf #DISK_READ_ONLY = 1 And #DK_SWAP_BLOCKS > 0
     If blk >= DkSwapLo And blk < DkSwapLo + DkSwapN   ; the swap RAM disk: never refused
       b = (blk - DkSwapLo) * 256
@@ -850,6 +870,9 @@ Procedure.i DiskWrite(d.i, blk.i)
       ProcedureReturn 1
     EndIf
   CompilerEndIf
+  CompilerIf #DISK_READ_ONLY = 1
+    ProcedureReturn DkOverlayWrite(blk)
+  CompilerElse
   k = DkOvIdx(blk) - 1                   ; the RAM overlay: swap, or everything when read-only
   If k < 0
     If #DISK_READ_ONLY = 1 Or (blk >= DkSwapLo And blk < DkSwapEnd)
@@ -928,6 +951,7 @@ Procedure.i DiskWrite(d.i, blk.i)
   DkLineDirty(k) = 1
   DkLineTouched(k) = Micros()
   ProcedureReturn 1
+  CompilerEndIf
 EndProcedure
 
 Procedure DiskSync()
@@ -947,6 +971,9 @@ Procedure.i DkDirtyCount()
 EndProcedure
 
 Procedure.i DiskIdle()
+  CompilerIf #DISK_READ_ONLY = 1
+    If DkGc : ProcedureReturn 0 : EndIf
+  CompilerEndIf
   If DkState = 0 And DkDirtyCount() = 0
     ProcedureReturn 1
   EndIf
@@ -981,6 +1008,9 @@ Procedure DiskTask()
   If DkPresent = 0 Or DkFatal <> 0     ; failed three times: stop, and never wear it further
     ProcedureReturn
   EndIf
+  CompilerIf #DISK_READ_ONLY = 1
+    DkOverlayGcStep()
+  CompilerEndIf
   CompilerIf #DISK_READ_ONLY = 0
   If DkState = 0
     For k = 0 To #DK_LINES - 1           ; a line being loaded: one part more

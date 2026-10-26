@@ -2,18 +2,25 @@
 
 A PDP-11 program written in PureMetal and compiled straight to PDP-11 machine code by PureMetal
 Forge: no Unix, no operating system, just the machine. It runs on the PDP-11 emulator's display and
-sound devices: in the desktop emulator (its window and pdp11_cli), and on a Raspberry Pi Pico 2 W in the
+sound devices: in the desktop emulator (its window and pdp11_cli), and on Raspberry Pi Pico W and Pico 2 W boards in the
 LAFVIN ST7796 kit, on its 320 x 480 panel, with the sound on a Bluetooth speaker. The board's firmware is
 built with the demo in it and starts it at power-up:
 
 ```
-python tools/demo_build.py --compiler PureMetalForge.exe --port COMnn [--speaker AA:BB:CC:DD:EE:FF]
+python tools/demo_build.py --compiler PureMetalForge.exe --target rp2040 --audio bluetooth
+python tools/demo_build.py --compiler PureMetalForge.exe --target rp2350 --port COMnn [--speaker AA:BB:CC:DD:EE:FF]
 ```
 
-Without `--speaker` it plays silent. On the Pico 2 W the PDP-11 runs the demo at about 625,000
-instructions a second (the desktop at many millions): the music, the plasma and the frame rate keep
-time by the 60 Hz frame interrupt, the cube and the scroller move more slowly. The board needs the
-radio's firmware installed once for sound (`PureMetalForge.exe --radio-firmware`).
+Without `--speaker` it starts silent. Ready firmware is in
+[images/picow-demo/](../images/picow-demo/) and
+[images/pico2w-demo/](../images/pico2w-demo/). Music and palette changes use
+the 60 Hz frame interrupt; the cube and text advance as fast as the CPU can
+draw them. Sound requires separate settings and installed radio firmware;
+see [OUTPUTS.md](../OUTPUTS.md), especially the RP2040 pack backup requirement.
+
+The palette counter repeats every 240 ticks, the common period of the plasma
+and logo effects. It stays positive, preventing signed overflow after about
+nine minutes from producing invalid colors or an incomplete white sweep.
 
 - **The logo**, rendered from Lato (SIL Open Font License, `fonts/OFL.txt`), with a light band that
   runs down it.

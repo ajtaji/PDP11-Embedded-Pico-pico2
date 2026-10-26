@@ -1,0 +1,182 @@
+; Lossless, volatile RK block overlay. Core 1 owns all tables and the arena.
+; An 8-bit slot index leaves room for a 63 KB arena: even 125 raw blocks
+; fit, exceeding the old uncompressed 124-block capacity.
+; Records are immutable while shared. Replacement allocates before releasing
+; the old record, so a capacity refusal leaves every previous byte intact.
+#DK_OV_SLOTS = #DK_BLOCKS
+#DK_OV_RECORDS = 255
+#DK_OV_BYTES = 64512
+#DK_OV_RAW = $8000
+Global Dim DkOvIdx.a(#DK_BLOCKS)
+Global Dim DkPacked.l(#DK_OV_BYTES / 4)
+Global Dim DkPos.u(#DK_OV_RECORDS)
+Global Dim DkLen.u(#DK_OV_RECORDS)
+Global Dim DkRefs.u(#DK_OV_RECORDS)
+Global Dim DkHash.u(#DK_OV_RECORDS)
+Global Dim DkEncoded.a(520)
+Global Dim DkMatch.u(256)
+Global DkTail.i, DkLive.i, DkRecords.i, DkFingerprint.i
+Global DkGc.i, DkGcRead.i, DkGcWrite.i, DkCollections.i
+
+Procedure.i DkRecordBytes(n.i)
+  ProcedureReturn 4 + (((n & $7FFF) + 3) & ~3)
+EndProcedure
+
+Procedure DkOverlayReset()
+  Define i.i
+  For i = 0 To #DK_BLOCKS - 1 : DkOvIdx(i) = 0 : Next
+  For i = 0 To #DK_OV_RECORDS - 1 : DkRefs(i) = 0 : Next
+  DkTail = 0 : DkLive = 0 : DkRecords = 0 : DkOvUsed = 0
+  DkGc = 0 : DkCollections = 0
+EndProcedure
+
+; One record at most per call: USB and the line clock run between moves.
+; An old header for a reused slot is dead unless its offset still matches.
+Procedure DkOverlayGcStep()
+  Define p.i, q.i, slot.i, bytes.i, active.i, i.i, advance.i
+  If DkGc = 0 : ProcedureReturn : EndIf
+  If DkGcRead >= DkTail
+    DkTail = DkGcWrite : DkGc = 0 : DkCollections = DkCollections + 1
+    ProcedureReturn
+  EndIf
+  p = @DkPacked(0) + DkGcRead
+  slot = PeekU(p) : advance = PeekU(p + 2)
+  If slot >= #DK_OV_RECORDS Or advance < 4 Or (advance & 3) <> 0 Or DkGcRead + advance > DkTail
+    DkFatal = 1 : DkGc = 0 : ProcedureReturn
+  EndIf
+  If DkRefs(slot) <> 0 And DkPos(slot) = DkGcRead
+    active = DkRecordBytes(DkLen(slot))
+    q = @DkPacked(0) + DkGcWrite
+    For i = 0 To active - 1 Step 4 : PokeL(q + i, PeekL(p + i)) : Next
+    PokeW(q, slot) : PokeW(q + 2, active)
+    DkPos(slot) = DkGcWrite : DkGcWrite = DkGcWrite + active
+  EndIf
+  DkGcRead = DkGcRead + advance
+EndProcedure
+
+; Byte LZ stream: 0..127 = 1..128 literals, 128..255 = 3..130 bytes
+; copied from a 1..256-byte backward distance. Incompressible data stays raw.
+Procedure.i DkOverlayEncode()
+  Define p.i, out.i, lit.i, count.i, h.i, prior.i, n.i, i.i, source.i
+  source = @DkBuf(0) : out = 0 : p = 0 : lit = -1
+  DkFingerprint = 0
+  For i = 0 To 255 : DkMatch(i) = 0 : Next
+  For i = 0 To 511
+    DkFingerprint = ((DkFingerprint * 31) ! PeekA(source + i)) & $FFFF
+  Next
+  While p < 512
+    n = 0
+    If p + 2 < 512
+      h = (PeekA(source + p) * 251 + PeekA(source + p + 1) * 17 + PeekA(source + p + 2)) & 255
+      prior = DkMatch(h) - 1 : DkMatch(h) = p + 1
+      If prior >= 0 And p - prior <= 256
+        While n < 130 And p + n < 512
+          If PeekA(source + prior + n) <> PeekA(source + p + n) : Break : EndIf
+          n = n + 1
+        Wend
+      EndIf
+    EndIf
+    If n >= 3
+      If lit >= 0 : DkEncoded(lit) = count - 1 : lit = -1 : EndIf
+      DkEncoded(out) = 128 + n - 3 : DkEncoded(out + 1) = p - prior - 1
+      out = out + 2 : p = p + n
+    Else
+      If lit < 0 : lit = out : out = out + 1 : count = 0 : EndIf
+      DkEncoded(out) = PeekA(source + p) : out = out + 1 : p = p + 1 : count = count + 1
+      If count = 128 : DkEncoded(lit) = 127 : lit = -1 : EndIf
+    EndIf
+    If out >= 512
+      For i = 0 To 511 : DkEncoded(i) = PeekA(source + i) : Next
+      ProcedureReturn #DK_OV_RAW | 512
+    EndIf
+  Wend
+  If lit >= 0 : DkEncoded(lit) = count - 1 : EndIf
+  ProcedureReturn out
+EndProcedure
+
+Procedure.i DkOverlayRead(blk.i)
+  Define slot.i, p.i, endp.i, dest.i, out.i, token.i, n.i, back.i, i.i
+  slot = DkOvIdx(blk) - 1 : p = @DkPacked(0) + DkPos(slot) + 4
+  dest = @DkBuf(0) : out = 0
+  If DkLen(slot) & #DK_OV_RAW
+    For i = 0 To 127 : PokeL(dest + i * 4, PeekL(p + i * 4)) : Next
+    ProcedureReturn 1
+  EndIf
+  endp = p + DkLen(slot)
+  While p < endp And out < 512
+    token = PeekA(p) : p = p + 1
+    If token < 128
+      n = token + 1
+      If p + n > endp Or out + n > 512 : Break : EndIf
+      For i = 0 To n - 1 : PokeA(dest + out + i, PeekA(p + i)) : Next
+      p = p + n : out = out + n
+    Else
+      n = token - 128 + 3
+      If p >= endp Or out + n > 512 : Break : EndIf
+      back = PeekA(p) + 1 : p = p + 1
+      If back > out : Break : EndIf
+      For i = 0 To n - 1 : PokeA(dest + out, PeekA(dest + out - back)) : out = out + 1 : Next
+    EndIf
+  Wend
+  If out = 512 And p = endp : ProcedureReturn 1 : EndIf
+  DkWhy = 4 : ProcedureReturn -1
+EndProcedure
+
+Procedure DkOverlayRelease(slot.i)
+  If slot < 0 : ProcedureReturn : EndIf
+  DkRefs(slot) = DkRefs(slot) - 1
+  If DkRefs(slot) = 0
+    DkLive = DkLive - DkRecordBytes(DkLen(slot)) : DkRecords = DkRecords - 1
+  EndIf
+EndProcedure
+
+Procedure.i DkOverlayWrite(blk.i)
+  Define len.i, bytes.i, old.i, slot.i, free.i, p.i, i.i, same.i, size.i
+  If DkFatal : DkWhy = 4 : ProcedureReturn -1 : EndIf
+  If DkGc : ProcedureReturn 0 : EndIf
+  len = DkOverlayEncode() : bytes = len & $7FFF
+  old = DkOvIdx(blk) - 1 : free = -1
+  For slot = 0 To #DK_OV_RECORDS - 1
+    If DkRefs(slot) = 0
+      If free < 0 : free = slot : EndIf
+    ElseIf DkLen(slot) = len And DkHash(slot) = DkFingerprint
+      p = @DkPacked(0) + DkPos(slot) + 4 : same = 1
+      For i = 0 To bytes - 1
+        If PeekA(p + i) <> DkEncoded(i) : same = 0 : Break : EndIf
+      Next
+      If same
+        If slot <> old
+          DkRefs(slot) = DkRefs(slot) + 1
+          DkOverlayRelease(old) : DkOvIdx(blk) = slot + 1
+          If old < 0 : DkOvUsed = DkOvUsed + 1 : EndIf
+        EndIf
+        DkOvWrites = DkOvWrites + 1 : ProcedureReturn 1
+      EndIf
+    EndIf
+  Next
+  size = DkRecordBytes(len)
+  ; A unique record can be replaced in place without allocating another.
+  If old >= 0
+    p = @DkPacked(0) + DkPos(old)
+    If DkRefs(old) = 1 And size <= PeekU(p + 2)
+      For i = 0 To bytes - 1 : PokeA(p + 4 + i, DkEncoded(i)) : Next
+      DkLive = DkLive - DkRecordBytes(DkLen(old)) + size
+      DkLen(old) = len : DkHash(old) = DkFingerprint
+      DkOvWrites = DkOvWrites + 1 : ProcedureReturn 1
+    EndIf
+  EndIf
+  If free < 0 Or DkLive + size > #DK_OV_BYTES
+    DkWhy = 6 : DkOvFull = DkOvFull + 1 : ProcedureReturn -1
+  EndIf
+  If DkTail + size > #DK_OV_BYTES
+    DkGc = 1 : DkGcRead = 0 : DkGcWrite = 0 : ProcedureReturn 0
+  EndIf
+  p = @DkPacked(0) + DkTail
+  PokeW(p, free) : PokeW(p + 2, size)
+  For i = 0 To bytes - 1 : PokeA(p + 4 + i, DkEncoded(i)) : Next
+  DkPos(free) = DkTail : DkLen(free) = len : DkHash(free) = DkFingerprint : DkRefs(free) = 1
+  DkTail = DkTail + size : DkLive = DkLive + size : DkRecords = DkRecords + 1
+  DkOverlayRelease(old) : DkOvIdx(blk) = free + 1
+  If old < 0 : DkOvUsed = DkOvUsed + 1 : EndIf
+  DkOvWrites = DkOvWrites + 1 : ProcedureReturn 1
+EndProcedure

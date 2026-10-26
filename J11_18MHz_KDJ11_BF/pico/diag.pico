@@ -675,6 +675,10 @@ Procedure StatsBlock()
         Say(" (swap ") : Num(DkSwapLo) : Say("-") : Num(DkSwapEnd - 1) : Say(")")
       EndIf
     EndIf
+    CompilerIf #DISK_READ_ONLY = 1
+      StatLine("        compressed overlay: ") : Num(DkLive) : Say(" of ") : Num(#DK_OV_BYTES)
+      Say(" bytes; ") : Num(DkRecords) : Say(" unique records; ") : Num(DkCollections) : Say(" compactions")
+    CompilerEndIf
     If DkOvFull
       Say(", FULL: ") : Num(DkOvFull) : Say(" writes refused")
     EndIf
@@ -1512,8 +1516,13 @@ CompilerEndIf
           If Column <> 0
             Eol()
           EndIf
-          Say("[RK0: the RAM overlay for file writes is full (") : Num(#DK_OV_SLOTS)
-          Say(" blocks): a write to a new block now fails, Unix sees a disk error. Nothing reaches the flash;")
+          Say("[RK0: the RAM overlay for file writes is full (")
+          CompilerIf #DISK_READ_ONLY = 1
+            Num(#DK_OV_BYTES) : Say(" compressed bytes")
+          CompilerElse
+            Num(#DK_OV_SLOTS) : Say(" blocks")
+          CompilerEndIf
+          Say("): the write was refused, Unix sees a disk error. Nothing reaches the flash;")
           Say(" power off to start clean]") : Eol()
         EndIf
       CompilerEndIf

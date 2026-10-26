@@ -341,6 +341,9 @@ Global ticks.w
 ProcedureInterrupt Clock()
   ticks + 1
   frame + 1
+  ; Plasma repeats every 48 ticks and the logo every 80: keep their common
+  ; 240-tick phase positive before signed word shifts/modulo see overflow.
+  If frame < 0 Or frame >= 240 : frame = 0 : EndIf
   MusicTick()
   PaletteTick()
 EndProcedure

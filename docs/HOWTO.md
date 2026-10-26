@@ -274,6 +274,12 @@ byte); ten `od` runs and more now leave the overlay at 53 of 124 blocks
 stays on the pack as `/rkmx.dist`; `/mx`, whose symbols `ps` reads, is
 linked to the kernel that runs.
 
+The current release extends this earlier setup with a 63 KB compressed overlay
+and a J-11 Mini-Unix kernel providing real pipes. For the current kernel,
+source patch, on-board build and fallback instructions, use
+[the kernel and overlay guide](minix/j11-pipes.md). The 124-block figures above
+describe the earlier firmware.
+
 The compiler's output is reproducible with the same source, compiler, board profile and options. The current builds use the runtime source and compiler hash in `images/manifest-2026-10-26.json`; follow `images/README.md` for the current build commands and SHA-256 values. The firmware's
 defaults (`#DISK_BACKEND = 2`, `#DISK_READ_ONLY = 1`, `#DESK_PROBE = 0` at
 the top of `diag.pico(2)`) are the ones the images use.
@@ -571,14 +577,19 @@ py -3 tools/output_config.py --target rp2350 --panel lafvin --font compact --out
 
 **Sound.** Ready builds are silent. Source builds can link the Bluetooth
 backend or a custom signed 16-bit mono PCM sink at 48 kHz. The included custom
-sink is a silent meter example. Console BEL and the RP2350 demo's voices use
+sink is a silent meter example. Console BEL and both Pico demo profiles' voices use
 the same producer. See [OUTPUTS.md](../OUTPUTS.md) for build flags, runtime
 settings, memory costs and the RP2040 pack/radio overlap restriction.
 
-**Graphics demo.** Flash [images/pico2w-demo/firmware.uf2](../images/pico2w-demo/firmware.uf2)
-on an RP2350. It starts the built-in demo, using the selected panel. It does
-not replace the Unix disk pack. To return to Unix, flash the normal board
-firmware. A graphics-demo build for RP2040 is not included.
+**Graphics demo.** Flash [picow-demo/firmware.uf2](../images/picow-demo/firmware.uf2)
+on RP2040 or [pico2w-demo/firmware.uf2](../images/pico2w-demo/firmware.uf2)
+on RP2350. Each starts the built-in demo using the selected panel. The RP2040
+profile has Bluetooth linked but starts silent; sound needs separate settings
+and radio firmware. Its radio data overlaps Mini-Unix, so follow the backup
+instructions in [OUTPUTS.md](../OUTPUTS.md) before enabling it. To return to
+Unix, restore its pack if radio data replaced it, then flash the normal board
+firmware. The demo's bounded animation counter keeps the plasma colors and
+white logo sweep valid during long runs.
 
 **V7 build workspace.** On the Pico Plus 2 W, mount `/dev/rp3` on `/usr`
 before building programs there; on the Feather use `/dev/rk1`. The root RK05
