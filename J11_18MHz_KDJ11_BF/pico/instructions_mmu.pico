@@ -144,6 +144,9 @@ SlowFetchM:                               ; the I/O page, an odd PC, past the en
   Goto OpTableM(Op >> 3)
 
 ;-MOV-------------------------------------------------------------------
+; ---- INDEXED HANDLERS ----
+; ---- IMX HANDLERS ----
+; ---- MEMORY HELPERS ----
 InstructionMOV_01M:            ; 01SSDD   entries $0200-$03FF
   PcOutM()
   ;name = "MOV"
@@ -2648,6 +2651,9 @@ BuildTableM:
       OpTableM($1C00 | (FillFromM << 3) | FillCountM) = ?InstructionSUB_16_RMM
     Next
   Next
+; ---- INDEXED ENTRY POINTS ----
+; ---- IMX ENTRY POINTS ----
+; ---- FAST ENTRY POINTS ----
   OpTableReadyM = 1
   Goto RunStartM
 EndProcedure

@@ -212,6 +212,9 @@ def build():
                          'XIncludeFile "../machine_demo.pbi"      ; the demo display and tone generator (desktop only)\n')
             continue
         src = open(os.path.join(SRC, f), encoding="utf-8", errors="strict").read().replace("\r\n", "\n")
+        sys.path.insert(0, os.path.join(REPO, "tools"))
+        from cpu_state_layout import desktop as desktop_cpu_state
+        src = desktop_cpu_state(src, is_cpu=(f == "cpu.pico2"))
         t, nasm = transform(f, src)
         texts.append(t)
         report.append("%s (%d ASM blocks dropped)" % (f, nasm))

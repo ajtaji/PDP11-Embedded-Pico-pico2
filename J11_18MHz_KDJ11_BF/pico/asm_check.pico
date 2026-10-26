@@ -53,11 +53,10 @@ XIncludeFile "rk11.pico"
 #NOT_RUN = $5A5A1234                    ; Src before a run: still there = the plain body never ran
 
 Global Seed.i = $1234567
-; THE SHADOW. 56 KB more would not fit beside the two 32 KB tables, so every address
-; this program makes lies in the low 28 KB or the top 1 KB of RAM (the RAM's end is
-; there to be stepped over), and only those are shadowed; the words between are
-; summed once, and a run that changes them is a failure of its own (field 32).
-#LO_WORDS = $3800                       ; 000000-067777
+; The entire 56 KB is shadowed in two contiguous ranges. This also compares
+; valid trap stacks at every RAM address. Improved SRAM packing makes the
+; complete mirror fit beside the two dispatch tables and native code.
+#LO_WORDS = $6E00                       ; 000000-155777; top 1 KB follows
 #HI_WORD = $6E00                        ; 156000-157777
 #HI_WORDS = #RAM_WORDS - #HI_WORD
 Global Dim ShadowLo.u(#LO_WORDS)
@@ -68,8 +67,8 @@ Global Dim PairDm.i(#PAIRS)
 #SNAP = 40
 Global Dim SnapA.i(#SNAP)
 Global Dim SnapB.i(#SNAP)
-Global Dim DiffA.i(8)                   ; up to 4 (word index, value) pairs
-Global Dim DiffB.i(8)
+Global Dim DiffA.i(16)                   ; up to 8 (word index, value) pairs
+Global Dim DiffB.i(16)
 Global NDiffA.i, NDiffB.i
 Global Checks.i, Fast.i, Slow.i, Failures.i, FirstBad.i, FirstOp.i, FirstField.i
 Global TPc.i, TOp.i, TPair.i, TRs.i, TRd.i
@@ -236,7 +235,7 @@ Procedure Snap(*snap.i, *diff.i, *nd.i)
   GN2 = 0
   For GI = 0 To #LO_WORDS - 1
     If Mem(GI) <> ShadowLo(GI)
-      If GN2 < 4
+      If GN2 < 8
         PokeL(GD + GN2 * 8, GI)
         PokeL(GD + GN2 * 8 + 4, Mem(GI))
       EndIf
@@ -246,7 +245,7 @@ Procedure Snap(*snap.i, *diff.i, *nd.i)
   Next
   For GI = 0 To #HI_WORDS - 1
     If Mem(#HI_WORD + GI) <> ShadowHi(GI)
-      If GN2 < 4
+      If GN2 < 8
         PokeL(GD + GN2 * 8, #HI_WORD + GI)
         PokeL(GD + GN2 * 8 + 4, Mem(#HI_WORD + GI))
       EndIf
@@ -330,7 +329,7 @@ Procedure OneCheck()
     Ofield = 30
   EndIf
   If Ofield < 0
-    For Oi = 0 To 7
+    For Oi = 0 To 15
       If Oi < NDiffA * 2 And DiffA(Oi) <> DiffB(Oi) And Ofield < 0
         Ofield = 31
       EndIf
@@ -355,11 +354,291 @@ Procedure OneCheck()
   EndIf
 EndProcedure
 
+Global FKind.i, FChecks.i, FFailures.i, FFirst.i = -1, FFirstOp.i, FFirstField.i, FFast.i, FSlow.i
+Global Dim FCode.i(26)
+Procedure FastOne()
+  PswSet($00E0)
+  FKind = RndN(26)
+  For Oi = 0 To 6 : Reg(Oi) = RndReg() : Next
+  TPc = RndN(#LO_WORDS - 4) * 2
+  If FKind < 15
+    TOp = FCode(FKind) | RndN(256)
+  ElseIf FKind < 22
+    TOp = FCode(FKind) | (RndN(8) << 6) | RndN(8)
+  Else
+    TOp = FCode(FKind) | RndN(8)
+  EndIf
+  Mem(TPc >> 1) = TOp
+  For Oi = 0 To #LO_WORDS - 1
+    ShadowLo(Oi) = Mem(Oi)
+  Next
+  For Oi = 0 To #HI_WORDS - 1
+    ShadowHi(Oi) = Mem(#HI_WORD + Oi)
+  Next
+  NzWrite(Rnd()) : FlagV = Rnd() : FlagC = Rnd()
+  For Oi = 1 To 3                       ; a trap into another mode pushes on that mode's stack:
+    StackBank(Oi) = RndRam() + 8        ; keep it in the shadowed RAM too
+  Next
+  SaveState()
+  LoadState()
+  RunOnce(FastAsm(FKind))
+  DbgA = MidSumNow()
+  Snap(@SnapA(0), @DiffA(0), @NDiffA)
+  LoadState()
+  RunOnce(FastRef(FKind))
+  DbgB = MidSumNow()
+  Snap(@SnapB(0), @DiffB(0), @NDiffB)
+  If (DbgA <> MidSum Or DbgB <> MidSum) And DbgShown < 3
+    DbgShown = DbgShown + 1
+    Say("MID op=") : Oct(TOp) : Say(" pc=") : Oct(TPc) : Say(" A=") : Num(Bool(DbgA <> MidSum)) : Say(" B=") : Num(Bool(DbgB <> MidSum))
+    Say(" trap=") : Num(SnapB(12)) : Say(" regs")
+    For Oi = 0 To 6 : Say(" ") : Oct(SReg(Oi)) : Next
+    Say(" idx=") : Oct(ShadowLo((TPc + 2) >> 1)) : Say(" nd=") : Num(NDiffA) : Say(" d0=") : Oct(DiffA(0) * 2) : Say(" banks")
+    For Oi = 0 To 3 : Say(" ") : Oct(SBank(Oi)) : Next
+    Eol()
+  EndIf
+  OpTable(TOp >> 3) = FastAsm(FKind)     ; the table as built
+  FChecks = FChecks + 1
+  If SnapA(#SNAP_FAST) = 1
+    FFast = FFast + 1
+  Else
+    FSlow = FSlow + 1
+  EndIf
+  Ofield = -1
+  For Oi = 0 To #SNAP_FAST - 1
+    If SnapA(Oi) <> SnapB(Oi) And Ofield < 0
+      Ofield = Oi
+    EndIf
+  Next
+  If Ofield < 0 And NDiffA <> NDiffB
+    Ofield = 30
+  EndIf
+  If Ofield < 0
+    For Oi = 0 To 15
+      If Oi < NDiffA * 2 And DiffA(Oi) <> DiffB(Oi) And Ofield < 0
+        Ofield = 31
+      EndIf
+    Next
+  EndIf
+  If Ofield < 0 And (DbgA <> MidSum Or DbgB <> MidSum)
+    Ofield = 32                         ; a store outside the shadowed RAM, by either run
+  EndIf
+  MidSum = DbgB
+  If Ofield >= 0
+    FFailures = FFailures + 1
+    If FFirst < 0
+      FFirst = FChecks
+      FFirstOp = TOp
+      FFirstField = Ofield
+      Say("FAST FIRST FAIL op=") : Oct(TOp) : Say(" pc=") : Oct(TPc) : Say(" field=") : Num(Ofield)
+      If Ofield < #SNAP_FAST
+        Say(" asm=") : Num(SnapA(Ofield)) : Say(" plain=") : Num(SnapB(Ofield))
+      EndIf
+      Say(" fast=") : Num(SnapA(#SNAP_FAST)) : Eol()
+    EndIf
+  EndIf
+EndProcedure
+
+Global IKind.i, IChecks.i, IFailures.i, IFirst.i = -1, IFirstOp.i, IFirstField.i, IFast.i, ISlow.i
+Global Dim ICode.i(8)
+Procedure IFormOne()
+  PswSet($00E0)
+  IKind = RndN(8)
+  For Oi = 0 To 6 : Reg(Oi) = RndReg() : Next
+  TPc = RndN(#LO_WORDS - 4) * 2
+  TOp = ICode(IKind) | RndN(8)
+  Mem(TPc >> 1) = TOp
+  Mem((TPc + 2) >> 1) = RndN($10000)
+  Oi = RndRam()
+  If RndN(3) = 0 : Oi = Oi | 1 : EndIf
+  If (TOp & 7) = 7
+    Mem((TPc + 4) >> 1) = (Oi - (TPc + 6)) & $FFFF
+  Else
+    Mem((TPc + 4) >> 1) = (Oi - Reg(TOp & 7)) & $FFFF
+  EndIf
+  For Oi = 0 To #LO_WORDS - 1
+    ShadowLo(Oi) = Mem(Oi)
+  Next
+  For Oi = 0 To #HI_WORDS - 1
+    ShadowHi(Oi) = Mem(#HI_WORD + Oi)
+  Next
+  NzWrite(Rnd()) : FlagV = Rnd() : FlagC = Rnd()
+  For Oi = 1 To 3                       ; a trap into another mode pushes on that mode's stack:
+    StackBank(Oi) = RndRam() + 8        ; keep it in the shadowed RAM too
+  Next
+  SaveState()
+  LoadState()
+  RunOnce(FastAsm(26 + IKind))
+  DbgA = MidSumNow()
+  Snap(@SnapA(0), @DiffA(0), @NDiffA)
+  LoadState()
+  RunOnce(FastRef(26 + IKind))
+  DbgB = MidSumNow()
+  Snap(@SnapB(0), @DiffB(0), @NDiffB)
+  If (DbgA <> MidSum Or DbgB <> MidSum) And DbgShown < 3
+    DbgShown = DbgShown + 1
+    Say("MID op=") : Oct(TOp) : Say(" pc=") : Oct(TPc) : Say(" A=") : Num(Bool(DbgA <> MidSum)) : Say(" B=") : Num(Bool(DbgB <> MidSum))
+    Say(" trap=") : Num(SnapB(12)) : Say(" regs")
+    For Oi = 0 To 6 : Say(" ") : Oct(SReg(Oi)) : Next
+    Say(" idx=") : Oct(ShadowLo((TPc + 2) >> 1)) : Say(" nd=") : Num(NDiffA) : Say(" d0=") : Oct(DiffA(0) * 2) : Say(" banks")
+    For Oi = 0 To 3 : Say(" ") : Oct(SBank(Oi)) : Next
+    Eol()
+  EndIf
+  OpTable(TOp >> 3) = FastAsm(26 + IKind)     ; the table as built
+  IChecks = IChecks + 1
+  If SnapA(#SNAP_FAST) = 1
+    IFast = IFast + 1
+  Else
+    ISlow = ISlow + 1
+  EndIf
+  Ofield = -1
+  For Oi = 0 To #SNAP_FAST - 1
+    If SnapA(Oi) <> SnapB(Oi) And Ofield < 0
+      Ofield = Oi
+    EndIf
+  Next
+  If Ofield < 0 And NDiffA <> NDiffB
+    Ofield = 30
+  EndIf
+  If Ofield < 0
+    For Oi = 0 To 15
+      If Oi < NDiffA * 2 And DiffA(Oi) <> DiffB(Oi) And Ofield < 0
+        Ofield = 31
+      EndIf
+    Next
+  EndIf
+  If Ofield < 0 And (DbgA <> MidSum Or DbgB <> MidSum)
+    Ofield = 32                         ; a store outside the shadowed RAM, by either run
+  EndIf
+  MidSum = DbgB
+  If Ofield >= 0
+    IFailures = IFailures + 1
+    If IFirst < 0
+      IFirst = IChecks
+      IFirstOp = TOp
+      IFirstField = Ofield
+      Say("IMX FIRST FAIL op=") : Oct(TOp) : Say(" pc=") : Oct(TPc) : Say(" field=") : Num(Ofield)
+      If Ofield < #SNAP_FAST
+        Say(" asm=") : Num(SnapA(Ofield)) : Say(" plain=") : Num(SnapB(Ofield))
+      EndIf
+      Say(" fast=") : Num(SnapA(#SNAP_FAST)) : Eol()
+    EndIf
+  EndIf
+EndProcedure
+
+Global SKind.i, SChecks.i, SFailures.i, SFirst.i = -1, SFirstOp.i, SFirstField.i, SFast.i, SSlow.i
+Global Dim SCode.i(6)
+Procedure SFormOne()
+  PswSet($00E0)
+  SKind = RndN(6)
+  For Oi = 0 To 6 : Reg(Oi) = RndReg() : Next
+  TPc = RndN(#LO_WORDS - 4) * 2
+  TOp = SCode(SKind) | RndN(8)
+  Mem(TPc >> 1) = TOp
+  Oi = RndRam()
+  If RndN(3) = 0 : Oi = Oi | 1 : EndIf
+  If (TOp & 7) = 7
+    Mem((TPc + 2) >> 1) = (Oi - (TPc + 4)) & $FFFF
+  Else
+    Mem((TPc + 2) >> 1) = (Oi - Reg(TOp & 7)) & $FFFF
+  EndIf
+  For Oi = 0 To #LO_WORDS - 1
+    ShadowLo(Oi) = Mem(Oi)
+  Next
+  For Oi = 0 To #HI_WORDS - 1
+    ShadowHi(Oi) = Mem(#HI_WORD + Oi)
+  Next
+  NzWrite(Rnd()) : FlagV = Rnd() : FlagC = Rnd()
+  For Oi = 1 To 3                       ; a trap into another mode pushes on that mode's stack:
+    StackBank(Oi) = RndRam() + 8        ; keep it in the shadowed RAM too
+  Next
+  SaveState()
+  LoadState()
+  RunOnce(FastAsm(34 + SKind))
+  DbgA = MidSumNow()
+  Snap(@SnapA(0), @DiffA(0), @NDiffA)
+  LoadState()
+  RunOnce(FastRef(34 + SKind))
+  DbgB = MidSumNow()
+  Snap(@SnapB(0), @DiffB(0), @NDiffB)
+  If (DbgA <> MidSum Or DbgB <> MidSum) And DbgShown < 3
+    DbgShown = DbgShown + 1
+    Say("MID op=") : Oct(TOp) : Say(" pc=") : Oct(TPc) : Say(" A=") : Num(Bool(DbgA <> MidSum)) : Say(" B=") : Num(Bool(DbgB <> MidSum))
+    Say(" trap=") : Num(SnapB(12)) : Say(" regs")
+    For Oi = 0 To 6 : Say(" ") : Oct(SReg(Oi)) : Next
+    Say(" idx=") : Oct(ShadowLo((TPc + 2) >> 1)) : Say(" nd=") : Num(NDiffA) : Say(" d0=") : Oct(DiffA(0) * 2) : Say(" banks")
+    For Oi = 0 To 3 : Say(" ") : Oct(SBank(Oi)) : Next
+    Eol()
+  EndIf
+  OpTable(TOp >> 3) = FastAsm(34 + SKind)     ; the table as built
+  SChecks = SChecks + 1
+  If SnapA(#SNAP_FAST) = 1
+    SFast = SFast + 1
+  Else
+    SSlow = SSlow + 1
+  EndIf
+  Ofield = -1
+  For Oi = 0 To #SNAP_FAST - 1
+    If SnapA(Oi) <> SnapB(Oi) And Ofield < 0
+      Ofield = Oi
+    EndIf
+  Next
+  If Ofield < 0 And NDiffA <> NDiffB
+    Ofield = 30
+  EndIf
+  If Ofield < 0
+    For Oi = 0 To 15
+      If Oi < NDiffA * 2 And DiffA(Oi) <> DiffB(Oi) And Ofield < 0
+        Ofield = 31
+      EndIf
+    Next
+  EndIf
+  If Ofield < 0 And (DbgA <> MidSum Or DbgB <> MidSum)
+    Ofield = 32                         ; a store outside the shadowed RAM, by either run
+  EndIf
+  MidSum = DbgB
+  If Ofield >= 0
+    SFailures = SFailures + 1
+    If SFirst < 0
+      SFirst = SChecks
+      SFirstOp = TOp
+      SFirstField = Ofield
+      Say("INDEXED FIRST FAIL op=") : Oct(TOp) : Say(" pc=") : Oct(TPc) : Say(" field=") : Num(Ofield)
+      If Ofield < #SNAP_FAST
+        Say(" asm=") : Num(SnapA(Ofield)) : Say(" plain=") : Num(SnapB(Ofield))
+      EndIf
+      Say(" fast=") : Num(SnapA(#SNAP_FAST)) : Eol()
+    EndIf
+  EndIf
+EndProcedure
+
 ; ---- __eaw1, the handlers' operand address --------------------------------
 ; The plain body, as a procedure of its own (cpu.pico, EaWordBody).
 ProcedureRAM.i EaWordRef(spec.i)
   EaWordBody()
 EndProcedure
+
+ProcedureRAM.i EaByteRef(spec.i)
+  EaReg = spec & 7
+  EaStep = 1
+  If EaReg >= 6
+    EaStep = 2
+  EndIf
+  Tmp = (spec >> 3) & 7
+  If Tmp = 2
+    Tmp = Reg(EaReg)
+    Reg(EaReg) = (Tmp + EaStep) & $FFFF
+    ProcedureReturn Tmp
+  ElseIf Tmp = 4
+    Reg(EaReg) = (Reg(EaReg) - EaStep) & $FFFF
+    If EaReg = 6
+      StackCheckFast()
+    EndIf
+    ProcedureReturn Reg(EaReg)
+  EndIf
+  ProcedureReturn EaWordRef(spec)
+EndProcedure
+Global EByte.i, EByteI.i
 
 ; __eaw1 as the handlers reach it: bl, spec in r0, the address back in r0.
 ; (lr is kept in r5 across the bl: __eaw1 keeps r4-r11.)
@@ -369,7 +648,15 @@ Procedure EaAsm()
     mov r5, lr
     ldr r0, =global_espec
     ldr r0, [r0]
+    ldr r1, =global_ebyte
+    ldr r1, [r1]
+    cmp r1, #0
+    beq __ea_word_test
+    bl __eab1
+    b __ea_test_done
+__ea_word_test:
     bl __eaw1
+__ea_test_done:
     ldr r1, =global_er
     str r0, [r1]
     mov lr, r5
@@ -395,6 +682,7 @@ Procedure EaSnap(*s.i)
   PokeL(GS + 56, StackYellow)
   PokeL(GS + 60, AbortPsw)
   PokeL(GS + 64, Bool(EaSpec = #EA_NONE))
+  PokeL(GS + 68, EaStep)
 EndProcedure
 
 Procedure.i PickMode()
@@ -431,7 +719,7 @@ Procedure EaOne()
   EaSnap(@EaA(0))
   LoadState()
   EaSpec = #EA_NONE
-  ER = EaWordRef(ESpec)
+  If EByte : ER = EaByteRef(ESpec) : Else : ER = EaWordRef(ESpec) : EndIf
   EaSnap(@EaB(0))
   EaChecks = EaChecks + 1
   If EaA(16) = 1
@@ -445,6 +733,7 @@ Procedure EaOne()
       EField = Ei
     EndIf
   Next
+  If EByte And EaA(17) <> EaB(17) : EField = 17 : EndIf
   If EField >= 0
     EaFailures = EaFailures + 1
     If EaFirst < 0
@@ -455,6 +744,52 @@ Procedure EaOne()
       Say(" asm=") : Num(EaA(EField)) : Say(" plain=") : Num(EaB(EField)) : Say(" fast=") : Num(EaA(16)) : Eol()
     EndIf
   EndIf
+EndProcedure
+
+ ; Hold byte memory helpers to the two word lanes, including the untouched
+; adjacent byte. Every RAM byte is eligible; values carry arbitrary high bits.
+Global MbAdr.i, MbVal.i, MbKind.i, MbRes.i, MbOld.i, MbWant.i, MbChecks.i, MbFailures.i
+Procedure MByteAsm()
+  ASM
+    push {r5}
+    mov r5, lr
+    ldr r0, =global_mbadr
+    ldr r0, [r0]
+    ldr r1, =global_mbval
+    ldr r1, [r1]
+    ldr r2, =global_mbkind
+    ldr r2, [r2]
+    cmp r2, #0
+    beq __mb_read
+    bl __t1_writebyte
+    b __mb_done
+__mb_read:
+    bl __t1_readbyte
+    ldr r1, =global_mbres
+    str r0, [r1]
+__mb_done:
+    mov lr, r5
+    pop {r5}
+  EndASM
+EndProcedure
+
+Procedure MByteOne()
+  MbAdr = RndN(#RAM_BYTES)
+  MbVal = Rnd()
+  MbOld = Mem(MbAdr >> 1)
+  Mem(MbAdr >> 1) = MbOld
+  MbKind = 0
+  MByteAsm()
+  MbWant = MbOld & $FF
+  If MbAdr & 1 : MbWant = MbOld >> 8 : EndIf
+  If MbRes <> MbWant : MbFailures = MbFailures + 1 : EndIf
+  MbKind = 1
+  MByteAsm()
+  MbWant = (MbOld & $FF00) | (MbVal & $FF)
+  If MbAdr & 1 : MbWant = (MbOld & $FF) | ((MbVal & $FF) << 8) : EndIf
+  If Mem(MbAdr >> 1) <> MbWant : MbFailures = MbFailures + 1 : EndIf
+  Mem(MbAdr >> 1) = MbOld
+  MbChecks = MbChecks + 2
 EndProcedure
 
 Procedure Main()
@@ -475,6 +810,46 @@ Procedure Main()
   PairSm(4) = 2 : PairDm(4) = 0
   PairSm(5) = 6 : PairDm(5) = 1
   PairSm(6) = 0 : PairDm(6) = 6
+  FCode(0) = $100
+  FCode(1) = $200
+  FCode(2) = $300
+  FCode(3) = $400
+  FCode(4) = $500
+  FCode(5) = $600
+  FCode(6) = $700
+  FCode(7) = $8000
+  FCode(8) = $8100
+  FCode(9) = $8200
+  FCode(10) = $8300
+  FCode(11) = $8400
+  FCode(12) = $8500
+  FCode(13) = $8600
+  FCode(14) = $8700
+  FCode(15) = $1000
+  FCode(16) = $2000
+  FCode(17) = $6000
+  FCode(18) = $E000
+  FCode(19) = $3000
+  FCode(20) = $4000
+  FCode(21) = $5000
+  FCode(22) = $A00
+  FCode(23) = $BC0
+  FCode(24) = $A80
+  FCode(25) = $AC0
+  ICode(0) = $95F0
+  ICode(1) = $15F0
+  ICode(2) = $25F0
+  ICode(3) = $65F0
+  ICode(4) = $E5F0
+  ICode(5) = $35F0
+  ICode(6) = $45F0
+  ICode(7) = $55F0
+  SCode(0) = $A30
+  SCode(1) = $BF0
+  SCode(2) = $AB0
+  SCode(3) = $AF0
+  SCode(4) = $8A30
+  SCode(5) = $8BF0
   BuildOpcodeTable()
   CpuReset()
   For Mr = 0 To #RAM_WORDS - 1
@@ -485,6 +860,39 @@ Procedure Main()
   MidSum = MidSumNow()
   Say("ASMCHECK start: the Pico's unmapped MOV handlers and __eaw1, assembly against plain") : Eol()
   Repeat
+    For Mr = 1 To #ROUND * 10
+      MByteOne()
+      UsbSerialTask()
+      SafetyPet()
+    Next
+    Say("ASMCHECK bytes checks=") : Num(MbChecks) : Say(" failures=") : Num(MbFailures)
+    If MbFailures = 0 : Say(" PASS") : Else : Say(" FAIL") : EndIf
+    Eol()
+    SingleHit = 0
+    For Mr = 1 To #ROUND
+      SFormOne()
+      UsbSerialTask()
+      SafetyPet()
+    Next
+    Say("ASMCHECK indexed checks=") : Num(SChecks) : Say(" fast=") : Num(SingleHit) : Say(" failures=") : Num(SFailures)
+    If SFailures = 0 And SingleHit > 0 : Say(" PASS") : Else : Say(" FAIL") : EndIf
+    Eol()
+    For Mr = 1 To #ROUND
+      IFormOne()
+      UsbSerialTask()
+      SafetyPet()
+    Next
+    Say("ASMCHECK imx checks=") : Num(IChecks) : Say(" fast=") : Num(IFast) : Say(" failures=") : Num(IFailures)
+    If IFailures = 0 : Say(" PASS") : Else : Say(" FAIL") : EndIf
+    Eol()
+    For Mr = 1 To #ROUND
+      FastOne()
+      UsbSerialTask()
+      SafetyPet()
+    Next
+    Say("ASMCHECK fast checks=") : Num(FChecks) : Say(" failures=") : Num(FFailures)
+    If FFailures = 0 : Say(" PASS") : Else : Say(" FAIL") : EndIf
+    Eol()
     Mt0 = Micros()
     For Mr = 1 To #ROUND
       OneCheck()
@@ -513,6 +921,17 @@ Procedure Main()
       Say(" FAIL first=") : Num(EaFirst) : Say(" spec=") : Oct(EaFirstSpec) : Say(" field=") : Num(EaFirstField)
     EndIf
     Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
+    EByte = 1
+    Mr = EaFailures
+    For EByteI = 1 To #ROUND * 5
+      EaOne()
+      UsbSerialTask()
+      SafetyPet()
+    Next
+    EByte = 0
+    Say("ASMCHECK eab checks=") : Num(#ROUND * 5) : Say(" failures=") : Num(EaFailures - Mr)
+    If EaFailures = Mr : Say(" PASS") : Else : Say(" FAIL") : EndIf
+    Eol()
   ForEver
 EndProcedure
 

@@ -248,12 +248,20 @@ Global PC.i                 ; the emulated PC between instructions; Reg(7) is it
 ; #ASM_EA: the handlers reach __eaw1 by bl for X(R), -(R), (R)+ and (R) (EaFast,
 ; below). 0 builds the plain code alone.
 #ASM_MOV = 1
+#ASM_MEM = 1              ; compact Thumb-1 RAM access helpers
+#ASM_INDEXED = 1                       ; indexed CLR/TST/INC/DEC and byte CLR/TST
+#ASM_IMX = 1              ; native immediate/indexed memory forms
+#ASM_FAST = 1             ; Thumb-1 branches and register forms (tools/asm_fast_gen.py)
 #ASM_EA = 1
 ; The FPJ11 is modelled on the Pico 2 only (pico2/fp11.pico2); here 170000-177777
 ; stay reserved instructions. The handler in instructions.pico is compiled out.
 #FP11 = 0
 ; Measured on a Pico W, 2026-10-19 (Mini-Unix `time od /rkmx`, host-timed): 5.88 s
 ; before, 4.61 s with both.
+CompilerIf #DISK_BACKEND = 0
+Global Dim FastAsm.Label(40)
+Global Dim FastRef.Label(40)
+CompilerEndIf
 Global Dim MovAsm.Label(7)                  ; each MOV handler by mode: the assembly entry ...
 Global Dim MovRef.Label(7)                  ; ... and the plain one (filled with the table)
 Global EaSpec.i                             ; where __eaw1 leaves the spec when it goes on to EaWord
@@ -990,7 +998,7 @@ ProcedureRAM.i ReadWord(a.i)
     ProcedureReturn 0
   EndIf
   If a < #RAM_BYTES
-    ProcedureReturn Mem(a >> 1)
+    ProcedureReturn PeekU(@Mem(0) + a)
   EndIf
   ProcedureReturn IoRead(a)
 EndProcedure
@@ -1002,7 +1010,7 @@ ProcedureRAM WriteWord(a.i, v.i)
     ProcedureReturn
   EndIf
   If a < #RAM_BYTES
-    Mem(a >> 1) = v & $FFFF
+    PokeU(@Mem(0) + a, v)
     ProcedureReturn
   EndIf
   If a = #PSW_ADDR
@@ -1016,10 +1024,7 @@ EndProcedure
 ; kind), so reading either half of RBUF clears DONE, as on the real bus.
 ProcedureRAM.i ReadByte(a.i)
   If a < #RAM_BYTES
-    If a & 1
-      ProcedureReturn (Mem(a >> 1) >> 8) & $FF
-    EndIf
-    ProcedureReturn Mem(a >> 1) & $FF
+    ProcedureReturn PeekA(@Mem(0) + a) & $FF
   EndIf
   If a & 1
     ProcedureReturn (IoRead(a - 1) >> 8) & $FF
@@ -1029,11 +1034,7 @@ EndProcedure
 
 ProcedureRAM WriteByte(a.i, v.i)
   If a < #RAM_BYTES
-    If a & 1
-      Mem(a >> 1) = (Mem(a >> 1) & $00FF) | ((v & $FF) << 8)
-    Else
-      Mem(a >> 1) = (Mem(a >> 1) & $FF00) | (v & $FF)
-    EndIf
+    PokeA(@Mem(0) + a, v)
     ProcedureReturn
   EndIf
   If (a & $FFFE) = #PSW_ADDR
@@ -1105,7 +1106,7 @@ EndProcedure
 Macro MReadWord(mDest, mAdr)
   If mAdr < #RAM_BYTES
     If (mAdr & 1) = 0
-      mDest = Mem(mAdr >> 1)
+      mDest = PeekU(@Mem(0) + mAdr)
     Else
       mDest = ReadWord(mAdr)
     EndIf
@@ -1117,7 +1118,7 @@ EndMacro
 Macro MWriteWord(mAdr, mVal)                   ; Mem is .u: the store keeps the low 16 bits
   If mAdr < #RAM_BYTES
     If (mAdr & 1) = 0
-      Mem(mAdr >> 1) = mVal
+      PokeU(@Mem(0) + mAdr, mVal)
     Else
       WriteWord(mAdr, mVal)
     EndIf
@@ -1126,13 +1127,11 @@ Macro MWriteWord(mAdr, mVal)                   ; Mem is .u: the store keeps the 
   EndIf
 EndMacro
 
+; RAM is little-endian: byte loads/stores reach either lane directly.
+; Device accesses retain the word-bus side effects in ReadByte/WriteByte.
 Macro MReadByte(mDest, mAdr)
   If mAdr < #RAM_BYTES
-    If mAdr & 1
-      mDest = (Mem(mAdr >> 1) >> 8) & $FF
-    Else
-      mDest = Mem(mAdr >> 1) & $FF
-    EndIf
+    mDest = PeekA(@Mem(0) + mAdr) & $FF
   Else
     mDest = ReadByte(mAdr)
   EndIf
@@ -1140,11 +1139,7 @@ EndMacro
 
 Macro MWriteByte(mAdr, mVal)
   If mAdr < #RAM_BYTES
-    If mAdr & 1
-      Mem(mAdr >> 1) = (Mem(mAdr >> 1) & $00FF) | ((mVal & $FF) << 8)
-    Else
-      Mem(mAdr >> 1) = (Mem(mAdr >> 1) & $FF00) | (mVal & $FF)
-    EndIf
+    PokeA(@Mem(0) + mAdr, mVal)
   Else
     WriteByte(mAdr, mVal)
   EndIf
@@ -1276,6 +1271,22 @@ CompilerElse
 CompilerEndIf
 EndMacro
 
+; Byte counterpart of EaFast; mmu_gen restores the mapped Basic call.
+Macro EaFastB()
+CompilerIf #ASM_EA = 1
+  ASM Uses Op
+    mov r0, r8
+    movs r1, #63
+    ands r0, r1
+    bl __eab1
+    ldr r1, =global_ea
+    str r0, [r1]
+  EndASM
+CompilerElse
+  Ea = EaByte(Op & $3F)
+CompilerEndIf
+EndMacro
+
 ; Byte operands step (R)+ and -(R) by one, except through SP and PC, which
 ; always step by two so they stay even.
 ProcedureRAM.i EaByte(spec.i)
@@ -1326,7 +1337,19 @@ Macro MSrcByte()
   If (Op & $0E00) = 0
     Src = Reg((Op >> 6) & 7) & $FF
   Else
+CompilerIf #ASM_EA = 1
+  ASM Uses Op
+    mov r0, r8
+    lsrs r0, r0, #6
+    movs r1, #63
+    ands r0, r1
+    bl __eab1
+    ldr r1, =global_ea
+    str r0, [r1]
+  EndASM
+CompilerElse
     Ea = EaByte((Op >> 6) & $3F)
+CompilerEndIf
     MReadByte(Src, Ea)
   EndIf
 EndMacro
@@ -1983,3 +2006,7 @@ Procedure CpuReset()
   ; ClockCycles = 0
 EndProcedure
 
+
+CompilerIf #DISK_BACKEND = 0
+Global SingleHit.i                      ; successful indexed native entries, hardware test only
+CompilerEndIf

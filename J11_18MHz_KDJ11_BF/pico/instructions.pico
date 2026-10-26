@@ -374,12 +374,1140 @@ __eaw1_slow:
     push {lr}
     bl eaword
     pop {pc}
+__eab1:
+    mov r12, r0
+    movs r1, #7
+    ands r1, r0
+    movs r2, #1
+    cmp r1, #6
+    blo __eab1_step
+    movs r2, #2
+__eab1_step:
+    ldr r3, =global_eastep
+    str r2, [r3]
+    lsrs r3, r0, #3
+    cmp r3, #2
+    beq __eab1_inc
+    cmp r3, #4
+    beq __eab1_dec
+    b __eaw1
+__eab1_inc:
+    ldr r3, =global_eareg
+    str r1, [r3]
+    lsls r1, r1, #2
+    ldr r3, =global_reg
+    ldr r0, [r3, r1]
+    adds r2, r0, r2
+    uxth r2, r2
+    str r2, [r3, r1]
+    ldr r3, =global_tmp
+    str r0, [r3]
+    bx lr
+__eab1_dec:
+    cmp r1, #7
+    beq __eab1_slow
+    lsls r1, r1, #2
+    ldr r3, =global_reg
+    ldr r0, [r3, r1]
+    subs r0, r0, r2
+    uxth r0, r0
+    cmp r1, #24
+    bne __eab1_commit
+    lsrs r2, r0, #8
+    beq __eab1_slow
+__eab1_commit:
+    str r0, [r3, r1]
+    lsrs r1, r1, #2
+    ldr r3, =global_eareg
+    str r1, [r3]
+    movs r1, #4
+    ldr r3, =global_tmp
+    str r1, [r3]
+    bx lr
+__eab1_slow:
+    mov r0, r12
+    ldr r1, =global_easpec
+    str r0, [r1]
+    push {lr}
+    bl eabyte
+    pop {pc}
   EndASM
 CompilerEndIf
 ; ---- END ASM ----
 ; ---- END UNMAPPED ONLY ----
 
 ;-MOV-------------------------------------------------------------------
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- INDEXED SINGLE NATIVE ----
+InstructionIX_CLR_0050:
+CompilerIf #ASM_INDEXED = 1
+  ASM Uses PC, Op, FlagNZ
+    mov r2, r9
+    ldr r0, =#RAM_BYTES
+    cmp r2, r0
+    bhs __ix_clru_slow
+    ldr r0, =global_mem
+    ldrh r0, [r0, r2]
+    mov r1, r8
+    lsls r1, r1, #29
+    lsrs r1, r1, #29
+    cmp r1, #7
+    beq __ix_clru_pc
+    lsls r1, r1, #2
+    ldr r2, =global_reg
+    ldr r2, [r2, r1]
+    b __ix_clru_base
+__ix_clru_pc:
+    mov r2, r9
+    adds r2, #2
+    uxth r2, r2
+__ix_clru_base:
+    adds r0, r0, r2
+    uxth r0, r0
+    lsrs r1, r0, #1
+    bcs __ix_clru_slow
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __ix_clru_slow
+    ldr r3, =global_mem
+    adds r3, r3, r0
+    movs r0, #0
+    strh r0, [r3]
+    movs r4, #0
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+    ldr r1, =global_flagc
+    str r0, [r1]
+    mov r0, r9
+    adds r0, #2
+    uxth r0, r0
+    mov r9, r0
+  EndASM
+CompilerIf #DISK_BACKEND = 0
+  SingleHit = SingleHit + 1
+CompilerEndIf
+  ASM Uses PC, Op, RunLeft
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+  ASM
+__ix_clru_slow:
+  EndASM
+CompilerEndIf
+  Goto InstructionCLR_0050
+
+InstructionIX_TST_0057:
+CompilerIf #ASM_INDEXED = 1
+  ASM Uses PC, Op, FlagNZ
+    mov r2, r9
+    ldr r0, =#RAM_BYTES
+    cmp r2, r0
+    bhs __ix_tstu_slow
+    ldr r0, =global_mem
+    ldrh r0, [r0, r2]
+    mov r1, r8
+    lsls r1, r1, #29
+    lsrs r1, r1, #29
+    cmp r1, #7
+    beq __ix_tstu_pc
+    lsls r1, r1, #2
+    ldr r2, =global_reg
+    ldr r2, [r2, r1]
+    b __ix_tstu_base
+__ix_tstu_pc:
+    mov r2, r9
+    adds r2, #2
+    uxth r2, r2
+__ix_tstu_base:
+    adds r0, r0, r2
+    uxth r0, r0
+    lsrs r1, r0, #1
+    bcs __ix_tstu_slow
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __ix_tstu_slow
+    ldr r3, =global_mem
+    adds r3, r3, r0
+    ldrh r4, [r3]
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+    ldr r1, =global_flagc
+    str r0, [r1]
+    mov r0, r9
+    adds r0, #2
+    uxth r0, r0
+    mov r9, r0
+  EndASM
+CompilerIf #DISK_BACKEND = 0
+  SingleHit = SingleHit + 1
+CompilerEndIf
+  ASM Uses PC, Op, RunLeft
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+  ASM
+__ix_tstu_slow:
+  EndASM
+CompilerEndIf
+  Goto InstructionTST_0057
+
+InstructionIX_INC_0052:
+CompilerIf #ASM_INDEXED = 1
+  ASM Uses PC, Op, FlagNZ, Res
+    mov r2, r9
+    ldr r0, =#RAM_BYTES
+    cmp r2, r0
+    bhs __ix_incu_slow
+    ldr r0, =global_mem
+    ldrh r0, [r0, r2]
+    mov r1, r8
+    lsls r1, r1, #29
+    lsrs r1, r1, #29
+    cmp r1, #7
+    beq __ix_incu_pc
+    lsls r1, r1, #2
+    ldr r2, =global_reg
+    ldr r2, [r2, r1]
+    b __ix_incu_base
+__ix_incu_pc:
+    mov r2, r9
+    adds r2, #2
+    uxth r2, r2
+__ix_incu_base:
+    adds r0, r0, r2
+    uxth r0, r0
+    lsrs r1, r0, #1
+    bcs __ix_incu_slow
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __ix_incu_slow
+    ldr r3, =global_mem
+    adds r3, r3, r0
+    ldrh r0, [r3]
+    adds r2, r0, #1
+    uxth r2, r2
+    strh r2, [r3]
+    mov r10, r2
+    movs r4, r2
+    movs r1, r2
+    bics r1, r0
+    ldr r3, =global_flagv
+    str r1, [r3]
+    mov r0, r9
+    adds r0, #2
+    uxth r0, r0
+    mov r9, r0
+  EndASM
+CompilerIf #DISK_BACKEND = 0
+  SingleHit = SingleHit + 1
+CompilerEndIf
+  ASM Uses PC, Op, RunLeft
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+  ASM
+__ix_incu_slow:
+  EndASM
+CompilerEndIf
+  Goto InstructionINC_0052
+
+InstructionIX_DEC_0053:
+CompilerIf #ASM_INDEXED = 1
+  ASM Uses PC, Op, FlagNZ, Res
+    mov r2, r9
+    ldr r0, =#RAM_BYTES
+    cmp r2, r0
+    bhs __ix_decu_slow
+    ldr r0, =global_mem
+    ldrh r0, [r0, r2]
+    mov r1, r8
+    lsls r1, r1, #29
+    lsrs r1, r1, #29
+    cmp r1, #7
+    beq __ix_decu_pc
+    lsls r1, r1, #2
+    ldr r2, =global_reg
+    ldr r2, [r2, r1]
+    b __ix_decu_base
+__ix_decu_pc:
+    mov r2, r9
+    adds r2, #2
+    uxth r2, r2
+__ix_decu_base:
+    adds r0, r0, r2
+    uxth r0, r0
+    lsrs r1, r0, #1
+    bcs __ix_decu_slow
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __ix_decu_slow
+    ldr r3, =global_mem
+    adds r3, r3, r0
+    ldrh r0, [r3]
+    subs r2, r0, #1
+    uxth r2, r2
+    strh r2, [r3]
+    mov r10, r2
+    movs r4, r2
+    movs r1, r0
+    bics r1, r2
+    ldr r3, =global_flagv
+    str r1, [r3]
+    mov r0, r9
+    adds r0, #2
+    uxth r0, r0
+    mov r9, r0
+  EndASM
+CompilerIf #DISK_BACKEND = 0
+  SingleHit = SingleHit + 1
+CompilerEndIf
+  ASM Uses PC, Op, RunLeft
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+  ASM
+__ix_decu_slow:
+  EndASM
+CompilerEndIf
+  Goto InstructionDEC_0053
+
+InstructionIX_CLRB_1050:
+CompilerIf #ASM_INDEXED = 1
+  ASM Uses PC, Op, FlagNZ
+    mov r2, r9
+    ldr r0, =#RAM_BYTES
+    cmp r2, r0
+    bhs __ix_clrbu_slow
+    ldr r0, =global_mem
+    ldrh r0, [r0, r2]
+    mov r1, r8
+    lsls r1, r1, #29
+    lsrs r1, r1, #29
+    cmp r1, #7
+    beq __ix_clrbu_pc
+    lsls r1, r1, #2
+    ldr r2, =global_reg
+    ldr r2, [r2, r1]
+    b __ix_clrbu_base
+__ix_clrbu_pc:
+    mov r2, r9
+    adds r2, #2
+    uxth r2, r2
+__ix_clrbu_base:
+    adds r0, r0, r2
+    uxth r0, r0
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __ix_clrbu_slow
+    ldr r3, =global_mem
+    adds r3, r3, r0
+    movs r0, #0
+    strb r0, [r3]
+    movs r4, #0
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+    ldr r1, =global_flagc
+    str r0, [r1]
+    mov r0, r9
+    adds r0, #2
+    uxth r0, r0
+    mov r9, r0
+  EndASM
+CompilerIf #DISK_BACKEND = 0
+  SingleHit = SingleHit + 1
+CompilerEndIf
+  ASM Uses PC, Op, RunLeft
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+  ASM
+__ix_clrbu_slow:
+  EndASM
+CompilerEndIf
+  Goto InstructionCLRB_1050
+
+InstructionIX_TSTB_1057:
+CompilerIf #ASM_INDEXED = 1
+  ASM Uses PC, Op, FlagNZ
+    mov r2, r9
+    ldr r0, =#RAM_BYTES
+    cmp r2, r0
+    bhs __ix_tstbu_slow
+    ldr r0, =global_mem
+    ldrh r0, [r0, r2]
+    mov r1, r8
+    lsls r1, r1, #29
+    lsrs r1, r1, #29
+    cmp r1, #7
+    beq __ix_tstbu_pc
+    lsls r1, r1, #2
+    ldr r2, =global_reg
+    ldr r2, [r2, r1]
+    b __ix_tstbu_base
+__ix_tstbu_pc:
+    mov r2, r9
+    adds r2, #2
+    uxth r2, r2
+__ix_tstbu_base:
+    adds r0, r0, r2
+    uxth r0, r0
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __ix_tstbu_slow
+    ldr r3, =global_mem
+    adds r3, r3, r0
+    ldrb r4, [r3]
+    lsls r4, r4, #8
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+    ldr r1, =global_flagc
+    str r0, [r1]
+    mov r0, r9
+    adds r0, #2
+    uxth r0, r0
+    mov r9, r0
+  EndASM
+CompilerIf #DISK_BACKEND = 0
+  SingleHit = SingleHit + 1
+CompilerEndIf
+  ASM Uses PC, Op, RunLeft
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+  ASM
+__ix_tstbu_slow:
+  EndASM
+CompilerEndIf
+  Goto InstructionTSTB_1057
+
+; ---- END INDEXED SINGLE NATIVE ----
+; ---- END UNMAPPED ONLY ----
+; ---- INDEXED HANDLERS ----
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- IMMEDIATE INDEXED THUMB1 ----
+InstructionIMX_MOVB_11:
+CompilerIf #ASM_IMX = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    mov r2, r9
+    adds r3, r2, #2
+    ldr r0, =#RAM_BYTES
+    cmp r3, r0
+    bhs __imx1_movb_slow
+    ldr r0, =global_mem
+    ldrh r1, [r0, r2]
+    ldrh r0, [r0, r3]
+    mov r3, r8
+    lsls r3, r3, #29
+    lsrs r3, r3, #29
+    cmp r3, #7
+    beq __imx1_movb_pc
+    ldr r2, =global_reg
+    lsls r3, r3, #2
+    ldr r3, [r2, r3]
+    b __imx1_movb_base
+__imx1_movb_pc:
+    mov r3, r9
+    adds r3, #4
+    uxth r3, r3
+__imx1_movb_base:
+    adds r0, r0, r3
+    uxth r0, r0
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __imx1_movb_slow
+    ldr r3, =global_mem
+    strb r1, [r3, r0]
+    uxtb r4, r1
+    lsls r4, r4, #8
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+    mov r0, r9
+    adds r0, #4
+    uxth r0, r0
+    mov r9, r0
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+  ASM
+__imx1_movb_slow:
+  EndASM
+CompilerEndIf
+  Goto InstructionMOVB_11
+
+InstructionIMX_MOV_01:
+CompilerIf #ASM_IMX = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    mov r2, r9
+    adds r3, r2, #2
+    ldr r0, =#RAM_BYTES
+    cmp r3, r0
+    bhs __imx1_mov_slow
+    ldr r0, =global_mem
+    ldrh r1, [r0, r2]
+    ldrh r0, [r0, r3]
+    mov r3, r8
+    lsls r3, r3, #29
+    lsrs r3, r3, #29
+    cmp r3, #7
+    beq __imx1_mov_pc
+    ldr r2, =global_reg
+    lsls r3, r3, #2
+    ldr r3, [r2, r3]
+    b __imx1_mov_base
+__imx1_mov_pc:
+    mov r3, r9
+    adds r3, #4
+    uxth r3, r3
+__imx1_mov_base:
+    adds r0, r0, r3
+    uxth r0, r0
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __imx1_mov_slow
+    lsrs r3, r0, #1
+    bcs __imx1_mov_slow
+    ldr r3, =global_mem
+    strh r1, [r3, r0]
+    movs r4, r1
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+    mov r0, r9
+    adds r0, #4
+    uxth r0, r0
+    mov r9, r0
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+  ASM
+__imx1_mov_slow:
+  EndASM
+CompilerEndIf
+  Goto InstructionMOV_01
+
+InstructionIMX_CMP_02:
+CompilerIf #ASM_IMX = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ, Res
+    mov r2, r9
+    adds r3, r2, #2
+    ldr r0, =#RAM_BYTES
+    cmp r3, r0
+    bhs __imx1_cmp_slow
+    ldr r0, =global_mem
+    ldrh r1, [r0, r2]
+    ldrh r0, [r0, r3]
+    mov r3, r8
+    lsls r3, r3, #29
+    lsrs r3, r3, #29
+    cmp r3, #7
+    beq __imx1_cmp_pc
+    ldr r2, =global_reg
+    lsls r3, r3, #2
+    ldr r3, [r2, r3]
+    b __imx1_cmp_base
+__imx1_cmp_pc:
+    mov r3, r9
+    adds r3, #4
+    uxth r3, r3
+__imx1_cmp_base:
+    adds r0, r0, r3
+    uxth r0, r0
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __imx1_cmp_slow
+    lsrs r3, r0, #1
+    bcs __imx1_cmp_slow
+    ldr r3, =global_mem
+    adds r3, r3, r0
+    ldrh r0, [r3]
+    subs r2, r1, r0
+    ldr r3, =global_flagc
+    str r2, [r3]
+    eors r0, r1
+    eors r1, r2
+    ands r0, r1
+    ldr r3, =global_flagv
+    str r0, [r3]
+    uxth r4, r2
+    mov r10, r4
+    mov r0, r9
+    adds r0, #4
+    uxth r0, r0
+    mov r9, r0
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+  ASM
+__imx1_cmp_slow:
+  EndASM
+CompilerEndIf
+  Goto InstructionCMP_02
+
+InstructionIMX_ADD_06:
+CompilerIf #ASM_IMX = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ, Res
+    mov r2, r9
+    adds r3, r2, #2
+    ldr r0, =#RAM_BYTES
+    cmp r3, r0
+    bhs __imx1_add_slow
+    ldr r0, =global_mem
+    ldrh r1, [r0, r2]
+    ldrh r0, [r0, r3]
+    mov r3, r8
+    lsls r3, r3, #29
+    lsrs r3, r3, #29
+    cmp r3, #7
+    beq __imx1_add_pc
+    ldr r2, =global_reg
+    lsls r3, r3, #2
+    ldr r3, [r2, r3]
+    b __imx1_add_base
+__imx1_add_pc:
+    mov r3, r9
+    adds r3, #4
+    uxth r3, r3
+__imx1_add_base:
+    adds r0, r0, r3
+    uxth r0, r0
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __imx1_add_slow
+    lsrs r3, r0, #1
+    bcs __imx1_add_slow
+    ldr r3, =global_mem
+    adds r3, r3, r0
+    ldrh r0, [r3]
+    adds r2, r0, r1
+    strh r2, [r3]
+    ldr r3, =global_flagc
+    str r2, [r3]
+    eors r0, r2
+    eors r1, r2
+    ands r0, r1
+    ldr r3, =global_flagv
+    str r0, [r3]
+    uxth r4, r2
+    mov r10, r4
+    mov r0, r9
+    adds r0, #4
+    uxth r0, r0
+    mov r9, r0
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+  ASM
+__imx1_add_slow:
+  EndASM
+CompilerEndIf
+  Goto InstructionADD_06
+
+InstructionIMX_SUB_16:
+CompilerIf #ASM_IMX = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ, Res
+    mov r2, r9
+    adds r3, r2, #2
+    ldr r0, =#RAM_BYTES
+    cmp r3, r0
+    bhs __imx1_sub_slow
+    ldr r0, =global_mem
+    ldrh r1, [r0, r2]
+    ldrh r0, [r0, r3]
+    mov r3, r8
+    lsls r3, r3, #29
+    lsrs r3, r3, #29
+    cmp r3, #7
+    beq __imx1_sub_pc
+    ldr r2, =global_reg
+    lsls r3, r3, #2
+    ldr r3, [r2, r3]
+    b __imx1_sub_base
+__imx1_sub_pc:
+    mov r3, r9
+    adds r3, #4
+    uxth r3, r3
+__imx1_sub_base:
+    adds r0, r0, r3
+    uxth r0, r0
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __imx1_sub_slow
+    lsrs r3, r0, #1
+    bcs __imx1_sub_slow
+    ldr r3, =global_mem
+    adds r3, r3, r0
+    ldrh r0, [r3]
+    subs r2, r0, r1
+    strh r2, [r3]
+    ldr r3, =global_flagc
+    str r2, [r3]
+    eors r1, r0
+    eors r0, r2
+    ands r0, r1
+    ldr r3, =global_flagv
+    str r0, [r3]
+    uxth r4, r2
+    mov r10, r4
+    mov r0, r9
+    adds r0, #4
+    uxth r0, r0
+    mov r9, r0
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+  ASM
+__imx1_sub_slow:
+  EndASM
+CompilerEndIf
+  Goto InstructionSUB_16
+
+InstructionIMX_BIT_03:
+CompilerIf #ASM_IMX = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    mov r2, r9
+    adds r3, r2, #2
+    ldr r0, =#RAM_BYTES
+    cmp r3, r0
+    bhs __imx1_bit_slow
+    ldr r0, =global_mem
+    ldrh r1, [r0, r2]
+    ldrh r0, [r0, r3]
+    mov r3, r8
+    lsls r3, r3, #29
+    lsrs r3, r3, #29
+    cmp r3, #7
+    beq __imx1_bit_pc
+    ldr r2, =global_reg
+    lsls r3, r3, #2
+    ldr r3, [r2, r3]
+    b __imx1_bit_base
+__imx1_bit_pc:
+    mov r3, r9
+    adds r3, #4
+    uxth r3, r3
+__imx1_bit_base:
+    adds r0, r0, r3
+    uxth r0, r0
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __imx1_bit_slow
+    lsrs r3, r0, #1
+    bcs __imx1_bit_slow
+    ldr r3, =global_mem
+    adds r3, r3, r0
+    ldrh r0, [r3]
+    movs r2, r0
+    ands r2, r1
+    movs r4, r2
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+    mov r0, r9
+    adds r0, #4
+    uxth r0, r0
+    mov r9, r0
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+  ASM
+__imx1_bit_slow:
+  EndASM
+CompilerEndIf
+  Goto InstructionBIT_03
+
+InstructionIMX_BIC_04:
+CompilerIf #ASM_IMX = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ, Res
+    mov r2, r9
+    adds r3, r2, #2
+    ldr r0, =#RAM_BYTES
+    cmp r3, r0
+    bhs __imx1_bic_slow
+    ldr r0, =global_mem
+    ldrh r1, [r0, r2]
+    ldrh r0, [r0, r3]
+    mov r3, r8
+    lsls r3, r3, #29
+    lsrs r3, r3, #29
+    cmp r3, #7
+    beq __imx1_bic_pc
+    ldr r2, =global_reg
+    lsls r3, r3, #2
+    ldr r3, [r2, r3]
+    b __imx1_bic_base
+__imx1_bic_pc:
+    mov r3, r9
+    adds r3, #4
+    uxth r3, r3
+__imx1_bic_base:
+    adds r0, r0, r3
+    uxth r0, r0
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __imx1_bic_slow
+    lsrs r3, r0, #1
+    bcs __imx1_bic_slow
+    ldr r3, =global_mem
+    adds r3, r3, r0
+    ldrh r0, [r3]
+    movs r2, r0
+    bics r2, r1
+    strh r2, [r3]
+    mov r10, r2
+    movs r4, r2
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+    mov r0, r9
+    adds r0, #4
+    uxth r0, r0
+    mov r9, r0
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+  ASM
+__imx1_bic_slow:
+  EndASM
+CompilerEndIf
+  Goto InstructionBIC_04
+
+InstructionIMX_BIS_05:
+CompilerIf #ASM_IMX = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ, Res
+    mov r2, r9
+    adds r3, r2, #2
+    ldr r0, =#RAM_BYTES
+    cmp r3, r0
+    bhs __imx1_bis_slow
+    ldr r0, =global_mem
+    ldrh r1, [r0, r2]
+    ldrh r0, [r0, r3]
+    mov r3, r8
+    lsls r3, r3, #29
+    lsrs r3, r3, #29
+    cmp r3, #7
+    beq __imx1_bis_pc
+    ldr r2, =global_reg
+    lsls r3, r3, #2
+    ldr r3, [r2, r3]
+    b __imx1_bis_base
+__imx1_bis_pc:
+    mov r3, r9
+    adds r3, #4
+    uxth r3, r3
+__imx1_bis_base:
+    adds r0, r0, r3
+    uxth r0, r0
+    ldr r3, =#RAM_BYTES
+    cmp r0, r3
+    bhs __imx1_bis_slow
+    lsrs r3, r0, #1
+    bcs __imx1_bis_slow
+    ldr r3, =global_mem
+    adds r3, r3, r0
+    ldrh r0, [r3]
+    movs r2, r0
+    orrs r2, r1
+    strh r2, [r3]
+    mov r10, r2
+    movs r4, r2
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+    mov r0, r9
+    adds r0, #4
+    uxth r0, r0
+    mov r9, r0
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+  ASM
+__imx1_bis_slow:
+  EndASM
+CompilerEndIf
+  Goto InstructionBIS_05
+
+; ---- END IMMEDIATE INDEXED THUMB1 ----
+; ---- END UNMAPPED ONLY ----
+; ---- IMX HANDLERS ----
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+__t1_readword:
+    ldr r2, =#RAM_BYTES
+    cmp r0, r2
+    bhs __t1_readword_slow
+    lsrs r2, r0, #1
+    bcs __t1_readword_slow
+    ldr r2, =global_mem
+    ldrh r0, [r2, r0]
+    bx lr
+__t1_readword_slow:
+    b readword
+__t1_readbyte:
+    ldr r2, =#RAM_BYTES
+    cmp r0, r2
+    bhs __t1_readbyte_slow
+    ldr r2, =global_mem
+    ldrb r0, [r2, r0]
+    bx lr
+__t1_readbyte_slow:
+    b readbyte
+__t1_writeword:
+    ldr r2, =#RAM_BYTES
+    cmp r0, r2
+    bhs __t1_writeword_slow
+    lsrs r2, r0, #1
+    bcs __t1_writeword_slow
+    ldr r2, =global_mem
+    strh r1, [r2, r0]
+    bx lr
+__t1_writeword_slow:
+    b writeword
+__t1_writebyte:
+    ldr r2, =#RAM_BYTES
+    cmp r0, r2
+    bhs __t1_writebyte_slow
+    ldr r2, =global_mem
+    strb r1, [r2, r0]
+    bx lr
+__t1_writebyte_slow:
+    b writebyte
+  EndASM
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
+; ---- MEMORY HELPERS ----
 InstructionMOV_01:            ; 01SSDD   entries $0200-$03FF
   PcOut()
   ;name = "MOV"
@@ -388,7 +1516,25 @@ InstructionMOV_01:            ; 01SSDD   entries $0200-$03FF
     Reg(Op & 7) = Src
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, Src)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagNZ = Src
   FlagV = 0
@@ -404,8 +1550,26 @@ InstructionMOVB_11:           ; 11SSDD   entries $1200-$13FF
   If (Op & $38) = 0
     Reg(Op & 7) = (Src | (0 - (Src & $80))) & $FFFF   ; to a register it is sign-extended
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    bl __t1_writebyte
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteByte(Ea, Src)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagNZ = Src << 8
   FlagV = 0
@@ -423,7 +1587,25 @@ InstructionCMP_02:            ; 02SSDD   entries $0400-$05FF
     Dst = Reg(Op & 7)
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   Res = Src - Dst                        ; src - dst, the other way round from SUB
   FlagC = Res
@@ -441,8 +1623,26 @@ InstructionCMPB_12:           ; 12SSDD   entries $1400-$15FF
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadByte(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   Res = Src - Dst
   FlagC = Res << 8
@@ -462,7 +1662,25 @@ InstructionBIT_03:            ; 03SSDD   entries $0600-$07FF
     Dst = Reg(Op & 7)
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagNZ = Src & Dst
   FlagV = 0
@@ -478,8 +1696,26 @@ InstructionBITB_13:           ; 13SSDD   entries $1600-$17FF
   If (Op & $38) = 0
     Dst = Reg(Op & 7) & $FF
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadByte(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagNZ = (Src & Dst) << 8
   FlagV = 0
@@ -498,9 +1734,43 @@ InstructionBIC_04:            ; 04SSDD   entries $0800-$09FF
     Reg(Op & 7) = Res
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    mov r10, r0
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Res, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = Res & ~Src & $FFFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagNZ = Res
   FlagV = 0
@@ -517,10 +1787,44 @@ InstructionBICB_14:           ; 14SSDD   entries $1800-$19FF
     Res = Reg(Op & 7) & ~Src & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    mov r10, r0
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadByte(Res, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = Res & ~Src & $FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writebyte
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteByte(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagNZ = Res << 8
   FlagV = 0
@@ -539,9 +1843,43 @@ InstructionBIS_05:            ; 05SSDD   entries $0A00-$0BFF
     Reg(Op & 7) = Res
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    mov r10, r0
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Res, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = Res | Src
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagNZ = Res
   FlagV = 0
@@ -558,10 +1896,44 @@ InstructionBISB_15:           ; 15SSDD   entries $1A00-$1BFF
     Res = (Reg(Op & 7) | Src) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    mov r10, r0
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadByte(Res, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = Res | Src
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writebyte
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteByte(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagNZ = Res << 8
   FlagV = 0
@@ -581,9 +1953,44 @@ InstructionADD_06:            ; 06SSDD   entries $0C00-$0DFF
     Reg(Op & 7) = Res & $FFFF
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = Src + Dst
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagC = Res
   FlagV = ~(Src ! Dst) & (Src ! Res)
@@ -604,9 +2011,44 @@ InstructionSUB_16:            ; 16SSDD   entries $1C00-$1DFF
     Reg(Op & 7) = Res & $FFFF
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = Dst - Src
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagC = Res                ; borrow
   FlagV = (Src ! Dst) & (Dst ! Res)
@@ -629,7 +2071,24 @@ InstructionCLR_0050:          ; 0050DD   entries $0140-$0147
     Reg(Op & 7) = 0
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    movs r1, #0
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, 0)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagNZ = 0
   FlagV = 0
@@ -645,8 +2104,25 @@ InstructionCLRB_1050:         ; 1050DD   entries $1140-$1147
   If (Op & $38) = 0
     Reg(Op & 7) = Reg(Op & 7) & $FF00
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    movs r1, #0
+    bl __t1_writebyte
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteByte(Ea, 0)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagNZ = 0
   FlagV = 0
@@ -665,9 +2141,43 @@ InstructionCOM_0051:          ; 0051DD   entries $0148-$014F
     Reg(Op & 7) = Res
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    mov r10, r0
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Res, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = Res ! $FFFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagNZ = Res
   FlagV = 0
@@ -684,10 +2194,44 @@ InstructionCOMB_1051:         ; 1051DD   entries $1148-$114F
     Res = (Reg(Op & 7) ! $FF) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    mov r10, r0
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadByte(Res, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = Res ! $FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writebyte
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteByte(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagNZ = Res << 8
   FlagV = 0
@@ -707,9 +2251,44 @@ InstructionINC_0052:          ; 0052DD   entries $0150-$0157   C unaffected
     Reg(Op & 7) = Res
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = (Dst + 1) & $FFFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagV = 0
   If Dst = $7FFF
@@ -729,10 +2308,45 @@ InstructionINCB_1052:         ; 1052DD   entries $1150-$1157
     Res = (Dst + 1) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadByte(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = (Dst + 1) & $FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writebyte
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteByte(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagV = 0
   If Dst = $7F
@@ -754,9 +2368,44 @@ InstructionDEC_0053:          ; 0053DD   entries $0158-$015F   C unaffected
     Reg(Op & 7) = Res
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = (Dst - 1) & $FFFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagV = 0
   If Dst = $8000
@@ -776,10 +2425,45 @@ InstructionDECB_1053:         ; 1053DD   entries $1158-$115F
     Res = (Dst - 1) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadByte(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = (Dst - 1) & $FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writebyte
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteByte(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagV = 0
   If Dst = $80
@@ -800,9 +2484,43 @@ InstructionNEG_0054:          ; 0054DD   entries $0160-$0167
     Reg(Op & 7) = Res
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    mov r10, r0
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Res, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = (0 - Res) & $FFFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagV = 0
   If Res = $8000
@@ -825,10 +2543,44 @@ InstructionNEGB_1054:         ; 1054DD   entries $1160-$1167
     Res = (0 - Reg(Op & 7)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    mov r10, r0
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadByte(Res, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = (0 - Res) & $FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writebyte
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteByte(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagV = 0
   If Res = $80
@@ -854,9 +2606,44 @@ InstructionADC_0055:          ; 0055DD   entries $0168-$016F
     Reg(Op & 7) = Res
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = (Dst + ((FlagC >> 16) & 1)) & $FFFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagV = 0
   If Dst = $7FFF And (FlagC & $10000) <> 0
@@ -879,10 +2666,45 @@ InstructionADCB_1055:         ; 1055DD   entries $1168-$116F
     Res = (Dst + ((FlagC >> 16) & 1)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadByte(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = (Dst + ((FlagC >> 16) & 1)) & $FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writebyte
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteByte(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagV = 0
   If Dst = $7F And (FlagC & $10000) <> 0
@@ -910,9 +2732,44 @@ InstructionSBC_0056:          ; 0056DD   entries $0170-$0177
     Reg(Op & 7) = Res
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = (Dst - ((FlagC >> 16) & 1)) & $FFFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagV = 0
   If Dst = $8000
@@ -935,10 +2792,45 @@ InstructionSBCB_1056:         ; 1056DD   entries $1170-$1177
     Res = (Dst - ((FlagC >> 16) & 1)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadByte(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = (Dst - ((FlagC >> 16) & 1)) & $FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writebyte
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteByte(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagV = 0
   If Dst = $80
@@ -961,7 +2853,24 @@ InstructionTST_0057:          ; 0057DD   entries $0178-$017F
     FlagNZ = Reg(Op & 7)
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses FlagNZ
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    mov r4, r0
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(FlagNZ, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagV = 0
   FlagC = 0
@@ -976,8 +2885,25 @@ InstructionTSTB_1057:         ; 1057DD   entries $1178-$117F
   If (Op & $38) = 0
     FlagNZ = (Reg(Op & 7) & $FF) << 8
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses FlagNZ
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    mov r4, r0
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadByte(FlagNZ, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     FlagNZ = FlagNZ << 8
   EndIf
   FlagV = 0
@@ -1001,9 +2927,44 @@ InstructionROR_0060:          ; 0060DD   entries $0180-$0187
     Reg(Op & 7) = Res
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = (Dst >> 1) | ((FlagC >> 1) & $8000)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagC = Dst << 16
   FlagV = Res ! (FlagC >> 1)
@@ -1021,10 +2982,45 @@ InstructionRORB_1060:         ; 1060DD   entries $1180-$1187
     Res = (Dst >> 1) | ((FlagC >> 9) & $80)
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadByte(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = (Dst >> 1) | ((FlagC >> 9) & $80)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writebyte
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteByte(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagC = Dst << 16
   FlagV = (Res << 8) ! (FlagC >> 1)
@@ -1044,9 +3040,44 @@ InstructionROL_0061:          ; 0061DD   entries $0188-$018F
     Reg(Op & 7) = Res
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FFFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagC = Dst << 1
   FlagV = Res ! (FlagC >> 1)
@@ -1064,10 +3095,45 @@ InstructionROLB_1061:         ; 1061DD   entries $1188-$118F
     Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadByte(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writebyte
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteByte(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagC = Dst << 9
   FlagV = (Res << 8) ! (FlagC >> 1)
@@ -1087,9 +3153,44 @@ InstructionASR_0062:          ; 0062DD   entries $0190-$0197
     Reg(Op & 7) = Res
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = (Dst >> 1) | (Dst & $8000)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagC = Dst << 16
   FlagV = Res ! (FlagC >> 1)
@@ -1107,10 +3208,45 @@ InstructionASRB_1062:         ; 1062DD   entries $1190-$1197
     Res = (Dst >> 1) | (Dst & $80)
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadByte(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = (Dst >> 1) | (Dst & $80)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writebyte
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteByte(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagC = Dst << 16
   FlagV = (Res << 8) ! (FlagC >> 1)
@@ -1130,9 +3266,44 @@ InstructionASL_0063:          ; 0063DD   entries $0198-$019F
     Reg(Op & 7) = Res
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = (Dst << 1) & $FFFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagC = Dst << 1
   FlagV = Res ! (FlagC >> 1)
@@ -1150,10 +3321,45 @@ InstructionASLB_1063:         ; 1063DD   entries $1198-$119F
     Res = (Dst << 1) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadByte(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = (Dst << 1) & $FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writebyte
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteByte(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagC = Dst << 9
   FlagV = (Res << 8) ! (FlagC >> 1)
@@ -1173,9 +3379,44 @@ InstructionSWAB_0003:         ; 0003DD   entries $0018-$001F
     Reg(Op & 7) = Res
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = ((Dst >> 8) | (Dst << 8)) & $FFFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagNZ = (Res & $FF) << 8              ; N and Z come from the low byte
   FlagV = 0
@@ -1197,7 +3438,24 @@ InstructionSXT_0067:          ; 0067DD   entries $01B8-$01BF   N unaffected
     Reg(Op & 7) = Res
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   SetNZ(FlagN(), 1 - FlagN())
   FlagV = 0
@@ -1214,8 +3472,25 @@ InstructionMFPS_1067:         ; 1067DD   entries $11B8-$11BF
   If (Op & $38) = 0
     Reg(Op & 7) = (Res | (0 - (Res & $80))) & $FFFF   ; sign-extended into a register
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writebyte
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteByte(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagNZ = Res << 8
   FlagV = 0
@@ -1230,8 +3505,26 @@ InstructionMTPS_1064:         ; 1064SS   entries $11A0-$11A7   the T bit is not 
   If (Op & $38) = 0
     Src = Reg(Op & 7) & $FF
   Else
-    Ea = EaByte(Op & $3F)
+    EaFastB()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadByte(Src, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   If PswHigh & $C000                     ; outside kernel mode only the condition codes
     PswSet((PswGet() & $FFF0) | (Src & $0F))
@@ -1256,7 +3549,25 @@ InstructionMFPI_0065:         ; 0065SS   entries $01A8-$01AF
     EndIf
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Src, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   If TrapVector = 0                      ; a read that failed (bus error, MMU abort) aborts
     Push(Src)                            ; the instruction: nothing is pushed (the J-11 stops
@@ -1280,7 +3591,25 @@ InstructionMTPI_0066:         ; 0066DD   entries $01B0-$01B7
     EndIf
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, Src)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagNZ = Src
   FlagV = 0
@@ -1308,6 +3637,43 @@ InstructionMTPD_1066:         ; 1066DD   entries $11B0-$11B7
 
 ;-BR--------------------------------------------------------------------
 InstructionBR_0004:           ; 000400   entries $0020-$003F
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op
+__t1_br_0004_tk:
+    mov r0, r8
+    lsls r0, r0, #24
+    asrs r0, r0, #23
+    mov r1, r9
+    adds r0, r0, r1
+    uxth r0, r0
+    mov r9, r0
+__t1_br_0004_nt:
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionBR_0004Ref:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   ;name = "BR"
   BranchTo()
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
@@ -1315,7 +3681,51 @@ InstructionBR_0004:           ; 000400   entries $0020-$003F
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionBNE_0010:          ; 001000   entries $0040-$005F   Z = 0
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    lsls r0, r4, #16
+    beq __t1_bne_0010_nt
+__t1_bne_0010_tk:
+    mov r0, r8
+    lsls r0, r0, #24
+    asrs r0, r0, #23
+    mov r1, r9
+    adds r0, r0, r1
+    uxth r0, r0
+    mov r9, r0
+__t1_bne_0010_nt:
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionBNE_0010Ref:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   ;name = "BNE"
   If FlagNZ & $FFFF
     BranchTo()
@@ -1325,7 +3735,51 @@ InstructionBNE_0010:          ; 001000   entries $0040-$005F   Z = 0
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionBEQ_0014:          ; 001400   entries $0060-$007F   Z = 1
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    lsls r0, r4, #16
+    bne __t1_beq_0014_nt
+__t1_beq_0014_tk:
+    mov r0, r8
+    lsls r0, r0, #24
+    asrs r0, r0, #23
+    mov r1, r9
+    adds r0, r0, r1
+    uxth r0, r0
+    mov r9, r0
+__t1_beq_0014_nt:
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionBEQ_0014Ref:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   ;name = "BEQ"
   If (FlagNZ & $FFFF) = 0
     BranchTo()
@@ -1335,7 +3789,58 @@ InstructionBEQ_0014:          ; 001400   entries $0060-$007F   Z = 1
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionBGE_0020:          ; 002000   entries $0080-$009F   N xor V = 0
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    movs r0, r4
+    lsrs r1, r0, #1
+    orrs r0, r1
+    ldr r1, =global_flagv
+    ldr r1, [r1]
+    eors r0, r1
+    lsls r0, r0, #16
+    lsrs r0, r0, #31
+    bne __t1_bge_0020_nt
+__t1_bge_0020_tk:
+    mov r0, r8
+    lsls r0, r0, #24
+    asrs r0, r0, #23
+    mov r1, r9
+    adds r0, r0, r1
+    uxth r0, r0
+    mov r9, r0
+__t1_bge_0020_nt:
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionBGE_0020Ref:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   ;name = "BGE"
   If (((FlagNZ | (FlagNZ >> 1)) ! FlagV) & $8000) = 0     ; N xor V = 0 (N: bit 15, or bit 16 with Z)
     BranchTo()
@@ -1345,7 +3850,58 @@ InstructionBGE_0020:          ; 002000   entries $0080-$009F   N xor V = 0
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionBLT_0024:          ; 002400   entries $00A0-$00BF   N xor V = 1
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    movs r0, r4
+    lsrs r1, r0, #1
+    orrs r0, r1
+    ldr r1, =global_flagv
+    ldr r1, [r1]
+    eors r0, r1
+    lsls r0, r0, #16
+    lsrs r0, r0, #31
+    beq __t1_blt_0024_nt
+__t1_blt_0024_tk:
+    mov r0, r8
+    lsls r0, r0, #24
+    asrs r0, r0, #23
+    mov r1, r9
+    adds r0, r0, r1
+    uxth r0, r0
+    mov r9, r0
+__t1_blt_0024_nt:
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionBLT_0024Ref:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   ;name = "BLT"
   If ((FlagNZ | (FlagNZ >> 1)) ! FlagV) & $8000
     BranchTo()
@@ -1355,7 +3911,60 @@ InstructionBLT_0024:          ; 002400   entries $00A0-$00BF   N xor V = 1
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionBGT_0030:          ; 003000   entries $00C0-$00DF   Z or (N xor V) = 0
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    lsls r0, r4, #16
+    beq __t1_bgt_0030_nt
+    movs r0, r4
+    lsrs r1, r0, #1
+    orrs r0, r1
+    ldr r1, =global_flagv
+    ldr r1, [r1]
+    eors r0, r1
+    lsls r0, r0, #16
+    lsrs r0, r0, #31
+    bne __t1_bgt_0030_nt
+__t1_bgt_0030_tk:
+    mov r0, r8
+    lsls r0, r0, #24
+    asrs r0, r0, #23
+    mov r1, r9
+    adds r0, r0, r1
+    uxth r0, r0
+    mov r9, r0
+__t1_bgt_0030_nt:
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionBGT_0030Ref:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   ;name = "BGT"
   If FlagNZ & $FFFF                      ; nested, not And: no truth values built
     If (((FlagNZ | (FlagNZ >> 1)) ! FlagV) & $8000) = 0     ; N xor V = 0 (N: bit 15, or bit 16 with Z)
@@ -1367,7 +3976,60 @@ InstructionBGT_0030:          ; 003000   entries $00C0-$00DF   Z or (N xor V) = 
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionBLE_0034:          ; 003400   entries $00E0-$00FF   Z or (N xor V) = 1
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    lsls r0, r4, #16
+    beq __t1_ble_0034_tk
+    movs r0, r4
+    lsrs r1, r0, #1
+    orrs r0, r1
+    ldr r1, =global_flagv
+    ldr r1, [r1]
+    eors r0, r1
+    lsls r0, r0, #16
+    lsrs r0, r0, #31
+    beq __t1_ble_0034_nt
+__t1_ble_0034_tk:
+    mov r0, r8
+    lsls r0, r0, #24
+    asrs r0, r0, #23
+    mov r1, r9
+    adds r0, r0, r1
+    uxth r0, r0
+    mov r9, r0
+__t1_ble_0034_nt:
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionBLE_0034Ref:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   ;name = "BLE"
   If (FlagNZ & $FFFF) = 0
     BranchTo()
@@ -1379,7 +4041,55 @@ InstructionBLE_0034:          ; 003400   entries $00E0-$00FF   Z or (N xor V) = 
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionBPL_1000:          ; 100000   entries $1000-$101F   N = 0
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    movs r0, r4
+    lsrs r1, r0, #1
+    orrs r0, r1
+    lsls r0, r0, #16
+    lsrs r0, r0, #31
+    bne __t1_bpl_1000_nt
+__t1_bpl_1000_tk:
+    mov r0, r8
+    lsls r0, r0, #24
+    asrs r0, r0, #23
+    mov r1, r9
+    adds r0, r0, r1
+    uxth r0, r0
+    mov r9, r0
+__t1_bpl_1000_nt:
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionBPL_1000Ref:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   ;name = "BPL"
   If (FlagNZ & $18000) = 0
     BranchTo()
@@ -1389,7 +4099,55 @@ InstructionBPL_1000:          ; 100000   entries $1000-$101F   N = 0
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionBMI_1004:          ; 100400   entries $1020-$103F   N = 1
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    movs r0, r4
+    lsrs r1, r0, #1
+    orrs r0, r1
+    lsls r0, r0, #16
+    lsrs r0, r0, #31
+    beq __t1_bmi_1004_nt
+__t1_bmi_1004_tk:
+    mov r0, r8
+    lsls r0, r0, #24
+    asrs r0, r0, #23
+    mov r1, r9
+    adds r0, r0, r1
+    uxth r0, r0
+    mov r9, r0
+__t1_bmi_1004_nt:
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionBMI_1004Ref:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   ;name = "BMI"
   If FlagNZ & $18000
     BranchTo()
@@ -1399,7 +4157,56 @@ InstructionBMI_1004:          ; 100400   entries $1020-$103F   N = 1
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionBHI_1010:          ; 101000   entries $1040-$105F   C = 0 and Z = 0
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    ldr r1, =global_flagc
+    ldr r1, [r1]
+    lsls r0, r1, #15
+    lsrs r0, r0, #31
+    bne __t1_bhi_1010_nt
+    lsls r0, r4, #16
+    beq __t1_bhi_1010_nt
+__t1_bhi_1010_tk:
+    mov r0, r8
+    lsls r0, r0, #24
+    asrs r0, r0, #23
+    mov r1, r9
+    adds r0, r0, r1
+    uxth r0, r0
+    mov r9, r0
+__t1_bhi_1010_nt:
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionBHI_1010Ref:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   ;name = "BHI"
   If (FlagC & $10000) = 0
     If FlagNZ & $FFFF
@@ -1411,7 +4218,56 @@ InstructionBHI_1010:          ; 101000   entries $1040-$105F   C = 0 and Z = 0
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionBLOS_1014:         ; 101400   entries $1060-$107F   C = 1 or Z = 1
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    ldr r1, =global_flagc
+    ldr r1, [r1]
+    lsls r0, r1, #15
+    lsrs r0, r0, #31
+    bne __t1_blos_1014_tk
+    lsls r0, r4, #16
+    bne __t1_blos_1014_nt
+__t1_blos_1014_tk:
+    mov r0, r8
+    lsls r0, r0, #24
+    asrs r0, r0, #23
+    mov r1, r9
+    adds r0, r0, r1
+    uxth r0, r0
+    mov r9, r0
+__t1_blos_1014_nt:
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionBLOS_1014Ref:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   ;name = "BLOS"
   If FlagC & $10000
     BranchTo()
@@ -1423,7 +4279,54 @@ InstructionBLOS_1014:         ; 101400   entries $1060-$107F   C = 1 or Z = 1
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionBVC_1020:          ; 102000   entries $1080-$109F   V = 0
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_flagv
+    ldr r1, [r1]
+    lsls r0, r1, #16
+    lsrs r0, r0, #31
+    bne __t1_bvc_1020_nt
+__t1_bvc_1020_tk:
+    mov r0, r8
+    lsls r0, r0, #24
+    asrs r0, r0, #23
+    mov r1, r9
+    adds r0, r0, r1
+    uxth r0, r0
+    mov r9, r0
+__t1_bvc_1020_nt:
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionBVC_1020Ref:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   ;name = "BVC"
   If (FlagV & $8000) = 0
     BranchTo()
@@ -1433,7 +4336,54 @@ InstructionBVC_1020:          ; 102000   entries $1080-$109F   V = 0
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionBVS_1024:          ; 102400   entries $10A0-$10BF   V = 1
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_flagv
+    ldr r1, [r1]
+    lsls r0, r1, #16
+    lsrs r0, r0, #31
+    beq __t1_bvs_1024_nt
+__t1_bvs_1024_tk:
+    mov r0, r8
+    lsls r0, r0, #24
+    asrs r0, r0, #23
+    mov r1, r9
+    adds r0, r0, r1
+    uxth r0, r0
+    mov r9, r0
+__t1_bvs_1024_nt:
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionBVS_1024Ref:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   ;name = "BVS"
   If FlagV & $8000
     BranchTo()
@@ -1443,7 +4393,54 @@ InstructionBVS_1024:          ; 102400   entries $10A0-$10BF   V = 1
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionBCC_1030:          ; 103000   entries $10C0-$10DF   C = 0 (also BHIS)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_flagc
+    ldr r1, [r1]
+    lsls r0, r1, #15
+    lsrs r0, r0, #31
+    bne __t1_bcc_1030_nt
+__t1_bcc_1030_tk:
+    mov r0, r8
+    lsls r0, r0, #24
+    asrs r0, r0, #23
+    mov r1, r9
+    adds r0, r0, r1
+    uxth r0, r0
+    mov r9, r0
+__t1_bcc_1030_nt:
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionBCC_1030Ref:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   ;name = "BCC"
   If (FlagC & $10000) = 0
     BranchTo()
@@ -1453,7 +4450,54 @@ InstructionBCC_1030:          ; 103000   entries $10C0-$10DF   C = 0 (also BHIS)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionBCS_1034:          ; 103400   entries $10E0-$10FF   C = 1 (also BLO)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op
+    ldr r1, =global_flagc
+    ldr r1, [r1]
+    lsls r0, r1, #15
+    lsrs r0, r0, #31
+    beq __t1_bcs_1034_nt
+__t1_bcs_1034_tk:
+    mov r0, r8
+    lsls r0, r0, #24
+    asrs r0, r0, #23
+    mov r1, r9
+    adds r0, r0, r1
+    uxth r0, r0
+    mov r9, r0
+__t1_bcs_1034_nt:
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionBCS_1034Ref:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   ;name = "BCS"
   If FlagC & $10000
     BranchTo()
@@ -1468,6 +4512,11 @@ InstructionBCS_1034:          ; 103400   entries $10E0-$10FF   C = 1 (also BLO)
 ; ======================================================================
 
 ;-JMP-------------------------------------------------------------------
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionJMP_0001:          ; 0001DD   entries $0008-$000F
   PcOut()
   ;name = "JMP"
@@ -1555,7 +4604,25 @@ InstructionMUL_070:           ; 070RSS   entries $0E00-$0E3F
     Src = Reg(Op & 7)
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Src, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   Src = Src - ((Src & $8000) << 1)                        ; signed 16
   Dst = Reg((Op >> 6) & 7)
@@ -1586,7 +4653,25 @@ InstructionDIV_071:           ; 071RSS   entries $0E40-$0E7F
     Src = Reg(Op & 7)
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Src, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   Src = Src - ((Src & $8000) << 1)
   Dst = (Reg((Op >> 6) & 7) << 16) | Reg(((Op >> 6) & 7) | 1)   ; the 32-bit dividend
@@ -1624,7 +4709,25 @@ InstructionASH_072:           ; 072RSS   entries $0E80-$0EBF
     Src = Reg(Op & 7) & $3F
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Src, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Src = Src & $3F
   EndIf
   Res = Reg((Op >> 6) & 7)
@@ -1662,7 +4765,25 @@ InstructionASHC_073:          ; 073RSS   entries $0EC0-$0EFF
     Src = Reg(Op & 7) & $3F
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Src, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Src = Src & $3F
   EndIf
   Res = (Reg((Op >> 6) & 7) << 16) | Reg(((Op >> 6) & 7) | 1)
@@ -1702,9 +4823,43 @@ InstructionXOR_074:           ; 074RDD   entries $0F00-$0F3F
     Reg(Op & 7) = Res
   Else
     EaFast()
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    mov r10, r0
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MReadWord(Res, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     Res = Res ! Reg((Op >> 6) & 7)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
     MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EndIf
   FlagNZ = Res
   FlagV = 0
@@ -1935,6 +5090,54 @@ InstructionGroup0_0000:       ; 000000-000007   entry $0000
 ; ======================================================================
 
 InstructionMOV_01_RR:               ; 01SD, both operands in registers
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    mov r0, r8
+    movs r1, #7
+    ands r0, r1
+    cmp r0, #7
+    beq __ul_cpurun_instructionmov_01
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    adds r1, r1, r0
+    mov r0, r8
+    lsls r0, r0, #23
+    lsrs r0, r0, #29
+    lsls r0, r0, #2
+    ldr r2, =global_reg
+    ldr r0, [r2, r0]
+    ldr r2, [r1]
+    str r0, [r1]
+    movs r4, r0
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionMOV_01_RRRef:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionMOV_01       ; the general handler
   EndIf
@@ -1948,7 +5151,65 @@ InstructionMOV_01_RR:               ; 01SD, both operands in registers
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionCMP_02_RR:               ; 02SD, both operands in registers
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ, Res
+    mov r0, r8
+    movs r1, #7
+    ands r0, r1
+    cmp r0, #7
+    beq __ul_cpurun_instructioncmp_02
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    adds r1, r1, r0
+    mov r0, r8
+    lsls r0, r0, #23
+    lsrs r0, r0, #29
+    lsls r0, r0, #2
+    ldr r2, =global_reg
+    ldr r0, [r2, r0]
+    ldr r2, [r1]
+    subs r3, r0, r2
+    mov r10, r3
+    ldr r1, =global_flagc
+    str r3, [r1]
+    eors r2, r0
+    eors r0, r3
+    ands r0, r2
+    ldr r1, =global_flagv
+    str r0, [r1]
+    uxth r4, r3
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionCMP_02_RRRef:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionCMP_02       ; the general handler
   EndIf
@@ -1963,7 +5224,60 @@ InstructionCMP_02_RR:               ; 02SD, both operands in registers
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionBIT_03_RR:               ; 03SD, both operands in registers
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    mov r0, r8
+    movs r1, #7
+    ands r0, r1
+    cmp r0, #7
+    beq __ul_cpurun_instructionbit_03
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    adds r1, r1, r0
+    mov r0, r8
+    lsls r0, r0, #23
+    lsrs r0, r0, #29
+    lsls r0, r0, #2
+    ldr r2, =global_reg
+    ldr r0, [r2, r0]
+    ldr r2, [r1]
+    ands r0, r2
+    movs r4, r0
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionBIT_03_RRRef:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionBIT_03       ; the general handler
   EndIf
@@ -1975,7 +5289,62 @@ InstructionBIT_03_RR:               ; 03SD, both operands in registers
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionBIC_04_RR:               ; 04SD, both operands in registers
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ, Res
+    mov r0, r8
+    movs r1, #7
+    ands r0, r1
+    cmp r0, #7
+    beq __ul_cpurun_instructionbic_04
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    adds r1, r1, r0
+    mov r0, r8
+    lsls r0, r0, #23
+    lsrs r0, r0, #29
+    lsls r0, r0, #2
+    ldr r2, =global_reg
+    ldr r0, [r2, r0]
+    ldr r2, [r1]
+    bics r2, r0
+    str r2, [r1]
+    mov r10, r2
+    movs r4, r2
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionBIC_04_RRRef:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionBIC_04       ; the general handler
   EndIf
@@ -1989,7 +5358,62 @@ InstructionBIC_04_RR:               ; 04SD, both operands in registers
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionBIS_05_RR:               ; 05SD, both operands in registers
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ, Res
+    mov r0, r8
+    movs r1, #7
+    ands r0, r1
+    cmp r0, #7
+    beq __ul_cpurun_instructionbis_05
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    adds r1, r1, r0
+    mov r0, r8
+    lsls r0, r0, #23
+    lsrs r0, r0, #29
+    lsls r0, r0, #2
+    ldr r2, =global_reg
+    ldr r0, [r2, r0]
+    ldr r2, [r1]
+    orrs r2, r0
+    str r2, [r1]
+    mov r10, r2
+    movs r4, r2
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionBIS_05_RRRef:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionBIS_05       ; the general handler
   EndIf
@@ -2003,7 +5427,66 @@ InstructionBIS_05_RR:               ; 05SD, both operands in registers
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionADD_06_RR:               ; 06SD, both operands in registers
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ, Res
+    mov r0, r8
+    movs r1, #7
+    ands r0, r1
+    cmp r0, #7
+    beq __ul_cpurun_instructionadd_06
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    adds r1, r1, r0
+    mov r0, r8
+    lsls r0, r0, #23
+    lsrs r0, r0, #29
+    lsls r0, r0, #2
+    ldr r2, =global_reg
+    ldr r0, [r2, r0]
+    ldr r2, [r1]
+    adds r3, r2, r0
+    mov r10, r3
+    uxth r4, r3
+    str r4, [r1]
+    ldr r1, =global_flagc
+    str r3, [r1]
+    eors r0, r3
+    eors r2, r3
+    ands r0, r2
+    ldr r1, =global_flagv
+    str r0, [r1]
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionADD_06_RRRef:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionADD_06       ; the general handler
   EndIf
@@ -2020,6 +5503,11 @@ InstructionADD_06_RR:               ; 06SD, both operands in registers
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionMOVB_11_RR:              ; 11SD, both operands in registers
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionMOVB_11      ; the general handler
@@ -2091,6 +5579,60 @@ InstructionBISB_15_RR:              ; 15SD, both operands in registers
   NextNative()
 
 InstructionSUB_16_RR:               ; 16SD, both operands in registers
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ, Res
+    mov r0, r8
+    movs r1, #7
+    ands r0, r1
+    cmp r0, #7
+    beq __ul_cpurun_instructionsub_16
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    adds r1, r1, r0
+    mov r0, r8
+    lsls r0, r0, #23
+    lsrs r0, r0, #29
+    lsls r0, r0, #2
+    ldr r2, =global_reg
+    ldr r0, [r2, r0]
+    ldr r2, [r1]
+    subs r3, r2, r0
+    mov r10, r3
+    uxth r4, r3
+    str r4, [r1]
+    ldr r1, =global_flagc
+    str r3, [r1]
+    eors r0, r2
+    eors r2, r3
+    ands r0, r2
+    ldr r1, =global_flagv
+    str r0, [r1]
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionSUB_16_RRRef:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionSUB_16       ; the general handler
   EndIf
@@ -2107,7 +5649,56 @@ InstructionSUB_16_RR:               ; 16SD, both operands in registers
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionCLR_0050_R:              ; 0050R, operand in a register
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    mov r0, r8
+    movs r1, #7
+    ands r0, r1
+    cmp r0, #7
+    beq __ul_cpurun_instructionclr_0050
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    adds r1, r1, r0
+    movs r0, #0
+    str r0, [r1]
+    movs r4, #0
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+    ldr r1, =global_flagc
+    str r0, [r1]
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionCLR_0050_RRef:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionCLR_0050     ; the general handler
   EndIf
@@ -2121,6 +5712,11 @@ InstructionCLR_0050_R:              ; 0050R, operand in a register
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionCOM_0051_R:              ; 0051R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionCOM_0051     ; the general handler
@@ -2137,6 +5733,57 @@ InstructionCOM_0051_R:              ; 0051R, operand in a register
   NextNative()
 
 InstructionINC_0052_R:              ; 0052R, operand in a register
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ, Res
+    mov r0, r8
+    movs r1, #7
+    ands r0, r1
+    cmp r0, #7
+    beq __ul_cpurun_instructioninc_0052
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    adds r1, r1, r0
+    ldr r0, [r1]
+    adds r3, r0, #1
+    uxth r3, r3
+    str r3, [r1]
+    mov r10, r3
+    movs r4, r3
+    ldr r2, =0x7fff
+    movs r1, #0
+    cmp r0, r2
+    bne __t1_inc_0052_r_nov
+    movs r1, #128
+    lsls r1, r1, #8
+__t1_inc_0052_r_nov:
+    ldr r2, =global_flagv
+    str r1, [r2]
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionINC_0052_RRef:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionINC_0052     ; the general handler
   EndIf
@@ -2154,7 +5801,63 @@ InstructionINC_0052_R:              ; 0052R, operand in a register
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionDEC_0053_R:              ; 0053R, operand in a register
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ, Res
+    mov r0, r8
+    movs r1, #7
+    ands r0, r1
+    cmp r0, #7
+    beq __ul_cpurun_instructiondec_0053
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    adds r1, r1, r0
+    ldr r0, [r1]
+    subs r3, r0, #1
+    uxth r3, r3
+    str r3, [r1]
+    mov r10, r3
+    movs r4, r3
+    ldr r2, =0x8000
+    movs r1, #0
+    cmp r0, r2
+    bne __t1_dec_0053_r_nov
+    movs r1, #128
+    lsls r1, r1, #8
+__t1_dec_0053_r_nov:
+    ldr r2, =global_flagv
+    str r1, [r2]
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionDEC_0053_RRef:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionDEC_0053     ; the general handler
   EndIf
@@ -2172,6 +5875,11 @@ InstructionDEC_0053_R:              ; 0053R, operand in a register
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionNEG_0054_R:              ; 0054R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionNEG_0054     ; the general handler
@@ -2194,6 +5902,48 @@ InstructionNEG_0054_R:              ; 0054R, operand in a register
   NextNative()
 
 InstructionTST_0057_R:              ; 0057R, operand in a register
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #ASM_FAST = 1
+  ASM Uses PC, RunLeft, Op, FlagNZ
+    mov r0, r8
+    movs r1, #7
+    ands r0, r1
+    cmp r0, #7
+    beq __ul_cpurun_instructiontst_0057
+    lsls r0, r0, #2
+    ldr r1, =global_reg
+    adds r1, r1, r0
+    ldr r4, [r1]
+    movs r0, #0
+    ldr r1, =global_flagv
+    str r0, [r1]
+    ldr r1, =global_flagc
+    str r0, [r1]
+    mov r1, r11
+    subs r1, #1
+    mov r11, r1
+    beq __ul_cpurun_runend
+    mov r0, r9
+    ldr r1, =#RAM_BYTES
+    cmp r0, r1
+    bhs __ul_cpurun_slowfetch
+    ldr r1, =global_mem
+    ldrh r2, [r1, r0]
+    mov r8, r2
+    adds r0, #2
+    mov r9, r0
+    lsrs r2, r2, #3
+    lsls r2, r2, #2
+    ldr r1, =global_optable
+    ldr r1, [r1, r2]
+    bx r1
+  EndASM
+CompilerEndIf
+CompilerIf #ASM_FAST = 0 Or #DISK_BACKEND = 0
+InstructionTST_0057_RRef:
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionTST_0057     ; the general handler
   EndIf
@@ -2206,6 +5956,11 @@ InstructionTST_0057_R:              ; 0057R, operand in a register
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
   NextNative()
 
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
 InstructionROR_0060_R:              ; 0060R, operand in a register
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionROR_0060     ; the general handler
@@ -2363,7 +6118,24 @@ InstructionMOV_01_IR:            ; 0127DD  MOV #n,Rd, the source an immediate
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionMOV_01                  ; the general handler
   EndIf
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses PC
+    mov r0, r9
+    bl __t1_readword
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Src, PC)                     ; the word after the instruction
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   PC = (PC + 2) & $FFFF
   Reg(Op & 7) = Src
   FlagNZ = Src
@@ -2376,7 +6148,24 @@ InstructionCMP_02_IR:            ; 0227DD  CMP #n,Rd, the source an immediate
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionCMP_02                  ; the general handler
   EndIf
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses PC
+    mov r0, r9
+    bl __t1_readword
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Src, PC)                     ; the word after the instruction
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   PC = (PC + 2) & $FFFF
   Res = Src - Reg(Op & 7)
   FlagC = Res                            ; the borrow is bit 16
@@ -2390,7 +6179,24 @@ InstructionBIT_03_IR:            ; 0327DD  BIT #n,Rd, the source an immediate
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionBIT_03                  ; the general handler
   EndIf
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses PC
+    mov r0, r9
+    bl __t1_readword
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Src, PC)                     ; the word after the instruction
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   PC = (PC + 2) & $FFFF
   FlagNZ = Src & Reg(Op & 7)
   FlagV = 0
@@ -2402,7 +6208,24 @@ InstructionBIC_04_IR:            ; 0427DD  BIC #n,Rd, the source an immediate
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionBIC_04                  ; the general handler
   EndIf
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses PC
+    mov r0, r9
+    bl __t1_readword
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Src, PC)                     ; the word after the instruction
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   PC = (PC + 2) & $FFFF
   Res = Reg(Op & 7) & ~Src & $FFFF
   Reg(Op & 7) = Res
@@ -2416,7 +6239,24 @@ InstructionBIS_05_IR:            ; 0527DD  BIS #n,Rd, the source an immediate
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionBIS_05                  ; the general handler
   EndIf
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses PC
+    mov r0, r9
+    bl __t1_readword
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Src, PC)                     ; the word after the instruction
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   PC = (PC + 2) & $FFFF
   Res = Reg(Op & 7) | Src
   Reg(Op & 7) = Res
@@ -2430,7 +6270,24 @@ InstructionADD_06_IR:            ; 0627DD  ADD #n,Rd, the source an immediate
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionADD_06                  ; the general handler
   EndIf
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses PC
+    mov r0, r9
+    bl __t1_readword
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Src, PC)                     ; the word after the instruction
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   PC = (PC + 2) & $FFFF
   Res = Src + Reg(Op & 7)
   FlagC = Res                            ; C is bit 16 of the sum
@@ -2446,7 +6303,24 @@ InstructionSUB_16_IR:            ; 1627DD  SUB #n,Rd, the source an immediate
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionSUB_16                  ; the general handler
   EndIf
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses PC
+    mov r0, r9
+    bl __t1_readword
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Src, PC)                     ; the word after the instruction
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   PC = (PC + 2) & $FFFF
   Res = Reg(Op & 7) - Src
   FlagC = Res                            ; the borrow is bit 16
@@ -2462,7 +6336,24 @@ InstructionMOVB_11_IR:           ; 1127DD  MOVB #n,Rd, the source an immediate
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionMOVB_11                 ; the general handler
   EndIf
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses PC
+    mov r0, r9
+    bl __t1_readbyte
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadByte(Src, PC)                     ; the low byte of the word after the instruction
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   PC = (PC + 2) & $FFFF                  ; (R7 always steps by two)
   Reg(Op & 7) = (Src | (0 - (Src & $80))) & $FFFF   ; to a register it is sign-extended
   FlagNZ = Src << 8
@@ -2475,7 +6366,24 @@ InstructionCMPB_12_IR:           ; 1227DD  CMPB #n,Rd, the source an immediate
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionCMPB_12                 ; the general handler
   EndIf
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses PC
+    mov r0, r9
+    bl __t1_readbyte
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadByte(Src, PC)                     ; the low byte of the word after the instruction
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   PC = (PC + 2) & $FFFF                  ; (R7 always steps by two)
   Dst = Reg(Op & 7) & $FF
   Res = Src - Dst
@@ -2490,7 +6398,24 @@ InstructionBITB_13_IR:           ; 1327DD  BITB #n,Rd, the source an immediate
   If (Op & 7) = 7                        ; the destination is the PC:
     Goto InstructionBITB_13                 ; the general handler
   EndIf
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses PC
+    mov r0, r9
+    bl __t1_readbyte
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadByte(Src, PC)                     ; the low byte of the word after the instruction
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   PC = (PC + 2) & $FFFF                  ; (R7 always steps by two)
   FlagNZ = (Src & Reg(Op & 7) & $FF) << 8
   FlagV = 0
@@ -2519,7 +6444,25 @@ InstructionMOV_01_RM:            ; 010SDD  MOV Rs,memory
   PcOut()
   EaFast()
   Src = Reg((Op >> 6) & 7)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MWriteWord(Ea, Src)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   FlagNZ = Src
   FlagV = 0
   NextSynced()
@@ -2528,7 +6471,25 @@ InstructionCMP_02_RM:            ; 020SDD  CMP Rs,memory
   PcOut()
   EaFast()
   Src = Reg((Op >> 6) & 7)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   Res = Src - Dst
   FlagC = Res
   FlagV = (Src ! Dst) & (Src ! Res)
@@ -2539,7 +6500,25 @@ InstructionBIT_03_RM:            ; 030SDD  BIT Rs,memory
   PcOut()
   EaFast()
   Src = Reg((Op >> 6) & 7)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   FlagNZ = Src & Dst
   FlagV = 0
   NextSynced()
@@ -2548,9 +6527,43 @@ InstructionBIC_04_RM:            ; 040SDD  BIC Rs,memory
   PcOut()
   EaFast()
   Src = Reg((Op >> 6) & 7)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    mov r10, r0
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Res, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   Res = Res & ~Src & $FFFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   FlagNZ = Res
   FlagV = 0
   NextSynced()
@@ -2559,9 +6572,43 @@ InstructionBIS_05_RM:            ; 050SDD  BIS Rs,memory
   PcOut()
   EaFast()
   Src = Reg((Op >> 6) & 7)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    mov r10, r0
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Res, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   Res = Res | Src
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   FlagNZ = Res
   FlagV = 0
   NextSynced()
@@ -2570,9 +6617,44 @@ InstructionADD_06_RM:            ; 060SDD  ADD Rs,memory
   PcOut()
   EaFast()
   Src = Reg((Op >> 6) & 7)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   Res = Src + Dst
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   FlagC = Res
   FlagV = ~(Src ! Dst) & (Src ! Res)
   FlagNZ = Res & $FFFF
@@ -2582,9 +6664,44 @@ InstructionSUB_16_RM:            ; 160SDD  SUB Rs,memory
   PcOut()
   EaFast()
   Src = Reg((Op >> 6) & 7)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   Res = Dst - Src
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MWriteWord(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   FlagC = Res                ; borrow
   FlagV = (Src ! Dst) & (Dst ! Res)
   FlagNZ = Res & $FFFF
@@ -2592,18 +6709,54 @@ InstructionSUB_16_RM:            ; 160SDD  SUB Rs,memory
 
 InstructionMOVB_11_RM:           ; 110SDD  MOVB Rs,memory
   PcOut()
-  Ea = EaByte(Op & $3F)
+  EaFastB()
   Src = Reg((Op >> 6) & 7) & $FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    bl __t1_writebyte
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MWriteByte(Ea, Src)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   FlagNZ = Src << 8
   FlagV = 0
   NextSynced()
 
 InstructionCMPB_12_RM:           ; 120SDD  CMPB Rs,memory
   PcOut()
-  Ea = EaByte(Op & $3F)
+  EaFastB()
   Src = Reg((Op >> 6) & 7) & $FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadByte(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   Res = Src - Dst
   FlagC = Res << 8
   FlagV = ((Src ! Dst) & (Src ! Res)) << 8
@@ -2612,31 +6765,117 @@ InstructionCMPB_12_RM:           ; 120SDD  CMPB Rs,memory
 
 InstructionBITB_13_RM:           ; 130SDD  BITB Rs,memory
   PcOut()
-  Ea = EaByte(Op & $3F)
+  EaFastB()
   Src = Reg((Op >> 6) & 7) & $FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    ldr r1, =global_dst
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadByte(Dst, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   FlagNZ = (Src & Dst) << 8
   FlagV = 0
   NextSynced()
 
 InstructionBICB_14_RM:           ; 140SDD  BICB Rs,memory
   PcOut()
-  Ea = EaByte(Op & $3F)
+  EaFastB()
   Src = Reg((Op >> 6) & 7) & $FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    mov r10, r0
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadByte(Res, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   Res = Res & ~Src & $FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writebyte
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MWriteByte(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   FlagNZ = Res << 8
   FlagV = 0
   NextSynced()
 
 InstructionBISB_15_RM:           ; 150SDD  BISB Rs,memory
   PcOut()
-  Ea = EaByte(Op & $3F)
+  EaFastB()
   Src = Reg((Op >> 6) & 7) & $FF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readbyte
+    mov r10, r0
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadByte(Res, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   Res = Res | Src
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM Uses Res
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    mov r1, r10
+    bl __t1_writebyte
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MWriteByte(Ea, Res)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   FlagNZ = Res << 8
   FlagV = 0
   NextSynced()
@@ -2816,7 +7055,25 @@ InstructionMOV_01_M04Ref:         ; the plain version: the fast path's slow path
     StackCheckFast()
   EndIf
   Src = Reg((Op >> 6) & 7)               ; read after the destination's address: REGISTER SOURCE, MEMORY DESTINATION
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MWriteWord(Ea, Src)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   FlagNZ = Src
   FlagV = 0
   NextSynced()
@@ -2893,7 +7150,25 @@ InstructionMOV_01_M40Ref:         ; the plain version: the fast path's slow path
   If EaReg = 6
     StackCheckFast()
   EndIf
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Src, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   Reg(Op & 7) = Src
   FlagNZ = Src
   FlagV = 0
@@ -2975,9 +7250,45 @@ InstructionMOV_01_M60Ref:         ; the plain version: the fast path's slow path
   EaReg = (Op >> 6) & 7
   Adr = Reg(7)
   Reg(7) = (Adr + 2) & $FFFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_adr
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_tmp
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Tmp, Adr)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   Ea = (Tmp + Reg(EaReg)) & $FFFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Src, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   Reg(Op & 7) = Src
   FlagNZ = Src
   FlagV = 0
@@ -3076,16 +7387,70 @@ InstructionMOV_01_M64Ref:         ; the plain version: the fast path's slow path
   EaReg = (Op >> 6) & 7
   Adr = Reg(7)
   Reg(7) = (Adr + 2) & $FFFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_adr
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_tmp
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Tmp, Adr)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   Ea = (Tmp + Reg(EaReg)) & $FFFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Src, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EaReg = Op & 7
   Ea = (Reg(EaReg) - 2) & $FFFF
   Reg(EaReg) = Ea
   If EaReg = 6
     StackCheckFast()
   EndIf
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MWriteWord(Ea, Src)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   FlagNZ = Src
   FlagV = 0
   NextSynced()
@@ -3152,7 +7517,25 @@ InstructionMOV_01_M20Ref:         ; the plain version: the fast path's slow path
   EaReg = (Op >> 6) & 7
   Ea = Reg(EaReg)
   Reg(EaReg) = (Ea + 2) & $FFFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Src, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   Reg(Op & 7) = Src
   FlagNZ = Src
   FlagV = 0
@@ -3241,12 +7624,66 @@ InstructionMOV_01_M61Ref:         ; the plain version: the fast path's slow path
   EaReg = (Op >> 6) & 7
   Adr = Reg(7)
   Reg(7) = (Adr + 2) & $FFFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_adr
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_tmp
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Tmp, Adr)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   Ea = (Tmp + Reg(EaReg)) & $FFFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_src
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Src, Ea)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   EaReg = Op & 7
   Ea = Reg(EaReg)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MWriteWord(Ea, Src)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   FlagNZ = Src
   FlagV = 0
   NextSynced()
@@ -3332,10 +7769,46 @@ InstructionMOV_01_M06Ref:         ; the plain version: the fast path's slow path
   EaReg = Op & 7
   Adr = Reg(7)
   Reg(7) = (Adr + 2) & $FFFF
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_adr
+    ldr r0, [r0]
+    bl __t1_readword
+    ldr r1, =global_tmp
+    str r0, [r1]
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MReadWord(Tmp, Adr)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   Ea = (Tmp + Reg(EaReg)) & $FFFF
   Src = Reg((Op >> 6) & 7)               ; read after the destination's address: REGISTER SOURCE, MEMORY DESTINATION
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerIf #ASM_MEM = 1
+  ASM
+    ldr r0, =global_ea
+    ldr r0, [r0]
+    ldr r1, =global_src
+    ldr r1, [r1]
+    bl __t1_writeword
+  EndASM
+CompilerElse
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   MWriteWord(Ea, Src)
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- MEMORY THUMB1 ----
+CompilerEndIf
+; ---- END MEMORY THUMB1 ----
+; ---- END UNMAPPED ONLY ----
   FlagNZ = Src
   FlagV = 0
   NextSynced()
@@ -3573,7 +8046,125 @@ BuildTable:
   MovAsm(6) = ?InstructionMOV_01_M06
   MovRef(6) = ?InstructionMOV_01_M06Ref
 ; ---- END ASM ----
+; ---- MOV ENTRY POINTS ----
 ; ---- END UNMAPPED ONLY ----
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- INDEXED SINGLE NATIVE ----
+CompilerIf #ASM_INDEXED = 1
+  OpTable($146) = ?InstructionIX_CLR_0050
+  OpTable($17E) = ?InstructionIX_TST_0057
+  OpTable($156) = ?InstructionIX_INC_0052
+  OpTable($15E) = ?InstructionIX_DEC_0053
+  OpTable($1146) = ?InstructionIX_CLRB_1050
+  OpTable($117E) = ?InstructionIX_TSTB_1057
+CompilerEndIf
+CompilerIf #DISK_BACKEND = 0
+  FastAsm(34) = ?InstructionIX_CLR_0050
+  FastRef(34) = ?InstructionCLR_0050
+  FastAsm(35) = ?InstructionIX_TST_0057
+  FastRef(35) = ?InstructionTST_0057
+  FastAsm(36) = ?InstructionIX_INC_0052
+  FastRef(36) = ?InstructionINC_0052
+  FastAsm(37) = ?InstructionIX_DEC_0053
+  FastRef(37) = ?InstructionDEC_0053
+  FastAsm(38) = ?InstructionIX_CLRB_1050
+  FastRef(38) = ?InstructionCLRB_1050
+  FastAsm(39) = ?InstructionIX_TSTB_1057
+  FastRef(39) = ?InstructionTSTB_1057
+CompilerEndIf
+; ---- END INDEXED SINGLE NATIVE ----
+; ---- END UNMAPPED ONLY ----
+; ---- INDEXED ENTRY POINTS ----
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- IMMEDIATE INDEXED THUMB1 ----
+  OpTable($12BE) = ?InstructionIMX_MOVB_11
+  OpTable($2BE) = ?InstructionIMX_MOV_01
+  OpTable($4BE) = ?InstructionIMX_CMP_02
+  OpTable($CBE) = ?InstructionIMX_ADD_06
+  OpTable($1CBE) = ?InstructionIMX_SUB_16
+  OpTable($6BE) = ?InstructionIMX_BIT_03
+  OpTable($8BE) = ?InstructionIMX_BIC_04
+  OpTable($ABE) = ?InstructionIMX_BIS_05
+CompilerIf #DISK_BACKEND = 0
+  FastAsm(26) = ?InstructionIMX_MOVB_11
+  FastRef(26) = ?InstructionMOVB_11
+  FastAsm(27) = ?InstructionIMX_MOV_01
+  FastRef(27) = ?InstructionMOV_01
+  FastAsm(28) = ?InstructionIMX_CMP_02
+  FastRef(28) = ?InstructionCMP_02
+  FastAsm(29) = ?InstructionIMX_ADD_06
+  FastRef(29) = ?InstructionADD_06
+  FastAsm(30) = ?InstructionIMX_SUB_16
+  FastRef(30) = ?InstructionSUB_16
+  FastAsm(31) = ?InstructionIMX_BIT_03
+  FastRef(31) = ?InstructionBIT_03
+  FastAsm(32) = ?InstructionIMX_BIC_04
+  FastRef(32) = ?InstructionBIC_04
+  FastAsm(33) = ?InstructionIMX_BIS_05
+  FastRef(33) = ?InstructionBIS_05
+CompilerEndIf
+; ---- END IMMEDIATE INDEXED THUMB1 ----
+; ---- END UNMAPPED ONLY ----
+; ---- IMX ENTRY POINTS ----
+; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----
+; ---- FAST THUMB1 ----
+CompilerIf #DISK_BACKEND = 0
+  FastAsm(0) = ?InstructionBR_0004
+  FastRef(0) = ?InstructionBR_0004Ref
+  FastAsm(1) = ?InstructionBNE_0010
+  FastRef(1) = ?InstructionBNE_0010Ref
+  FastAsm(2) = ?InstructionBEQ_0014
+  FastRef(2) = ?InstructionBEQ_0014Ref
+  FastAsm(3) = ?InstructionBGE_0020
+  FastRef(3) = ?InstructionBGE_0020Ref
+  FastAsm(4) = ?InstructionBLT_0024
+  FastRef(4) = ?InstructionBLT_0024Ref
+  FastAsm(5) = ?InstructionBGT_0030
+  FastRef(5) = ?InstructionBGT_0030Ref
+  FastAsm(6) = ?InstructionBLE_0034
+  FastRef(6) = ?InstructionBLE_0034Ref
+  FastAsm(7) = ?InstructionBPL_1000
+  FastRef(7) = ?InstructionBPL_1000Ref
+  FastAsm(8) = ?InstructionBMI_1004
+  FastRef(8) = ?InstructionBMI_1004Ref
+  FastAsm(9) = ?InstructionBHI_1010
+  FastRef(9) = ?InstructionBHI_1010Ref
+  FastAsm(10) = ?InstructionBLOS_1014
+  FastRef(10) = ?InstructionBLOS_1014Ref
+  FastAsm(11) = ?InstructionBVC_1020
+  FastRef(11) = ?InstructionBVC_1020Ref
+  FastAsm(12) = ?InstructionBVS_1024
+  FastRef(12) = ?InstructionBVS_1024Ref
+  FastAsm(13) = ?InstructionBCC_1030
+  FastRef(13) = ?InstructionBCC_1030Ref
+  FastAsm(14) = ?InstructionBCS_1034
+  FastRef(14) = ?InstructionBCS_1034Ref
+  FastAsm(15) = ?InstructionMOV_01_RR
+  FastRef(15) = ?InstructionMOV_01_RRRef
+  FastAsm(16) = ?InstructionCMP_02_RR
+  FastRef(16) = ?InstructionCMP_02_RRRef
+  FastAsm(17) = ?InstructionADD_06_RR
+  FastRef(17) = ?InstructionADD_06_RRRef
+  FastAsm(18) = ?InstructionSUB_16_RR
+  FastRef(18) = ?InstructionSUB_16_RRRef
+  FastAsm(19) = ?InstructionBIT_03_RR
+  FastRef(19) = ?InstructionBIT_03_RRRef
+  FastAsm(20) = ?InstructionBIC_04_RR
+  FastRef(20) = ?InstructionBIC_04_RRRef
+  FastAsm(21) = ?InstructionBIS_05_RR
+  FastRef(21) = ?InstructionBIS_05_RRRef
+  FastAsm(22) = ?InstructionCLR_0050_R
+  FastRef(22) = ?InstructionCLR_0050_RRef
+  FastAsm(23) = ?InstructionTST_0057_R
+  FastRef(23) = ?InstructionTST_0057_RRef
+  FastAsm(24) = ?InstructionINC_0052_R
+  FastRef(24) = ?InstructionINC_0052_RRef
+  FastAsm(25) = ?InstructionDEC_0053_R
+  FastRef(25) = ?InstructionDEC_0053_RRef
+CompilerEndIf
+; ---- END FAST THUMB1 ----
+; ---- END UNMAPPED ONLY ----
+; ---- FAST ENTRY POINTS ----
   OpTableReady = 1
   Goto RunStart
 EndProcedure

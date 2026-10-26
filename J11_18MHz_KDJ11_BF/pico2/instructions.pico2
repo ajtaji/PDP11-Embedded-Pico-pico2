@@ -147,7 +147,7 @@ Macro NextSynced()
     ldr r1, =global_reg
     ldr r0, [r1, #28]
     mov r9, r0
-    ldr r1, =global_trapvector
+    ldr r1, =global_reg + 96
     ldr r1, [r1]
     cmp r1, #0
     bne __ul_cpurun_slowtail
@@ -171,7 +171,7 @@ EndMacro
 CompilerElse
 Macro NextSynced()
   PC = Reg(7)
-  If TrapVector
+  If Reg(#CPU_TRAPVECTOR)
     Goto SlowTail
   EndIf
   RunLeft = RunLeft - 1
@@ -229,7 +229,7 @@ CompilerEndIf
 ; After a native handler that read memory (an immediate operand): that
 ; read can leave a trap (the I/O page), so take it; otherwise as above.
 Macro NextNativeTrap()
-  If TrapVector
+  If Reg(#CPU_TRAPVECTOR)
     Goto SlowTail
   EndIf
   NextNative()
@@ -268,7 +268,7 @@ SlowFetch:                               ; the I/O page, an odd PC, past the end
   Reg(7) = PC
   Op = FetchWord()
   PC = Reg(7)
-  If TrapVector                          ; the fetch itself failed (odd PC, nothing there):
+  If Reg(#CPU_TRAPVECTOR)                          ; the fetch itself failed (odd PC, nothing there):
     Goto SlowTail                        ; trap through 4 and execute nothing - it read as
   EndIf                                  ; 0, a HALT (MAINDEC-11-DFKAB test 100). The PC stays
                                          ; incremented, as on the J-11 (Architecture Handbook
@@ -294,7 +294,7 @@ CompilerIf #ASM_EA = 1
 __eau:
     mov r12, r0
     and.w r1, r0, #7
-    ldr r2, =global_eareg
+    ldr r2, =global_reg + 136
     str r1, [r2]
     ubfx r0, r0, #3, #3
     ldr r2, =global_reg
@@ -305,14 +305,14 @@ __eau:
     bhs __eau_slow
     lsls r0, r3, #31
     bne __eau_slow
-    ldr r0, =global_adr
+    ldr r0, =global_reg + 124
     str r3, [r0]
     ldr r0, =global_mem
     ldrh r0, [r0, r3]
     adds r3, r3, #2
     uxth r3, r3
     str r3, [r2, #28]
-    ldr r3, =global_tmp
+    ldr r3, =global_reg + 120
     str r0, [r3]
     add.w r3, r2, r1, lsl #2
     ldr r3, [r3]
@@ -332,7 +332,7 @@ __eau_m4:
     blo __eau_slow
 __eau_m4a:
     str r3, [r2]
-    ldr r2, =global_tmp
+    ldr r2, =global_reg + 120
     str r0, [r2]
     movs r0, r3
     bx lr
@@ -344,14 +344,14 @@ __eau_m2:
     adds r0, r3, #2
     uxth r0, r0
     str r0, [r2]
-    ldr r2, =global_tmp
+    ldr r2, =global_reg + 120
     str r3, [r2]
     movs r0, r3
     bx lr
 __eau_m1:
     cmp r0, #1
     bne __eau_m3
-    ldr r3, =global_tmp
+    ldr r3, =global_reg + 120
     str r0, [r3]
     add.w r2, r2, r1, lsl #2
     ldr r0, [r2]
@@ -365,14 +365,14 @@ __eau_m3:
     bhs __eau_slow
     lsls r0, r3, #31
     bne __eau_slow
-    ldr r0, =global_adr
+    ldr r0, =global_reg + 124
     str r3, [r0]
     ldr r0, =global_mem
     ldrh r0, [r0, r3]
     adds r3, r3, #2
     uxth r3, r3
     str r3, [r2]
-    ldr r2, =global_tmp
+    ldr r2, =global_reg + 120
     str r0, [r2]
     bx lr
 __eau_m5:
@@ -392,11 +392,11 @@ __eau_m5a:
     lsls r0, r3, #31
     bne __eau_slow
     str r3, [r2]
-    ldr r0, =global_adr
+    ldr r0, =global_reg + 124
     str r3, [r0]
     ldr r0, =global_mem
     ldrh r0, [r0, r3]
-    ldr r2, =global_tmp
+    ldr r2, =global_reg + 120
     str r0, [r2]
     bx lr
 __eau_m7:
@@ -426,29 +426,29 @@ __eau_m7a:
     lsls r1, r0, #31
     bne __eau_slow
     str r3, [r2, #28]
-    ldr r2, =global_adr
+    ldr r2, =global_reg + 124
     str r0, [r2]
     ldr r2, =global_mem
     ldrh r0, [r2, r0]
-    ldr r2, =global_tmp
+    ldr r2, =global_reg + 120
     str r0, [r2]
     bx lr
 __eau_slow:
     mov r0, r12
-    ldr r1, =global_easpec
+    ldr r1, =global_reg + 128
     str r0, [r1]
     b eaword
 __eaub:
     mov r12, r0
     and.w r1, r0, #7
-    ldr r2, =global_eareg
+    ldr r2, =global_reg + 136
     str r1, [r2]
     movs r3, #1
     cmp r1, #6
     blo __eaub_s
     movs r3, #2
 __eaub_s:
-    ldr r2, =global_eastep
+    ldr r2, =global_reg + 132
     str r3, [r2]
     ubfx r0, r0, #3, #3
     cmp r0, #2
@@ -459,7 +459,7 @@ __eaub_s:
     adds r3, r1, r3
     uxth r3, r3
     str r3, [r2]
-    ldr r2, =global_tmp
+    ldr r2, =global_reg + 120
     str r1, [r2]
     movs r0, r1
     bx lr
@@ -476,12 +476,12 @@ __eaub_m4:
     cmp.w r3, #0x100
     bhs __eaub_m4a
     mov r0, r12
-    ldr r1, =global_easpec
+    ldr r1, =global_reg + 128
     str r0, [r1]
     b eabyte
 __eaub_m4a:
     str r3, [r2]
-    ldr r2, =global_tmp
+    ldr r2, =global_reg + 120
     movs r0, #4
     str r0, [r2]
     movs r0, r3
@@ -499,13 +499,13 @@ InstructionMOV_01:            ; 01SSDD   entries $0200-$03FF
   ;name = "MOV"
   MSrcWord()
   If (Op & $38) = 0
-    Reg(Op & 7) = Src
+    Reg(Op & 7) = Reg(#CPU_SRC)
   Else
     EaFast()
-    MWriteWord(Ea, Src)
+    MWriteWord(Reg(#CPU_EA), Reg(#CPU_SRC))
   EndIf
-  FlagNZ = Src
-  FlagV = 0
+  FlagNZ = Reg(#CPU_SRC)
+  Reg(#CPU_FLAGV) = 0
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("MOV " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -516,13 +516,13 @@ InstructionMOVB_11:           ; 11SSDD   entries $1200-$13FF
   ;name = "MOVB"
   MSrcByte()
   If (Op & $38) = 0
-    Reg(Op & 7) = (Src | (0 - (Src & $80))) & $FFFF   ; to a register it is sign-extended
+    Reg(Op & 7) = (Reg(#CPU_SRC) | (0 - (Reg(#CPU_SRC) & $80))) & $FFFF   ; to a register it is sign-extended
   Else
     EaFastB()
-    MWriteByte(Ea, Src)
+    MWriteByte(Reg(#CPU_EA), Reg(#CPU_SRC))
   EndIf
-  FlagNZ = Src << 8
-  FlagV = 0
+  FlagNZ = Reg(#CPU_SRC) << 8
+  Reg(#CPU_FLAGV) = 0
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("MOVB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -534,14 +534,14 @@ InstructionCMP_02:            ; 02SSDD   entries $0400-$05FF
   ;name = "CMP"
   MSrcWord()
   If (Op & $38) = 0
-    Dst = Reg(Op & 7)
+    Reg(#CPU_DST) = Reg(Op & 7)
   Else
     EaFast()
-    MReadWord(Dst, Ea)
+    MReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
   EndIf
-  Res = Src - Dst                        ; src - dst, the other way round from SUB
-  FlagC = Res
-  FlagV = (Src ! Dst) & (Src ! Res)
+  Res = Reg(#CPU_SRC) - Reg(#CPU_DST)                        ; src - dst, the other way round from SUB
+  Reg(#CPU_FLAGC) = Res
+  Reg(#CPU_FLAGV) = (Reg(#CPU_SRC) ! Reg(#CPU_DST)) & (Reg(#CPU_SRC) ! Res)
   FlagNZ = Res & $FFFF
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("CMP " + ;name)
@@ -553,14 +553,14 @@ InstructionCMPB_12:           ; 12SSDD   entries $1400-$15FF
   ;name = "CMPB"
   MSrcByte()
   If (Op & $38) = 0
-    Dst = Reg(Op & 7) & $FF
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
   Else
     EaFastB()
-    MReadByte(Dst, Ea)
+    MReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
   EndIf
-  Res = Src - Dst
-  FlagC = Res << 8
-  FlagV = ((Src ! Dst) & (Src ! Res)) << 8
+  Res = Reg(#CPU_SRC) - Reg(#CPU_DST)
+  Reg(#CPU_FLAGC) = Res << 8
+  Reg(#CPU_FLAGV) = ((Reg(#CPU_SRC) ! Reg(#CPU_DST)) & (Reg(#CPU_SRC) ! Res)) << 8
   FlagNZ = (Res & $FF) << 8
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("CMPB " + ;name)
@@ -573,13 +573,13 @@ InstructionBIT_03:            ; 03SSDD   entries $0600-$07FF
   ;name = "BIT"
   MSrcWord()
   If (Op & $38) = 0
-    Dst = Reg(Op & 7)
+    Reg(#CPU_DST) = Reg(Op & 7)
   Else
     EaFast()
-    MReadWord(Dst, Ea)
+    MReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
   EndIf
-  FlagNZ = Src & Dst
-  FlagV = 0
+  FlagNZ = Reg(#CPU_SRC) & Reg(#CPU_DST)
+  Reg(#CPU_FLAGV) = 0
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIT " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -590,13 +590,13 @@ InstructionBITB_13:           ; 13SSDD   entries $1600-$17FF
   ;name = "BITB"
   MSrcByte()
   If (Op & $38) = 0
-    Dst = Reg(Op & 7) & $FF
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
   Else
     EaFastB()
-    MReadByte(Dst, Ea)
+    MReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
   EndIf
-  FlagNZ = (Src & Dst) << 8
-  FlagV = 0
+  FlagNZ = (Reg(#CPU_SRC) & Reg(#CPU_DST)) << 8
+  Reg(#CPU_FLAGV) = 0
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BITB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -608,16 +608,16 @@ InstructionBIC_04:            ; 04SSDD   entries $0800-$09FF
   ;name = "BIC"
   MSrcWord()
   If (Op & $38) = 0
-    Res = Reg(Op & 7) & ~Src & $FFFF
+    Res = Reg(Op & 7) & ~Reg(#CPU_SRC) & $FFFF
     Reg(Op & 7) = Res
   Else
     EaFast()
-    MReadWord(Res, Ea)
-    Res = Res & ~Src & $FFFF
-    MWriteWord(Ea, Res)
+    MReadWord(Res, Reg(#CPU_EA))
+    Res = Res & ~Reg(#CPU_SRC) & $FFFF
+    MWriteWord(Reg(#CPU_EA), Res)
   EndIf
   FlagNZ = Res
-  FlagV = 0
+  Reg(#CPU_FLAGV) = 0
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIC " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -628,16 +628,16 @@ InstructionBICB_14:           ; 14SSDD   entries $1800-$19FF
   ;name = "BICB"
   MSrcByte()
   If (Op & $38) = 0
-    Res = Reg(Op & 7) & ~Src & $FF
+    Res = Reg(Op & 7) & ~Reg(#CPU_SRC) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     EaFastB()
-    MReadByte(Res, Ea)
-    Res = Res & ~Src & $FF
-    MWriteByte(Ea, Res)
+    MReadByte(Res, Reg(#CPU_EA))
+    Res = Res & ~Reg(#CPU_SRC) & $FF
+    MWriteByte(Reg(#CPU_EA), Res)
   EndIf
   FlagNZ = Res << 8
-  FlagV = 0
+  Reg(#CPU_FLAGV) = 0
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BICB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -649,16 +649,16 @@ InstructionBIS_05:            ; 05SSDD   entries $0A00-$0BFF
   ;name = "BIS"
   MSrcWord()
   If (Op & $38) = 0
-    Res = Reg(Op & 7) | Src
+    Res = Reg(Op & 7) | Reg(#CPU_SRC)
     Reg(Op & 7) = Res
   Else
     EaFast()
-    MReadWord(Res, Ea)
-    Res = Res | Src
-    MWriteWord(Ea, Res)
+    MReadWord(Res, Reg(#CPU_EA))
+    Res = Res | Reg(#CPU_SRC)
+    MWriteWord(Reg(#CPU_EA), Res)
   EndIf
   FlagNZ = Res
-  FlagV = 0
+  Reg(#CPU_FLAGV) = 0
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BIS " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -669,16 +669,16 @@ InstructionBISB_15:           ; 15SSDD   entries $1A00-$1BFF
   ;name = "BISB"
   MSrcByte()
   If (Op & $38) = 0
-    Res = (Reg(Op & 7) | Src) & $FF
+    Res = (Reg(Op & 7) | Reg(#CPU_SRC)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     EaFastB()
-    MReadByte(Res, Ea)
-    Res = Res | Src
-    MWriteByte(Ea, Res)
+    MReadByte(Res, Reg(#CPU_EA))
+    Res = Res | Reg(#CPU_SRC)
+    MWriteByte(Reg(#CPU_EA), Res)
   EndIf
   FlagNZ = Res << 8
-  FlagV = 0
+  Reg(#CPU_FLAGV) = 0
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("BISB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -690,17 +690,17 @@ InstructionADD_06:            ; 06SSDD   entries $0C00-$0DFF
   ;name = "ADD"
   MSrcWord()
   If (Op & $38) = 0
-    Dst = Reg(Op & 7)
-    Res = Src + Dst
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = Reg(#CPU_SRC) + Reg(#CPU_DST)
     Reg(Op & 7) = Res & $FFFF
   Else
     EaFast()
-    MReadWord(Dst, Ea)
-    Res = Src + Dst
-    MWriteWord(Ea, Res)
+    MReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = Reg(#CPU_SRC) + Reg(#CPU_DST)
+    MWriteWord(Reg(#CPU_EA), Res)
   EndIf
-  FlagC = Res
-  FlagV = ~(Src ! Dst) & (Src ! Res)
+  Reg(#CPU_FLAGC) = Res
+  Reg(#CPU_FLAGV) = ~(Reg(#CPU_SRC) ! Reg(#CPU_DST)) & (Reg(#CPU_SRC) ! Res)
   FlagNZ = Res & $FFFF
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("ADD " + ;name)
@@ -713,17 +713,17 @@ InstructionSUB_16:            ; 16SSDD   entries $1C00-$1DFF
   ;name = "SUB"
   MSrcWord()
   If (Op & $38) = 0
-    Dst = Reg(Op & 7)
-    Res = Dst - Src
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = Reg(#CPU_DST) - Reg(#CPU_SRC)
     Reg(Op & 7) = Res & $FFFF
   Else
     EaFast()
-    MReadWord(Dst, Ea)
-    Res = Dst - Src
-    MWriteWord(Ea, Res)
+    MReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = Reg(#CPU_DST) - Reg(#CPU_SRC)
+    MWriteWord(Reg(#CPU_EA), Res)
   EndIf
-  FlagC = Res                ; borrow
-  FlagV = (Src ! Dst) & (Dst ! Res)
+  Reg(#CPU_FLAGC) = Res                ; borrow
+  Reg(#CPU_FLAGV) = (Reg(#CPU_SRC) ! Reg(#CPU_DST)) & (Reg(#CPU_DST) ! Res)
   FlagNZ = Res & $FFFF
   ; ClockCycles = ClockCycles + #J11_T_DOUBLE
   ;disassembly("SUB " + ;name)
@@ -743,11 +743,11 @@ InstructionCLR_0050:          ; 0050DD   entries $0140-$0147
     Reg(Op & 7) = 0
   Else
     EaFast()
-    MWriteWord(Ea, 0)
+    MWriteWord(Reg(#CPU_EA), 0)
   EndIf
   FlagNZ = 0
-  FlagV = 0
-  FlagC = 0
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -760,11 +760,11 @@ InstructionCLRB_1050:         ; 1050DD   entries $1140-$1147
     Reg(Op & 7) = Reg(Op & 7) & $FF00
   Else
     EaFastB()
-    MWriteByte(Ea, 0)
+    MWriteByte(Reg(#CPU_EA), 0)
   EndIf
   FlagNZ = 0
-  FlagV = 0
-  FlagC = 0
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLRB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -779,13 +779,13 @@ InstructionCOM_0051:          ; 0051DD   entries $0148-$014F
     Reg(Op & 7) = Res
   Else
     EaFast()
-    MReadWord(Res, Ea)
+    MReadWord(Res, Reg(#CPU_EA))
     Res = Res ! $FFFF
-    MWriteWord(Ea, Res)
+    MWriteWord(Reg(#CPU_EA), Res)
   EndIf
   FlagNZ = Res
-  FlagV = 0
-  FlagC = $10000
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = $10000
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("COM " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -799,13 +799,13 @@ InstructionCOMB_1051:         ; 1051DD   entries $1148-$114F
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     EaFastB()
-    MReadByte(Res, Ea)
+    MReadByte(Res, Reg(#CPU_EA))
     Res = Res ! $FF
-    MWriteByte(Ea, Res)
+    MWriteByte(Reg(#CPU_EA), Res)
   EndIf
   FlagNZ = Res << 8
-  FlagV = 0
-  FlagC = $10000
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = $10000
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("COMB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -816,18 +816,18 @@ InstructionINC_0052:          ; 0052DD   entries $0150-$0157   C unaffected
   PcOut()
   ;name = "INC"
   If (Op & $38) = 0
-    Dst = Reg(Op & 7)
-    Res = (Dst + 1) & $FFFF
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = (Reg(#CPU_DST) + 1) & $FFFF
     Reg(Op & 7) = Res
   Else
     EaFast()
-    MReadWord(Dst, Ea)
-    Res = (Dst + 1) & $FFFF
-    MWriteWord(Ea, Res)
+    MReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) + 1) & $FFFF
+    MWriteWord(Reg(#CPU_EA), Res)
   EndIf
-  FlagV = 0
-  If Dst = $7FFF
-    FlagV = $8000
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $7FFF
+    Reg(#CPU_FLAGV) = $8000
   EndIf
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
@@ -839,18 +839,18 @@ InstructionINCB_1052:         ; 1052DD   entries $1150-$1157
   PcOut()
   ;name = "INCB"
   If (Op & $38) = 0
-    Dst = Reg(Op & 7) & $FF
-    Res = (Dst + 1) & $FF
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
+    Res = (Reg(#CPU_DST) + 1) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     EaFastB()
-    MReadByte(Dst, Ea)
-    Res = (Dst + 1) & $FF
-    MWriteByte(Ea, Res)
+    MReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) + 1) & $FF
+    MWriteByte(Reg(#CPU_EA), Res)
   EndIf
-  FlagV = 0
-  If Dst = $7F
-    FlagV = $8000
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $7F
+    Reg(#CPU_FLAGV) = $8000
   EndIf
   FlagNZ = Res << 8
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
@@ -863,18 +863,18 @@ InstructionDEC_0053:          ; 0053DD   entries $0158-$015F   C unaffected
   PcOut()
   ;name = "DEC"
   If (Op & $38) = 0
-    Dst = Reg(Op & 7)
-    Res = (Dst - 1) & $FFFF
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = (Reg(#CPU_DST) - 1) & $FFFF
     Reg(Op & 7) = Res
   Else
     EaFast()
-    MReadWord(Dst, Ea)
-    Res = (Dst - 1) & $FFFF
-    MWriteWord(Ea, Res)
+    MReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) - 1) & $FFFF
+    MWriteWord(Reg(#CPU_EA), Res)
   EndIf
-  FlagV = 0
-  If Dst = $8000
-    FlagV = $8000
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $8000
+    Reg(#CPU_FLAGV) = $8000
   EndIf
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
@@ -886,18 +886,18 @@ InstructionDECB_1053:         ; 1053DD   entries $1158-$115F
   PcOut()
   ;name = "DECB"
   If (Op & $38) = 0
-    Dst = Reg(Op & 7) & $FF
-    Res = (Dst - 1) & $FF
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
+    Res = (Reg(#CPU_DST) - 1) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     EaFastB()
-    MReadByte(Dst, Ea)
-    Res = (Dst - 1) & $FF
-    MWriteByte(Ea, Res)
+    MReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) - 1) & $FF
+    MWriteByte(Reg(#CPU_EA), Res)
   EndIf
-  FlagV = 0
-  If Dst = $80
-    FlagV = $8000
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $80
+    Reg(#CPU_FLAGV) = $8000
   EndIf
   FlagNZ = Res << 8
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
@@ -914,17 +914,17 @@ InstructionNEG_0054:          ; 0054DD   entries $0160-$0167
     Reg(Op & 7) = Res
   Else
     EaFast()
-    MReadWord(Res, Ea)
+    MReadWord(Res, Reg(#CPU_EA))
     Res = (0 - Res) & $FFFF
-    MWriteWord(Ea, Res)
+    MWriteWord(Reg(#CPU_EA), Res)
   EndIf
-  FlagV = 0
+  Reg(#CPU_FLAGV) = 0
   If Res = $8000
-    FlagV = $8000
+    Reg(#CPU_FLAGV) = $8000
   EndIf
-  FlagC = $10000
+  Reg(#CPU_FLAGC) = $10000
   If Res = 0
-    FlagC = 0
+    Reg(#CPU_FLAGC) = 0
   EndIf
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
@@ -940,17 +940,17 @@ InstructionNEGB_1054:         ; 1054DD   entries $1160-$1167
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     EaFastB()
-    MReadByte(Res, Ea)
+    MReadByte(Res, Reg(#CPU_EA))
     Res = (0 - Res) & $FF
-    MWriteByte(Ea, Res)
+    MWriteByte(Reg(#CPU_EA), Res)
   EndIf
-  FlagV = 0
+  Reg(#CPU_FLAGV) = 0
   If Res = $80
-    FlagV = $8000
+    Reg(#CPU_FLAGV) = $8000
   EndIf
-  FlagC = $10000
+  Reg(#CPU_FLAGC) = $10000
   If Res = 0
-    FlagC = 0
+    Reg(#CPU_FLAGC) = 0
   EndIf
   FlagNZ = Res << 8
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
@@ -963,21 +963,21 @@ InstructionADC_0055:          ; 0055DD   entries $0168-$016F
   PcOut()
   ;name = "ADC"
   If (Op & $38) = 0
-    Dst = Reg(Op & 7)
-    Res = (Dst + ((FlagC >> 16) & 1)) & $FFFF
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = (Reg(#CPU_DST) + ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FFFF
     Reg(Op & 7) = Res
   Else
     EaFast()
-    MReadWord(Dst, Ea)
-    Res = (Dst + ((FlagC >> 16) & 1)) & $FFFF
-    MWriteWord(Ea, Res)
+    MReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) + ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FFFF
+    MWriteWord(Reg(#CPU_EA), Res)
   EndIf
-  FlagV = 0
-  If Dst = $7FFF And (FlagC & $10000) <> 0
-    FlagV = $8000
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $7FFF And (Reg(#CPU_FLAGC) & $10000) <> 0
+    Reg(#CPU_FLAGV) = $8000
   EndIf
-  If Dst <> $FFFF Or FlagC = 0
-    FlagC = 0
+  If Reg(#CPU_DST) <> $FFFF Or Reg(#CPU_FLAGC) = 0
+    Reg(#CPU_FLAGC) = 0
   EndIf
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
@@ -989,21 +989,21 @@ InstructionADCB_1055:         ; 1055DD   entries $1168-$116F
   PcOut()
   ;name = "ADCB"
   If (Op & $38) = 0
-    Dst = Reg(Op & 7) & $FF
-    Res = (Dst + ((FlagC >> 16) & 1)) & $FF
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
+    Res = (Reg(#CPU_DST) + ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     EaFastB()
-    MReadByte(Dst, Ea)
-    Res = (Dst + ((FlagC >> 16) & 1)) & $FF
-    MWriteByte(Ea, Res)
+    MReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) + ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FF
+    MWriteByte(Reg(#CPU_EA), Res)
   EndIf
-  FlagV = 0
-  If Dst = $7F And (FlagC & $10000) <> 0
-    FlagV = $8000
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $7F And (Reg(#CPU_FLAGC) & $10000) <> 0
+    Reg(#CPU_FLAGV) = $8000
   EndIf
-  If Dst <> $FF Or FlagC = 0
-    FlagC = 0
+  If Reg(#CPU_DST) <> $FF Or Reg(#CPU_FLAGC) = 0
+    Reg(#CPU_FLAGC) = 0
   EndIf
   FlagNZ = Res << 8
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
@@ -1019,21 +1019,21 @@ InstructionSBC_0056:          ; 0056DD   entries $0170-$0177
   PcOut()
   ;name = "SBC"
   If (Op & $38) = 0
-    Dst = Reg(Op & 7)
-    Res = (Dst - ((FlagC >> 16) & 1)) & $FFFF
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = (Reg(#CPU_DST) - ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FFFF
     Reg(Op & 7) = Res
   Else
     EaFast()
-    MReadWord(Dst, Ea)
-    Res = (Dst - ((FlagC >> 16) & 1)) & $FFFF
-    MWriteWord(Ea, Res)
+    MReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) - ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FFFF
+    MWriteWord(Reg(#CPU_EA), Res)
   EndIf
-  FlagV = 0
-  If Dst = $8000
-    FlagV = $8000
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $8000
+    Reg(#CPU_FLAGV) = $8000
   EndIf
-  If Dst <> 0 Or FlagC = 0
-    FlagC = 0
+  If Reg(#CPU_DST) <> 0 Or Reg(#CPU_FLAGC) = 0
+    Reg(#CPU_FLAGC) = 0
   EndIf
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
@@ -1045,21 +1045,21 @@ InstructionSBCB_1056:         ; 1056DD   entries $1170-$1177
   PcOut()
   ;name = "SBCB"
   If (Op & $38) = 0
-    Dst = Reg(Op & 7) & $FF
-    Res = (Dst - ((FlagC >> 16) & 1)) & $FF
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
+    Res = (Reg(#CPU_DST) - ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     EaFastB()
-    MReadByte(Dst, Ea)
-    Res = (Dst - ((FlagC >> 16) & 1)) & $FF
-    MWriteByte(Ea, Res)
+    MReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) - ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FF
+    MWriteByte(Reg(#CPU_EA), Res)
   EndIf
-  FlagV = 0
-  If Dst = $80
-    FlagV = $8000
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $80
+    Reg(#CPU_FLAGV) = $8000
   EndIf
-  If Dst <> 0 Or FlagC = 0
-    FlagC = 0
+  If Reg(#CPU_DST) <> 0 Or Reg(#CPU_FLAGC) = 0
+    Reg(#CPU_FLAGC) = 0
   EndIf
   FlagNZ = Res << 8
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
@@ -1075,10 +1075,10 @@ InstructionTST_0057:          ; 0057DD   entries $0178-$017F
     FlagNZ = Reg(Op & 7)
   Else
     EaFast()
-    MReadWord(FlagNZ, Ea)
+    MReadWord(FlagNZ, Reg(#CPU_EA))
   EndIf
-  FlagV = 0
-  FlagC = 0
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TST " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -1091,11 +1091,11 @@ InstructionTSTB_1057:         ; 1057DD   entries $1178-$117F
     FlagNZ = (Reg(Op & 7) & $FF) << 8
   Else
     EaFastB()
-    MReadByte(FlagNZ, Ea)
+    MReadByte(FlagNZ, Reg(#CPU_EA))
     FlagNZ = FlagNZ << 8
   EndIf
-  FlagV = 0
-  FlagC = 0
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TSTB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -1110,17 +1110,17 @@ InstructionROR_0060:          ; 0060DD   entries $0180-$0187
   PcOut()
   ;name = "ROR"
   If (Op & $38) = 0
-    Dst = Reg(Op & 7)
-    Res = (Dst >> 1) | ((FlagC >> 1) & $8000)
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = (Reg(#CPU_DST) >> 1) | ((Reg(#CPU_FLAGC) >> 1) & $8000)
     Reg(Op & 7) = Res
   Else
     EaFast()
-    MReadWord(Dst, Ea)
-    Res = (Dst >> 1) | ((FlagC >> 1) & $8000)
-    MWriteWord(Ea, Res)
+    MReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) >> 1) | ((Reg(#CPU_FLAGC) >> 1) & $8000)
+    MWriteWord(Reg(#CPU_EA), Res)
   EndIf
-  FlagC = Dst << 16
-  FlagV = Res ! (FlagC >> 1)
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 16
+  Reg(#CPU_FLAGV) = Res ! (Reg(#CPU_FLAGC) >> 1)
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROR " + ;name)
@@ -1131,17 +1131,17 @@ InstructionRORB_1060:         ; 1060DD   entries $1180-$1187
   PcOut()
   ;name = "RORB"
   If (Op & $38) = 0
-    Dst = Reg(Op & 7) & $FF
-    Res = (Dst >> 1) | ((FlagC >> 9) & $80)
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
+    Res = (Reg(#CPU_DST) >> 1) | ((Reg(#CPU_FLAGC) >> 9) & $80)
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     EaFastB()
-    MReadByte(Dst, Ea)
-    Res = (Dst >> 1) | ((FlagC >> 9) & $80)
-    MWriteByte(Ea, Res)
+    MReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) >> 1) | ((Reg(#CPU_FLAGC) >> 9) & $80)
+    MWriteByte(Reg(#CPU_EA), Res)
   EndIf
-  FlagC = Dst << 16
-  FlagV = (Res << 8) ! (FlagC >> 1)
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 16
+  Reg(#CPU_FLAGV) = (Res << 8) ! (Reg(#CPU_FLAGC) >> 1)
   FlagNZ = Res << 8
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("RORB " + ;name)
@@ -1153,17 +1153,17 @@ InstructionROL_0061:          ; 0061DD   entries $0188-$018F
   PcOut()
   ;name = "ROL"
   If (Op & $38) = 0
-    Dst = Reg(Op & 7)
-    Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FFFF
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = ((Reg(#CPU_DST) << 1) | ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FFFF
     Reg(Op & 7) = Res
   Else
     EaFast()
-    MReadWord(Dst, Ea)
-    Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FFFF
-    MWriteWord(Ea, Res)
+    MReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = ((Reg(#CPU_DST) << 1) | ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FFFF
+    MWriteWord(Reg(#CPU_EA), Res)
   EndIf
-  FlagC = Dst << 1
-  FlagV = Res ! (FlagC >> 1)
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 1
+  Reg(#CPU_FLAGV) = Res ! (Reg(#CPU_FLAGC) >> 1)
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROL " + ;name)
@@ -1174,17 +1174,17 @@ InstructionROLB_1061:         ; 1061DD   entries $1188-$118F
   PcOut()
   ;name = "ROLB"
   If (Op & $38) = 0
-    Dst = Reg(Op & 7) & $FF
-    Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FF
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
+    Res = ((Reg(#CPU_DST) << 1) | ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     EaFastB()
-    MReadByte(Dst, Ea)
-    Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FF
-    MWriteByte(Ea, Res)
+    MReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = ((Reg(#CPU_DST) << 1) | ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FF
+    MWriteByte(Reg(#CPU_EA), Res)
   EndIf
-  FlagC = Dst << 9
-  FlagV = (Res << 8) ! (FlagC >> 1)
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 9
+  Reg(#CPU_FLAGV) = (Res << 8) ! (Reg(#CPU_FLAGC) >> 1)
   FlagNZ = Res << 8
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROLB " + ;name)
@@ -1196,17 +1196,17 @@ InstructionASR_0062:          ; 0062DD   entries $0190-$0197
   PcOut()
   ;name = "ASR"
   If (Op & $38) = 0
-    Dst = Reg(Op & 7)
-    Res = (Dst >> 1) | (Dst & $8000)
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = (Reg(#CPU_DST) >> 1) | (Reg(#CPU_DST) & $8000)
     Reg(Op & 7) = Res
   Else
     EaFast()
-    MReadWord(Dst, Ea)
-    Res = (Dst >> 1) | (Dst & $8000)
-    MWriteWord(Ea, Res)
+    MReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) >> 1) | (Reg(#CPU_DST) & $8000)
+    MWriteWord(Reg(#CPU_EA), Res)
   EndIf
-  FlagC = Dst << 16
-  FlagV = Res ! (FlagC >> 1)
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 16
+  Reg(#CPU_FLAGV) = Res ! (Reg(#CPU_FLAGC) >> 1)
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASR " + ;name)
@@ -1217,17 +1217,17 @@ InstructionASRB_1062:         ; 1062DD   entries $1190-$1197
   PcOut()
   ;name = "ASRB"
   If (Op & $38) = 0
-    Dst = Reg(Op & 7) & $FF
-    Res = (Dst >> 1) | (Dst & $80)
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
+    Res = (Reg(#CPU_DST) >> 1) | (Reg(#CPU_DST) & $80)
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     EaFastB()
-    MReadByte(Dst, Ea)
-    Res = (Dst >> 1) | (Dst & $80)
-    MWriteByte(Ea, Res)
+    MReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) >> 1) | (Reg(#CPU_DST) & $80)
+    MWriteByte(Reg(#CPU_EA), Res)
   EndIf
-  FlagC = Dst << 16
-  FlagV = (Res << 8) ! (FlagC >> 1)
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 16
+  Reg(#CPU_FLAGV) = (Res << 8) ! (Reg(#CPU_FLAGC) >> 1)
   FlagNZ = Res << 8
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASRB " + ;name)
@@ -1239,17 +1239,17 @@ InstructionASL_0063:          ; 0063DD   entries $0198-$019F
   PcOut()
   ;name = "ASL"
   If (Op & $38) = 0
-    Dst = Reg(Op & 7)
-    Res = (Dst << 1) & $FFFF
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = (Reg(#CPU_DST) << 1) & $FFFF
     Reg(Op & 7) = Res
   Else
     EaFast()
-    MReadWord(Dst, Ea)
-    Res = (Dst << 1) & $FFFF
-    MWriteWord(Ea, Res)
+    MReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) << 1) & $FFFF
+    MWriteWord(Reg(#CPU_EA), Res)
   EndIf
-  FlagC = Dst << 1
-  FlagV = Res ! (FlagC >> 1)
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 1
+  Reg(#CPU_FLAGV) = Res ! (Reg(#CPU_FLAGC) >> 1)
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASL " + ;name)
@@ -1260,17 +1260,17 @@ InstructionASLB_1063:         ; 1063DD   entries $1198-$119F
   PcOut()
   ;name = "ASLB"
   If (Op & $38) = 0
-    Dst = Reg(Op & 7) & $FF
-    Res = (Dst << 1) & $FF
+    Reg(#CPU_DST) = Reg(Op & 7) & $FF
+    Res = (Reg(#CPU_DST) << 1) & $FF
     Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
   Else
     EaFastB()
-    MReadByte(Dst, Ea)
-    Res = (Dst << 1) & $FF
-    MWriteByte(Ea, Res)
+    MReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = (Reg(#CPU_DST) << 1) & $FF
+    MWriteByte(Reg(#CPU_EA), Res)
   EndIf
-  FlagC = Dst << 9
-  FlagV = (Res << 8) ! (FlagC >> 1)
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 9
+  Reg(#CPU_FLAGV) = (Res << 8) ! (Reg(#CPU_FLAGC) >> 1)
   FlagNZ = Res << 8
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASLB " + ;name)
@@ -1282,18 +1282,18 @@ InstructionSWAB_0003:         ; 0003DD   entries $0018-$001F
   PcOut()
   ;name = "SWAB"
   If (Op & $38) = 0
-    Dst = Reg(Op & 7)
-    Res = ((Dst >> 8) | (Dst << 8)) & $FFFF
+    Reg(#CPU_DST) = Reg(Op & 7)
+    Res = ((Reg(#CPU_DST) >> 8) | (Reg(#CPU_DST) << 8)) & $FFFF
     Reg(Op & 7) = Res
   Else
     EaFast()
-    MReadWord(Dst, Ea)
-    Res = ((Dst >> 8) | (Dst << 8)) & $FFFF
-    MWriteWord(Ea, Res)
+    MReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+    Res = ((Reg(#CPU_DST) >> 8) | (Reg(#CPU_DST) << 8)) & $FFFF
+    MWriteWord(Reg(#CPU_EA), Res)
   EndIf
   FlagNZ = (Res & $FF) << 8              ; N and Z come from the low byte
-  FlagV = 0
-  FlagC = 0
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SWAB " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -1311,10 +1311,10 @@ InstructionSXT_0067:          ; 0067DD   entries $01B8-$01BF   N unaffected
     Reg(Op & 7) = Res
   Else
     EaFast()
-    MWriteWord(Ea, Res)
+    MWriteWord(Reg(#CPU_EA), Res)
   EndIf
   SetNZ(FlagN(), 1 - FlagN())
-  FlagV = 0
+  Reg(#CPU_FLAGV) = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SXT " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -1329,10 +1329,10 @@ InstructionMFPS_1067:         ; 1067DD   entries $11B8-$11BF
     Reg(Op & 7) = (Res | (0 - (Res & $80))) & $FFFF   ; sign-extended into a register
   Else
     EaFastB()
-    MWriteByte(Ea, Res)
+    MWriteByte(Reg(#CPU_EA), Res)
   EndIf
   FlagNZ = Res << 8
-  FlagV = 0
+  Reg(#CPU_FLAGV) = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MFPS " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -1342,15 +1342,15 @@ InstructionMTPS_1064:         ; 1064SS   entries $11A0-$11A7   the T bit is not 
   PcOut()
   ;name = "MTPS"
   If (Op & $38) = 0
-    Src = Reg(Op & 7) & $FF
+    Reg(#CPU_SRC) = Reg(Op & 7) & $FF
   Else
     EaFastB()
-    MReadByte(Src, Ea)
+    MReadByteSlot(@Reg(#CPU_SRC), Reg(#CPU_EA))
   EndIf
   If PswHigh & $C000                     ; outside kernel mode only the condition codes
-    PswSet((PswGet() & $FFF0) | (Src & $0F))
+    PswSet((PswGet() & $FFF0) | (Reg(#CPU_SRC) & $0F))
   Else
-    PswSet((PswGet() & $FF10) | (Src & $EF))
+    PswSet((PswGet() & $FF10) | (Reg(#CPU_SRC) & $EF))
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MTPS " + ;name)
@@ -1364,19 +1364,19 @@ InstructionMFPI_0065:         ; 0065SS   entries $01A8-$01AF
   PcOut()
   ;name = "MFPI"
   If (Op & $38) = 0
-    Src = Reg(Op & 7)
+    Reg(#CPU_SRC) = Reg(Op & 7)
     If (Op & 7) = 6                      ; SP: the PREVIOUS mode's (PSW 13-12)
-      Src = ModeSp((PswHigh >> 12) & 3)
+      Reg(#CPU_SRC) = ModeSp((PswHigh >> 12) & 3)
     EndIf
   Else
     EaFast()
-    MReadWord(Src, Ea)
+    MReadWordSlot(@Reg(#CPU_SRC), Reg(#CPU_EA))
   EndIf
-  If TrapVector = 0                      ; a read that failed (bus error, MMU abort) aborts
-    Push(Src)                            ; the instruction: nothing is pushed (the J-11 stops
+  If Reg(#CPU_TRAPVECTOR) = 0                      ; a read that failed (bus error, MMU abort) aborts
+    Push(Reg(#CPU_SRC))                            ; the instruction: nothing is pushed (the J-11 stops
   EndIf                                  ; at the fault; V6's fuword relies on it)
-  FlagNZ = Src
-  FlagV = 0
+  FlagNZ = Reg(#CPU_SRC)
+  Reg(#CPU_FLAGV) = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MFPI " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -1385,19 +1385,19 @@ InstructionMFPI_0065:         ; 0065SS   entries $01A8-$01AF
 InstructionMTPI_0066:         ; 0066DD   entries $01B0-$01B7
   PcOut()
   ;name = "MTPI"
-  Src = Pop()
+  Reg(#CPU_SRC) = Pop()
   If (Op & $38) = 0
     If (Op & 7) = 6                      ; SP: the PREVIOUS mode's (PSW 13-12)
-      SetModeSp((PswHigh >> 12) & 3, Src)
+      SetModeSp((PswHigh >> 12) & 3, Reg(#CPU_SRC))
     Else
-      Reg(Op & 7) = Src
+      Reg(Op & 7) = Reg(#CPU_SRC)
     EndIf
   Else
     EaFast()
-    MWriteWord(Ea, Src)
+    MWriteWord(Reg(#CPU_EA), Reg(#CPU_SRC))
   EndIf
-  FlagNZ = Src
-  FlagV = 0
+  FlagNZ = Reg(#CPU_SRC)
+  Reg(#CPU_FLAGV) = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("MTPI " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -1451,7 +1451,7 @@ InstructionBEQ_0014:          ; 001400   entries $0060-$007F   Z = 1
 
 InstructionBGE_0020:          ; 002000   entries $0080-$009F   N xor V = 0
   ;name = "BGE"
-  If (((FlagNZ | (FlagNZ >> 1)) ! FlagV) & $8000) = 0     ; N xor V = 0 (N: bit 15, or bit 16 with Z)
+  If (((FlagNZ | (FlagNZ >> 1)) ! Reg(#CPU_FLAGV)) & $8000) = 0     ; N xor V = 0 (N: bit 15, or bit 16 with Z)
     BranchTo()
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
@@ -1461,7 +1461,7 @@ InstructionBGE_0020:          ; 002000   entries $0080-$009F   N xor V = 0
 
 InstructionBLT_0024:          ; 002400   entries $00A0-$00BF   N xor V = 1
   ;name = "BLT"
-  If ((FlagNZ | (FlagNZ >> 1)) ! FlagV) & $8000
+  If ((FlagNZ | (FlagNZ >> 1)) ! Reg(#CPU_FLAGV)) & $8000
     BranchTo()
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
@@ -1472,7 +1472,7 @@ InstructionBLT_0024:          ; 002400   entries $00A0-$00BF   N xor V = 1
 InstructionBGT_0030:          ; 003000   entries $00C0-$00DF   Z or (N xor V) = 0
   ;name = "BGT"
   If FlagNZ & $FFFF                      ; nested, not And: no truth values built
-    If (((FlagNZ | (FlagNZ >> 1)) ! FlagV) & $8000) = 0     ; N xor V = 0 (N: bit 15, or bit 16 with Z)
+    If (((FlagNZ | (FlagNZ >> 1)) ! Reg(#CPU_FLAGV)) & $8000) = 0     ; N xor V = 0 (N: bit 15, or bit 16 with Z)
       BranchTo()
     EndIf
   EndIf
@@ -1485,7 +1485,7 @@ InstructionBLE_0034:          ; 003400   entries $00E0-$00FF   Z or (N xor V) = 
   ;name = "BLE"
   If (FlagNZ & $FFFF) = 0
     BranchTo()
-  ElseIf ((FlagNZ | (FlagNZ >> 1)) ! FlagV) & $8000
+  ElseIf ((FlagNZ | (FlagNZ >> 1)) ! Reg(#CPU_FLAGV)) & $8000
     BranchTo()
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
@@ -1515,7 +1515,7 @@ InstructionBMI_1004:          ; 100400   entries $1020-$103F   N = 1
 
 InstructionBHI_1010:          ; 101000   entries $1040-$105F   C = 0 and Z = 0
   ;name = "BHI"
-  If (FlagC & $10000) = 0
+  If (Reg(#CPU_FLAGC) & $10000) = 0
     If FlagNZ & $FFFF
       BranchTo()
     EndIf
@@ -1527,7 +1527,7 @@ InstructionBHI_1010:          ; 101000   entries $1040-$105F   C = 0 and Z = 0
 
 InstructionBLOS_1014:         ; 101400   entries $1060-$107F   C = 1 or Z = 1
   ;name = "BLOS"
-  If FlagC & $10000
+  If Reg(#CPU_FLAGC) & $10000
     BranchTo()
   ElseIf (FlagNZ & $FFFF) = 0
     BranchTo()
@@ -1539,7 +1539,7 @@ InstructionBLOS_1014:         ; 101400   entries $1060-$107F   C = 1 or Z = 1
 
 InstructionBVC_1020:          ; 102000   entries $1080-$109F   V = 0
   ;name = "BVC"
-  If (FlagV & $8000) = 0
+  If (Reg(#CPU_FLAGV) & $8000) = 0
     BranchTo()
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
@@ -1549,7 +1549,7 @@ InstructionBVC_1020:          ; 102000   entries $1080-$109F   V = 0
 
 InstructionBVS_1024:          ; 102400   entries $10A0-$10BF   V = 1
   ;name = "BVS"
-  If FlagV & $8000
+  If Reg(#CPU_FLAGV) & $8000
     BranchTo()
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
@@ -1559,7 +1559,7 @@ InstructionBVS_1024:          ; 102400   entries $10A0-$10BF   V = 1
 
 InstructionBCC_1030:          ; 103000   entries $10C0-$10DF   C = 0 (also BHIS)
   ;name = "BCC"
-  If (FlagC & $10000) = 0
+  If (Reg(#CPU_FLAGC) & $10000) = 0
     BranchTo()
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
@@ -1569,7 +1569,7 @@ InstructionBCC_1030:          ; 103000   entries $10C0-$10DF   C = 0 (also BHIS)
 
 InstructionBCS_1034:          ; 103400   entries $10E0-$10FF   C = 1 (also BLO)
   ;name = "BCS"
-  If FlagC & $10000
+  If Reg(#CPU_FLAGC) & $10000
     BranchTo()
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_BRANCH
@@ -1586,7 +1586,7 @@ InstructionJMP_0001:          ; 0001DD   entries $0008-$000F
   PcOut()
   ;name = "JMP"
   If (Op & $38) = 0
-    TrapVector = #VEC_BUS                ; JMP to a register is illegal
+    Reg(#CPU_TRAPVECTOR) = #VEC_BUS                ; JMP to a register is illegal
   Else
     Reg(7) = EaWord(Op & $3F)
   EndIf
@@ -1600,12 +1600,12 @@ InstructionJSR_004:           ; 004RDD   entries $0100-$013F
   PcOut()
   ;name = "JSR"
   If (Op & $38) = 0
-    TrapVector = #VEC_BUS                ; JSR to a register is illegal
+    Reg(#CPU_TRAPVECTOR) = #VEC_BUS                ; JSR to a register is illegal
   Else
     EaFast()
     Push(Reg((Op >> 6) & 7))
     Reg((Op >> 6) & 7) = Reg(7)
-    Reg(7) = Ea
+    Reg(7) = Reg(#CPU_EA)
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_JUMP
   ;disassembly("JSR " + ;name)
@@ -1666,15 +1666,15 @@ InstructionMUL_070:           ; 070RSS   entries $0E00-$0E3F
   PcOut()
   ;name = "MUL"
   If (Op & $38) = 0
-    Src = Reg(Op & 7)
+    Reg(#CPU_SRC) = Reg(Op & 7)
   Else
     EaFast()
-    MReadWord(Src, Ea)
+    MReadWordSlot(@Reg(#CPU_SRC), Reg(#CPU_EA))
   EndIf
-  Src = Src - ((Src & $8000) << 1)                        ; signed 16
-  Dst = Reg((Op >> 6) & 7)
-  Dst = Dst - ((Dst & $8000) << 1)
-  Res = Src * Dst                                          ; fits in 32 bits
+  Reg(#CPU_SRC) = Reg(#CPU_SRC) - ((Reg(#CPU_SRC) & $8000) << 1)                        ; signed 16
+  Reg(#CPU_DST) = Reg((Op >> 6) & 7)
+  Reg(#CPU_DST) = Reg(#CPU_DST) - ((Reg(#CPU_DST) & $8000) << 1)
+  Res = Reg(#CPU_SRC) * Reg(#CPU_DST)                                          ; fits in 32 bits
   If Op & $40                                              ; odd register: low word only
     Reg((Op >> 6) & 7) = Res & $FFFF
   Else
@@ -1682,10 +1682,10 @@ InstructionMUL_070:           ; 070RSS   entries $0E00-$0E3F
     Reg(((Op >> 6) & 7) | 1) = Res & $FFFF
   EndIf
   SetNZ(Bool(Res < 0), Bool(Res = 0))
-  FlagV = 0
-  FlagC = 0
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
   If Res < -32768 Or Res > 32767
-    FlagC = $10000
+    Reg(#CPU_FLAGC) = $10000
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("MUL " + ;name)
@@ -1697,30 +1697,30 @@ InstructionDIV_071:           ; 071RSS   entries $0E40-$0E7F
   PcOut()
   ;name = "DIV"
   If (Op & $38) = 0
-    Src = Reg(Op & 7)
+    Reg(#CPU_SRC) = Reg(Op & 7)
   Else
     EaFast()
-    MReadWord(Src, Ea)
+    MReadWordSlot(@Reg(#CPU_SRC), Reg(#CPU_EA))
   EndIf
-  Src = Src - ((Src & $8000) << 1)
-  Dst = (Reg((Op >> 6) & 7) << 16) | Reg(((Op >> 6) & 7) | 1)   ; the 32-bit dividend
-  If Src = 0
-    FlagV = $8000
-    FlagC = $10000
-  ElseIf Src = -1 And Dst = $80000000
-    FlagV = $8000
-    FlagC = 0
+  Reg(#CPU_SRC) = Reg(#CPU_SRC) - ((Reg(#CPU_SRC) & $8000) << 1)
+  Reg(#CPU_DST) = (Reg((Op >> 6) & 7) << 16) | Reg(((Op >> 6) & 7) | 1)   ; the 32-bit dividend
+  If Reg(#CPU_SRC) = 0
+    Reg(#CPU_FLAGV) = $8000
+    Reg(#CPU_FLAGC) = $10000
+  ElseIf Reg(#CPU_SRC) = -1 And Reg(#CPU_DST) = $80000000
+    Reg(#CPU_FLAGV) = $8000
+    Reg(#CPU_FLAGC) = 0
   Else
-    Res = Dst / Src
+    Res = Reg(#CPU_DST) / Reg(#CPU_SRC)
     If Res < -32768 Or Res > 32767
-      FlagV = $8000                                            ; registers unchanged
-      FlagC = 0
+      Reg(#CPU_FLAGV) = $8000                                            ; registers unchanged
+      Reg(#CPU_FLAGC) = 0
     Else
       Reg((Op >> 6) & 7) = Res & $FFFF
-      Reg(((Op >> 6) & 7) | 1) = (Dst - Res * Src) & $FFFF
+      Reg(((Op >> 6) & 7) | 1) = (Reg(#CPU_DST) - Res * Reg(#CPU_SRC)) & $FFFF
       SetNZ(Bool(Res < 0), Bool(Res = 0))
-      FlagV = 0
-      FlagC = 0
+      Reg(#CPU_FLAGV) = 0
+      Reg(#CPU_FLAGC) = 0
     EndIf
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_EIS
@@ -1735,30 +1735,30 @@ InstructionASH_072:           ; 072RSS   entries $0E80-$0EBF
   PcOut()
   ;name = "ASH"
   If (Op & $38) = 0
-    Src = Reg(Op & 7) & $3F
+    Reg(#CPU_SRC) = Reg(Op & 7) & $3F
   Else
     EaFast()
-    MReadWord(Src, Ea)
-    Src = Src & $3F
+    MReadWordSlot(@Reg(#CPU_SRC), Reg(#CPU_EA))
+    Reg(#CPU_SRC) = Reg(#CPU_SRC) & $3F
   EndIf
   Res = Reg((Op >> 6) & 7)
-  FlagV = 0
-  If Src & $20
-    Src = 64 - Src                                         ; right by this many
-    While Src > 0
-      FlagC = Res << 16
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_SRC) & $20
+    Reg(#CPU_SRC) = 64 - Reg(#CPU_SRC)                                         ; right by this many
+    While Reg(#CPU_SRC) > 0
+      Reg(#CPU_FLAGC) = Res << 16
       Res = (Res >> 1) | (Res & $8000)
-      Src = Src - 1
+      Reg(#CPU_SRC) = Reg(#CPU_SRC) - 1
     Wend
   Else
-    While Src > 0
-      FlagC = Res << 1
-      Tmp = (Res << 1) & $FFFF
-      If (Tmp ! Res) & $8000
-        FlagV = $8000                                          ; the sign changed
+    While Reg(#CPU_SRC) > 0
+      Reg(#CPU_FLAGC) = Res << 1
+      Reg(#CPU_TMP) = (Res << 1) & $FFFF
+      If (Reg(#CPU_TMP) ! Res) & $8000
+        Reg(#CPU_FLAGV) = $8000                                          ; the sign changed
       EndIf
-      Res = Tmp
-      Src = Src - 1
+      Res = Reg(#CPU_TMP)
+      Reg(#CPU_SRC) = Reg(#CPU_SRC) - 1
     Wend
   EndIf
   Reg((Op >> 6) & 7) = Res
@@ -1773,30 +1773,30 @@ InstructionASHC_073:          ; 073RSS   entries $0EC0-$0EFF
   PcOut()
   ;name = "ASHC"
   If (Op & $38) = 0
-    Src = Reg(Op & 7) & $3F
+    Reg(#CPU_SRC) = Reg(Op & 7) & $3F
   Else
     EaFast()
-    MReadWord(Src, Ea)
-    Src = Src & $3F
+    MReadWordSlot(@Reg(#CPU_SRC), Reg(#CPU_EA))
+    Reg(#CPU_SRC) = Reg(#CPU_SRC) & $3F
   EndIf
   Res = (Reg((Op >> 6) & 7) << 16) | Reg(((Op >> 6) & 7) | 1)
-  FlagV = 0
-  If Src & $20
-    Src = 64 - Src
-    While Src > 0
-      FlagC = Res << 16
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_SRC) & $20
+    Reg(#CPU_SRC) = 64 - Reg(#CPU_SRC)
+    While Reg(#CPU_SRC) > 0
+      Reg(#CPU_FLAGC) = Res << 16
       Res = Res >> 1                                       ; arithmetic on a 32-bit .i
-      Src = Src - 1
+      Reg(#CPU_SRC) = Reg(#CPU_SRC) - 1
     Wend
   Else
-    While Src > 0
-      FlagC = Res >> 15
-      Tmp = Res << 1
-      If (Tmp ! Res) & $80000000
-        FlagV = $8000
+    While Reg(#CPU_SRC) > 0
+      Reg(#CPU_FLAGC) = Res >> 15
+      Reg(#CPU_TMP) = Res << 1
+      If (Reg(#CPU_TMP) ! Res) & $80000000
+        Reg(#CPU_FLAGV) = $8000
       EndIf
-      Res = Tmp
-      Src = Src - 1
+      Res = Reg(#CPU_TMP)
+      Reg(#CPU_SRC) = Reg(#CPU_SRC) - 1
     Wend
   EndIf
   Reg((Op >> 6) & 7) = (Res >> 16) & $FFFF
@@ -1816,12 +1816,12 @@ InstructionXOR_074:           ; 074RDD   entries $0F00-$0F3F
     Reg(Op & 7) = Res
   Else
     EaFast()
-    MReadWord(Res, Ea)
+    MReadWord(Res, Reg(#CPU_EA))
     Res = Res ! Reg((Op >> 6) & 7)
-    MWriteWord(Ea, Res)
+    MWriteWord(Reg(#CPU_EA), Res)
   EndIf
   FlagNZ = Res
-  FlagV = 0
+  Reg(#CPU_FLAGV) = 0
   ; ClockCycles = ClockCycles + #J11_T_EIS
   ;disassembly("XOR " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -1833,7 +1833,7 @@ InstructionXOR_074:           ; 074RDD   entries $0F00-$0F3F
 InstructionEMT_104:           ; 104000-104377   entries $1100-$111F
   PcOut()
   ;name = "EMT"
-  TrapVector = #VEC_EMT
+  Reg(#CPU_TRAPVECTOR) = #VEC_EMT
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("EMT " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -1842,7 +1842,7 @@ InstructionEMT_104:           ; 104000-104377   entries $1100-$111F
 InstructionTRAP_1044:         ; 104400-104777   entries $1120-$113F
   PcOut()
   ;name = "TRAP"
-  TrapVector = #VEC_TRAP
+  Reg(#CPU_TRAPVECTOR) = #VEC_TRAP
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("TRAP " + ;name)
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -1853,7 +1853,7 @@ InstructionHALT_000000:       ; entry $0000, sub-decoded
   ;name = "HALT"
   If (PswHigh & $C000) <> 0 Or MaintTrap <> 0   ; HALT outside kernel mode (or with the maintenance
     CpuErr = CpuErr | #CPUE_HALT                ; register's trap option) does not halt: it traps
-    TrapVector = #VEC_BUS                       ; through 4, CPU error register bit 7 (cpu.pico2,
+    Reg(#CPU_TRAPVECTOR) = #VEC_BUS                       ; through 4, CPU error register bit 7 (cpu.pico2,
     Goto SlowTail                               ; THE CPU ERROR AND MAINTENANCE REGISTERS)
   EndIf
   Halted = 1
@@ -1876,11 +1876,11 @@ InstructionRTI_000002:        ; entry $0000, sub-decoded
   PcOut()
   ;name = "RTI"
   Reg(7) = Pop()
-  Src = Pop()
+  Reg(#CPU_SRC) = Pop()
   If PswHigh & $C000                     ; outside kernel: bits 15-11 can only be set,
-    Src = (Src & $F81F) | (PswHigh & $F8E0)   ; and the priority stays
+    Reg(#CPU_SRC) = (Reg(#CPU_SRC) & $F81F) | (PswHigh & $F8E0)   ; and the priority stays
   EndIf
-  PswSet(Src)
+  PswSet(Reg(#CPU_SRC))
   If PswHigh & $10                       ; RTI loading T: trace straight after it
     TraceArm = 1
   EndIf
@@ -1892,7 +1892,7 @@ InstructionRTI_000002:        ; entry $0000, sub-decoded
 InstructionBPT_000003:        ; entry $0000, sub-decoded
   PcOut()
   ;name = "BPT"
-  TrapVector = #VEC_BPT
+  Reg(#CPU_TRAPVECTOR) = #VEC_BPT
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("BPT")
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -1901,7 +1901,7 @@ InstructionBPT_000003:        ; entry $0000, sub-decoded
 InstructionIOT_000004:        ; entry $0000, sub-decoded
   PcOut()
   ;name = "IOT"
-  TrapVector = #VEC_IOT
+  Reg(#CPU_TRAPVECTOR) = #VEC_IOT
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("IOT")
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -1919,11 +1919,11 @@ InstructionRTT_000006:        ; entry $0000, sub-decoded (the T bit: StartWindow
   PcOut()
   ;name = "RTT"
   Reg(7) = Pop()
-  Src = Pop()
+  Reg(#CPU_SRC) = Pop()
   If PswHigh & $C000                     ; outside kernel: bits 15-11 can only be set,
-    Src = (Src & $F81F) | (PswHigh & $F8E0)   ; and the priority stays
+    Reg(#CPU_SRC) = (Reg(#CPU_SRC) & $F81F) | (PswHigh & $F8E0)   ; and the priority stays
   EndIf
-  PswSet(Src)
+  PswSet(Reg(#CPU_SRC))
   ; ClockCycles = ClockCycles + #J11_T_MISC
   ;disassembly("RTT")
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -1958,32 +1958,32 @@ InstructionCC_00024:          ; 00024x-00027x   entries $0014-$0017
   ; could matter - IntCheck - is still called whenever a request waits.
   If Op & 1
     If Op & $10
-      FlagC = $10000
+      Reg(#CPU_FLAGC) = $10000
     Else
-      FlagC = 0
+      Reg(#CPU_FLAGC) = 0
     EndIf
   EndIf
   If Op & 2
     If Op & $10
-      FlagV = $8000
+      Reg(#CPU_FLAGV) = $8000
     Else
-      FlagV = 0
+      Reg(#CPU_FLAGV) = 0
     EndIf
   EndIf
   If Op & $C                             ; N or Z named: rebuild the lazy pair
-    Tmp = 0
+    Reg(#CPU_TMP) = 0
     If FlagNZ & $18000
-      Tmp = 8
+      Reg(#CPU_TMP) = 8
     EndIf
     If (FlagNZ & $FFFF) = 0
-      Tmp = Tmp | 4
+      Reg(#CPU_TMP) = Reg(#CPU_TMP) | 4
     EndIf
     If Op & $10
-      Tmp = Tmp | (Op & $C)
+      Reg(#CPU_TMP) = Reg(#CPU_TMP) | (Op & $C)
     Else
-      Tmp = Tmp & ~(Op & $C)
+      Reg(#CPU_TMP) = Reg(#CPU_TMP) & ~(Op & $C)
     EndIf
-    SetNZ((Tmp >> 3) & 1, (Tmp >> 2) & 1)
+    SetNZ((Reg(#CPU_TMP) >> 3) & 1, (Reg(#CPU_TMP) >> 2) & 1)
   EndIf
   If IntReq
     IntCheck()
@@ -2003,7 +2003,7 @@ CompilerEndIf
 InstructionReserved:          ; every opcode this model does not execute
   PcOut()
   ;name = "reserved"
-  TrapVector = #VEC_RESV
+  Reg(#CPU_TRAPVECTOR) = #VEC_RESV
   ; ClockCycles = ClockCycles + #J11_T_TRAP
   ;disassembly(".WORD")
   ; ---- next instruction (THE TAIL, top of file) ----
@@ -2052,8 +2052,8 @@ InstructionCLR_0050_R:              ; 0050R, operand in a register
   ;name = "CLR Rd"
   Reg(Op & 7) = 0
   FlagNZ = 0
-  FlagV = 0
-  FlagC = 0
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLR " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
@@ -2067,8 +2067,8 @@ InstructionCOM_0051_R:              ; 0051R, operand in a register
   Res = Reg(Op & 7) ! $FFFF
   Reg(Op & 7) = Res
   FlagNZ = Res
-  FlagV = 0
-  FlagC = $10000
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = $10000
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("COM " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
@@ -2079,12 +2079,12 @@ InstructionINC_0052_R:              ; 0052R, operand in a register
     Goto InstructionINC_0052
   EndIf
   ;name = "INC Rd"
-  Dst = Reg(Op & 7)
-  Res = (Dst + 1) & $FFFF
+  Reg(#CPU_DST) = Reg(Op & 7)
+  Res = (Reg(#CPU_DST) + 1) & $FFFF
   Reg(Op & 7) = Res
-  FlagV = 0
-  If Dst = $7FFF
-    FlagV = $8000
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $7FFF
+    Reg(#CPU_FLAGV) = $8000
   EndIf
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
@@ -2097,12 +2097,12 @@ InstructionDEC_0053_R:              ; 0053R, operand in a register
     Goto InstructionDEC_0053
   EndIf
   ;name = "DEC Rd"
-  Dst = Reg(Op & 7)
-  Res = (Dst - 1) & $FFFF
+  Reg(#CPU_DST) = Reg(Op & 7)
+  Res = (Reg(#CPU_DST) - 1) & $FFFF
   Reg(Op & 7) = Res
-  FlagV = 0
-  If Dst = $8000
-    FlagV = $8000
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $8000
+    Reg(#CPU_FLAGV) = $8000
   EndIf
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
@@ -2117,13 +2117,13 @@ InstructionNEG_0054_R:              ; 0054R, operand in a register
   ;name = "NEG Rd"
   Res = (0 - Reg(Op & 7)) & $FFFF
   Reg(Op & 7) = Res
-  FlagV = 0
+  Reg(#CPU_FLAGV) = 0
   If Res = $8000
-    FlagV = $8000
+    Reg(#CPU_FLAGV) = $8000
   EndIf
-  FlagC = $10000
+  Reg(#CPU_FLAGC) = $10000
   If Res = 0
-    FlagC = 0
+    Reg(#CPU_FLAGC) = 0
   EndIf
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
@@ -2137,8 +2137,8 @@ InstructionTST_0057_R:              ; 0057R, operand in a register
   EndIf
   ;name = "TST Rd"
   FlagNZ = Reg(Op & 7)
-  FlagV = 0
-  FlagC = 0
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TST " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
@@ -2149,11 +2149,11 @@ InstructionROR_0060_R:              ; 0060R, operand in a register
     Goto InstructionROR_0060
   EndIf
   ;name = "ROR Rd"
-  Dst = Reg(Op & 7)
-  Res = (Dst >> 1) | ((FlagC >> 1) & $8000)
+  Reg(#CPU_DST) = Reg(Op & 7)
+  Res = (Reg(#CPU_DST) >> 1) | ((Reg(#CPU_FLAGC) >> 1) & $8000)
   Reg(Op & 7) = Res
-  FlagC = Dst << 16
-  FlagV = Res ! (FlagC >> 1)
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 16
+  Reg(#CPU_FLAGV) = Res ! (Reg(#CPU_FLAGC) >> 1)
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROR " + ;name)
@@ -2165,11 +2165,11 @@ InstructionROL_0061_R:              ; 0061R, operand in a register
     Goto InstructionROL_0061
   EndIf
   ;name = "ROL Rd"
-  Dst = Reg(Op & 7)
-  Res = ((Dst << 1) | ((FlagC >> 16) & 1)) & $FFFF
+  Reg(#CPU_DST) = Reg(Op & 7)
+  Res = ((Reg(#CPU_DST) << 1) | ((Reg(#CPU_FLAGC) >> 16) & 1)) & $FFFF
   Reg(Op & 7) = Res
-  FlagC = Dst << 1
-  FlagV = Res ! (FlagC >> 1)
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 1
+  Reg(#CPU_FLAGV) = Res ! (Reg(#CPU_FLAGC) >> 1)
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ROL " + ;name)
@@ -2181,11 +2181,11 @@ InstructionASR_0062_R:              ; 0062R, operand in a register
     Goto InstructionASR_0062
   EndIf
   ;name = "ASR Rd"
-  Dst = Reg(Op & 7)
-  Res = (Dst >> 1) | (Dst & $8000)
+  Reg(#CPU_DST) = Reg(Op & 7)
+  Res = (Reg(#CPU_DST) >> 1) | (Reg(#CPU_DST) & $8000)
   Reg(Op & 7) = Res
-  FlagC = Dst << 16
-  FlagV = Res ! (FlagC >> 1)
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 16
+  Reg(#CPU_FLAGV) = Res ! (Reg(#CPU_FLAGC) >> 1)
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASR " + ;name)
@@ -2197,11 +2197,11 @@ InstructionASL_0063_R:              ; 0063R, operand in a register
     Goto InstructionASL_0063
   EndIf
   ;name = "ASL Rd"
-  Dst = Reg(Op & 7)
-  Res = (Dst << 1) & $FFFF
+  Reg(#CPU_DST) = Reg(Op & 7)
+  Res = (Reg(#CPU_DST) << 1) & $FFFF
   Reg(Op & 7) = Res
-  FlagC = Dst << 1
-  FlagV = Res ! (FlagC >> 1)
+  Reg(#CPU_FLAGC) = Reg(#CPU_DST) << 1
+  Reg(#CPU_FLAGV) = Res ! (Reg(#CPU_FLAGC) >> 1)
   FlagNZ = Res
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("ASL " + ;name)
@@ -2213,12 +2213,12 @@ InstructionSWAB_0003_R:             ; 0003R, operand in a register
     Goto InstructionSWAB_0003
   EndIf
   ;name = "SWAB Rd"
-  Dst = Reg(Op & 7)
-  Res = ((Dst >> 8) | (Dst << 8)) & $FFFF
+  Reg(#CPU_DST) = Reg(Op & 7)
+  Res = ((Reg(#CPU_DST) >> 8) | (Reg(#CPU_DST) << 8)) & $FFFF
   Reg(Op & 7) = Res
   FlagNZ = (Res & $FF) << 8
-  FlagV = 0
-  FlagC = 0
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("SWAB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
@@ -2231,8 +2231,8 @@ InstructionCLRB_1050_R:             ; 1050R, operand in a register
   ;name = "CLRB Rd"
   Reg(Op & 7) = Reg(Op & 7) & $FF00
   FlagNZ = 0
-  FlagV = 0
-  FlagC = 0
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("CLRB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
@@ -2243,12 +2243,12 @@ InstructionINCB_1052_R:             ; 1052R, operand in a register
     Goto InstructionINCB_1052
   EndIf
   ;name = "INCB Rd"
-  Dst = Reg(Op & 7) & $FF
-  Res = (Dst + 1) & $FF
+  Reg(#CPU_DST) = Reg(Op & 7) & $FF
+  Res = (Reg(#CPU_DST) + 1) & $FF
   Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
-  FlagV = 0
-  If Dst = $7F
-    FlagV = $8000
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $7F
+    Reg(#CPU_FLAGV) = $8000
   EndIf
   FlagNZ = Res << 8
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
@@ -2261,12 +2261,12 @@ InstructionDECB_1053_R:             ; 1053R, operand in a register
     Goto InstructionDECB_1053
   EndIf
   ;name = "DECB Rd"
-  Dst = Reg(Op & 7) & $FF
-  Res = (Dst - 1) & $FF
+  Reg(#CPU_DST) = Reg(Op & 7) & $FF
+  Res = (Reg(#CPU_DST) - 1) & $FF
   Reg(Op & 7) = (Reg(Op & 7) & $FF00) | Res
-  FlagV = 0
-  If Dst = $80
-    FlagV = $8000
+  Reg(#CPU_FLAGV) = 0
+  If Reg(#CPU_DST) = $80
+    Reg(#CPU_FLAGV) = $8000
   EndIf
   FlagNZ = Res << 8
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
@@ -2280,8 +2280,8 @@ InstructionTSTB_1057_R:             ; 1057R, operand in a register
   EndIf
   ;name = "TSTB Rd"
   FlagNZ = (Reg(Op & 7) & $FF) << 8
-  FlagV = 0
-  FlagC = 0
+  Reg(#CPU_FLAGV) = 0
+  Reg(#CPU_FLAGC) = 0
   ; ClockCycles = ClockCycles + #J11_T_SINGLE
   ;disassembly("TSTB " + ;name)
   ; ---- next instruction - this one cannot trap (THE TAIL, top of file) ----
@@ -2300,11 +2300,11 @@ InstructionMOV_01_IR:            ; 0127DD  MOV #n,Rd, the source an immediate
     Goto InstructionMOV_01
   EndIf
   ;name = "MOV #n,Rd"
-  MReadWord(Src, PC)                     ; the word after the instruction
+  MReadWordSlot(@Reg(#CPU_SRC), PC)                     ; the word after the instruction
   PC = (PC + 2) & $FFFF
-  Reg(Op & 7) = Src
-  FlagNZ = Src
-  FlagV = 0
+  Reg(Op & 7) = Reg(#CPU_SRC)
+  FlagNZ = Reg(#CPU_SRC)
+  Reg(#CPU_FLAGV) = 0
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
   NextNativeTrap()
 
@@ -2313,12 +2313,12 @@ InstructionCMP_02_IR:            ; 0227DD  CMP #n,Rd, the source an immediate
     Goto InstructionCMP_02
   EndIf
   ;name = "CMP #n,Rd"
-  MReadWord(Src, PC)                     ; the word after the instruction
+  MReadWordSlot(@Reg(#CPU_SRC), PC)                     ; the word after the instruction
   PC = (PC + 2) & $FFFF
-  Res = Src - Reg(Op & 7)
-  FlagC = Res                            ; the borrow is bit 16
+  Res = Reg(#CPU_SRC) - Reg(Op & 7)
+  Reg(#CPU_FLAGC) = Res                            ; the borrow is bit 16
   FlagNZ = Res & $FFFF
-  FlagV = (Src ! (Src - Res)) & (Src ! Res)   ; bit 15; Src - Res is Rd
+  Reg(#CPU_FLAGV) = (Reg(#CPU_SRC) ! (Reg(#CPU_SRC) - Res)) & (Reg(#CPU_SRC) ! Res)   ; bit 15; Src - Res is Rd
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
   NextNativeTrap()
 
@@ -2327,10 +2327,10 @@ InstructionBIT_03_IR:            ; 0327DD  BIT #n,Rd, the source an immediate
     Goto InstructionBIT_03
   EndIf
   ;name = "BIT #n,Rd"
-  MReadWord(Src, PC)                     ; the word after the instruction
+  MReadWordSlot(@Reg(#CPU_SRC), PC)                     ; the word after the instruction
   PC = (PC + 2) & $FFFF
-  FlagNZ = Src & Reg(Op & 7)
-  FlagV = 0
+  FlagNZ = Reg(#CPU_SRC) & Reg(Op & 7)
+  Reg(#CPU_FLAGV) = 0
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
   NextNativeTrap()
 
@@ -2339,12 +2339,12 @@ InstructionBIC_04_IR:            ; 0427DD  BIC #n,Rd, the source an immediate
     Goto InstructionBIC_04
   EndIf
   ;name = "BIC #n,Rd"
-  MReadWord(Src, PC)                     ; the word after the instruction
+  MReadWordSlot(@Reg(#CPU_SRC), PC)                     ; the word after the instruction
   PC = (PC + 2) & $FFFF
-  Res = Reg(Op & 7) & ~Src & $FFFF
+  Res = Reg(Op & 7) & ~Reg(#CPU_SRC) & $FFFF
   Reg(Op & 7) = Res
   FlagNZ = Res
-  FlagV = 0
+  Reg(#CPU_FLAGV) = 0
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
   NextNativeTrap()
 
@@ -2353,12 +2353,12 @@ InstructionBIS_05_IR:            ; 0527DD  BIS #n,Rd, the source an immediate
     Goto InstructionBIS_05
   EndIf
   ;name = "BIS #n,Rd"
-  MReadWord(Src, PC)                     ; the word after the instruction
+  MReadWordSlot(@Reg(#CPU_SRC), PC)                     ; the word after the instruction
   PC = (PC + 2) & $FFFF
-  Res = Reg(Op & 7) | Src
+  Res = Reg(Op & 7) | Reg(#CPU_SRC)
   Reg(Op & 7) = Res
   FlagNZ = Res
-  FlagV = 0
+  Reg(#CPU_FLAGV) = 0
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
   NextNativeTrap()
 
@@ -2367,14 +2367,14 @@ InstructionADD_06_IR:            ; 0627DD  ADD #n,Rd, the source an immediate
     Goto InstructionADD_06
   EndIf
   ;name = "ADD #n,Rd"
-  MReadWord(Src, PC)                     ; the word after the instruction
+  MReadWordSlot(@Reg(#CPU_SRC), PC)                     ; the word after the instruction
   PC = (PC + 2) & $FFFF
-  Res = Src + Reg(Op & 7)
-  FlagC = Res                            ; C is bit 16 of the sum
+  Res = Reg(#CPU_SRC) + Reg(Op & 7)
+  Reg(#CPU_FLAGC) = Res                            ; C is bit 16 of the sum
   Res = Res & $FFFF
   Reg(Op & 7) = Res
   FlagNZ = Res
-  FlagV = (Src ! Res) & ((Res - Src) ! Res)   ; bit 15; Res - Src is the old Rd
+  Reg(#CPU_FLAGV) = (Reg(#CPU_SRC) ! Res) & ((Res - Reg(#CPU_SRC)) ! Res)   ; bit 15; Res - Src is the old Rd
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
   NextNativeTrap()
 
@@ -2383,14 +2383,14 @@ InstructionSUB_16_IR:            ; 1627DD  SUB #n,Rd, the source an immediate
     Goto InstructionSUB_16
   EndIf
   ;name = "SUB #n,Rd"
-  MReadWord(Src, PC)                     ; the word after the instruction
+  MReadWordSlot(@Reg(#CPU_SRC), PC)                     ; the word after the instruction
   PC = (PC + 2) & $FFFF
-  Res = Reg(Op & 7) - Src
-  FlagC = Res                            ; the borrow is bit 16
+  Res = Reg(Op & 7) - Reg(#CPU_SRC)
+  Reg(#CPU_FLAGC) = Res                            ; the borrow is bit 16
   Res = Res & $FFFF
   Reg(Op & 7) = Res
   FlagNZ = Res
-  FlagV = (Src ! (Res + Src)) & ((Res + Src) ! Res)   ; bit 15; Res + Src is the old Rd
+  Reg(#CPU_FLAGV) = (Reg(#CPU_SRC) ! (Res + Reg(#CPU_SRC))) & ((Res + Reg(#CPU_SRC)) ! Res)   ; bit 15; Res + Src is the old Rd
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
   NextNativeTrap()
 
@@ -2399,11 +2399,11 @@ InstructionMOVB_11_IR:           ; 1127DD  MOVB #n,Rd, the source an immediate
     Goto InstructionMOVB_11
   EndIf
   ;name = "MOVB #n,Rd"
-  MReadByte(Src, PC)                     ; the low byte of the word after the instruction
+  MReadByteSlot(@Reg(#CPU_SRC), PC)                     ; the low byte of the word after the instruction
   PC = (PC + 2) & $FFFF                  ; (R7 always steps by two)
-  Reg(Op & 7) = (Src | (0 - (Src & $80))) & $FFFF   ; to a register it is sign-extended
-  FlagNZ = Src << 8
-  FlagV = 0
+  Reg(Op & 7) = (Reg(#CPU_SRC) | (0 - (Reg(#CPU_SRC) & $80))) & $FFFF   ; to a register it is sign-extended
+  FlagNZ = Reg(#CPU_SRC) << 8
+  Reg(#CPU_FLAGV) = 0
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
   NextNativeTrap()
 
@@ -2412,12 +2412,12 @@ InstructionCMPB_12_IR:           ; 1227DD  CMPB #n,Rd, the source an immediate
     Goto InstructionCMPB_12
   EndIf
   ;name = "CMPB #n,Rd"
-  MReadByte(Src, PC)                     ; the low byte of the word after the instruction
+  MReadByteSlot(@Reg(#CPU_SRC), PC)                     ; the low byte of the word after the instruction
   PC = (PC + 2) & $FFFF                  ; (R7 always steps by two)
-  Dst = Reg(Op & 7) & $FF
-  Res = Src - Dst
-  FlagC = Res << 8
-  FlagV = ((Src ! Dst) & (Src ! Res)) << 8
+  Reg(#CPU_DST) = Reg(Op & 7) & $FF
+  Res = Reg(#CPU_SRC) - Reg(#CPU_DST)
+  Reg(#CPU_FLAGC) = Res << 8
+  Reg(#CPU_FLAGV) = ((Reg(#CPU_SRC) ! Reg(#CPU_DST)) & (Reg(#CPU_SRC) ! Res)) << 8
   FlagNZ = (Res & $FF) << 8
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
   NextNativeTrap()
@@ -2427,10 +2427,10 @@ InstructionBITB_13_IR:           ; 1327DD  BITB #n,Rd, the source an immediate
     Goto InstructionBITB_13
   EndIf
   ;name = "BITB #n,Rd"
-  MReadByte(Src, PC)                     ; the low byte of the word after the instruction
+  MReadByteSlot(@Reg(#CPU_SRC), PC)                     ; the low byte of the word after the instruction
   PC = (PC + 2) & $FFFF                  ; (R7 always steps by two)
-  FlagNZ = (Src & Reg(Op & 7) & $FF) << 8
-  FlagV = 0
+  FlagNZ = (Reg(#CPU_SRC) & Reg(Op & 7) & $FF) << 8
+  Reg(#CPU_FLAGV) = 0
   ; ---- next instruction - the read can trap (THE TAIL, top of file) ----
   NextNativeTrap()
 
@@ -2455,127 +2455,127 @@ InstructionBITB_13_IR:           ; 1327DD  BITB #n,Rd, the source an immediate
 InstructionMOV_01_RM:            ; 010SDD  MOV Rs,memory
   PcOut()
   EaFast()
-  Src = Reg((Op >> 6) & 7)
-  MWriteWord(Ea, Src)
-  FlagNZ = Src
-  FlagV = 0
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
+  MWriteWord(Reg(#CPU_EA), Reg(#CPU_SRC))
+  FlagNZ = Reg(#CPU_SRC)
+  Reg(#CPU_FLAGV) = 0
   NextSynced()
 
 InstructionCMP_02_RM:            ; 020SDD  CMP Rs,memory
   PcOut()
   EaFast()
-  Src = Reg((Op >> 6) & 7)
-  MReadWord(Dst, Ea)
-  Res = Src - Dst
-  FlagC = Res
-  FlagV = (Src ! Dst) & (Src ! Res)
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
+  MReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+  Res = Reg(#CPU_SRC) - Reg(#CPU_DST)
+  Reg(#CPU_FLAGC) = Res
+  Reg(#CPU_FLAGV) = (Reg(#CPU_SRC) ! Reg(#CPU_DST)) & (Reg(#CPU_SRC) ! Res)
   FlagNZ = Res & $FFFF
   NextSynced()
 
 InstructionBIT_03_RM:            ; 030SDD  BIT Rs,memory
   PcOut()
   EaFast()
-  Src = Reg((Op >> 6) & 7)
-  MReadWord(Dst, Ea)
-  FlagNZ = Src & Dst
-  FlagV = 0
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
+  MReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+  FlagNZ = Reg(#CPU_SRC) & Reg(#CPU_DST)
+  Reg(#CPU_FLAGV) = 0
   NextSynced()
 
 InstructionBIC_04_RM:            ; 040SDD  BIC Rs,memory
   PcOut()
   EaFast()
-  Src = Reg((Op >> 6) & 7)
-  MReadWord(Res, Ea)
-  Res = Res & ~Src & $FFFF
-  MWriteWord(Ea, Res)
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
+  MReadWord(Res, Reg(#CPU_EA))
+  Res = Res & ~Reg(#CPU_SRC) & $FFFF
+  MWriteWord(Reg(#CPU_EA), Res)
   FlagNZ = Res
-  FlagV = 0
+  Reg(#CPU_FLAGV) = 0
   NextSynced()
 
 InstructionBIS_05_RM:            ; 050SDD  BIS Rs,memory
   PcOut()
   EaFast()
-  Src = Reg((Op >> 6) & 7)
-  MReadWord(Res, Ea)
-  Res = Res | Src
-  MWriteWord(Ea, Res)
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
+  MReadWord(Res, Reg(#CPU_EA))
+  Res = Res | Reg(#CPU_SRC)
+  MWriteWord(Reg(#CPU_EA), Res)
   FlagNZ = Res
-  FlagV = 0
+  Reg(#CPU_FLAGV) = 0
   NextSynced()
 
 InstructionADD_06_RM:            ; 060SDD  ADD Rs,memory
   PcOut()
   EaFast()
-  Src = Reg((Op >> 6) & 7)
-  MReadWord(Dst, Ea)
-  Res = Src + Dst
-  MWriteWord(Ea, Res)
-  FlagC = Res
-  FlagV = ~(Src ! Dst) & (Src ! Res)
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
+  MReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+  Res = Reg(#CPU_SRC) + Reg(#CPU_DST)
+  MWriteWord(Reg(#CPU_EA), Res)
+  Reg(#CPU_FLAGC) = Res
+  Reg(#CPU_FLAGV) = ~(Reg(#CPU_SRC) ! Reg(#CPU_DST)) & (Reg(#CPU_SRC) ! Res)
   FlagNZ = Res & $FFFF
   NextSynced()
 
 InstructionSUB_16_RM:            ; 160SDD  SUB Rs,memory
   PcOut()
   EaFast()
-  Src = Reg((Op >> 6) & 7)
-  MReadWord(Dst, Ea)
-  Res = Dst - Src
-  MWriteWord(Ea, Res)
-  FlagC = Res                ; borrow
-  FlagV = (Src ! Dst) & (Dst ! Res)
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
+  MReadWordSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+  Res = Reg(#CPU_DST) - Reg(#CPU_SRC)
+  MWriteWord(Reg(#CPU_EA), Res)
+  Reg(#CPU_FLAGC) = Res                ; borrow
+  Reg(#CPU_FLAGV) = (Reg(#CPU_SRC) ! Reg(#CPU_DST)) & (Reg(#CPU_DST) ! Res)
   FlagNZ = Res & $FFFF
   NextSynced()
 
 InstructionMOVB_11_RM:           ; 110SDD  MOVB Rs,memory
   PcOut()
   EaFastB()
-  Src = Reg((Op >> 6) & 7) & $FF
-  MWriteByte(Ea, Src)
-  FlagNZ = Src << 8
-  FlagV = 0
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7) & $FF
+  MWriteByte(Reg(#CPU_EA), Reg(#CPU_SRC))
+  FlagNZ = Reg(#CPU_SRC) << 8
+  Reg(#CPU_FLAGV) = 0
   NextSynced()
 
 InstructionCMPB_12_RM:           ; 120SDD  CMPB Rs,memory
   PcOut()
   EaFastB()
-  Src = Reg((Op >> 6) & 7) & $FF
-  MReadByte(Dst, Ea)
-  Res = Src - Dst
-  FlagC = Res << 8
-  FlagV = ((Src ! Dst) & (Src ! Res)) << 8
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7) & $FF
+  MReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+  Res = Reg(#CPU_SRC) - Reg(#CPU_DST)
+  Reg(#CPU_FLAGC) = Res << 8
+  Reg(#CPU_FLAGV) = ((Reg(#CPU_SRC) ! Reg(#CPU_DST)) & (Reg(#CPU_SRC) ! Res)) << 8
   FlagNZ = (Res & $FF) << 8
   NextSynced()
 
 InstructionBITB_13_RM:           ; 130SDD  BITB Rs,memory
   PcOut()
   EaFastB()
-  Src = Reg((Op >> 6) & 7) & $FF
-  MReadByte(Dst, Ea)
-  FlagNZ = (Src & Dst) << 8
-  FlagV = 0
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7) & $FF
+  MReadByteSlot(@Reg(#CPU_DST), Reg(#CPU_EA))
+  FlagNZ = (Reg(#CPU_SRC) & Reg(#CPU_DST)) << 8
+  Reg(#CPU_FLAGV) = 0
   NextSynced()
 
 InstructionBICB_14_RM:           ; 140SDD  BICB Rs,memory
   PcOut()
   EaFastB()
-  Src = Reg((Op >> 6) & 7) & $FF
-  MReadByte(Res, Ea)
-  Res = Res & ~Src & $FF
-  MWriteByte(Ea, Res)
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7) & $FF
+  MReadByte(Res, Reg(#CPU_EA))
+  Res = Res & ~Reg(#CPU_SRC) & $FF
+  MWriteByte(Reg(#CPU_EA), Res)
   FlagNZ = Res << 8
-  FlagV = 0
+  Reg(#CPU_FLAGV) = 0
   NextSynced()
 
 InstructionBISB_15_RM:           ; 150SDD  BISB Rs,memory
   PcOut()
   EaFastB()
-  Src = Reg((Op >> 6) & 7) & $FF
-  MReadByte(Res, Ea)
-  Res = Res | Src
-  MWriteByte(Ea, Res)
+  Reg(#CPU_SRC) = Reg((Op >> 6) & 7) & $FF
+  MReadByte(Res, Reg(#CPU_EA))
+  Res = Res | Reg(#CPU_SRC)
+  MWriteByte(Reg(#CPU_EA), Res)
   FlagNZ = Res << 8
-  FlagV = 0
+  Reg(#CPU_FLAGV) = 0
   NextSynced()
 
 ; ======================================================================
@@ -2588,25 +2588,25 @@ SlowTail:
   If PswLate                             ; the PSW written through 177776 wins (PswWrite)
     PswSet(PswLate & $FFFF)
     PswLate = 0
-    If TrapVector = #TRAP_PSW_LATE
-      TrapVector = 0
+    If Reg(#CPU_TRAPVECTOR) = #TRAP_PSW_LATE
+      Reg(#CPU_TRAPVECTOR) = 0
     EndIf
   EndIf
   If AbortPsw                            ; a bus error aborted the instruction (BusError)
     PswSet(AbortPsw & $FFFF)
     AbortPsw = 0
   EndIf
-  If TrapVector = #TRAP_STACK            ; only a marker: StackYellow says what
-    TrapVector = 0
+  If Reg(#CPU_TRAPVECTOR) = #TRAP_STACK            ; only a marker: StackYellow says what
+    Reg(#CPU_TRAPVECTOR) = 0
   EndIf
   Reg(7) = PC
-  If TrapVector
-    Tmp = TrapVector
-    TrapVector = 0
+  If Reg(#CPU_TRAPVECTOR)
+    Reg(#CPU_TMP) = Reg(#CPU_TRAPVECTOR)
+    Reg(#CPU_TRAPVECTOR) = 0
     TraceArm = 0                         ; a trapping instruction is not traced
-    TakeTrap(Tmp)
-    If TrapVector = #TRAP_STACK
-      TrapVector = 0
+    TakeTrap(Reg(#CPU_TMP))
+    If Reg(#CPU_TRAPVECTOR) = #TRAP_STACK
+      Reg(#CPU_TRAPVECTOR) = 0
     EndIf
   EndIf
   TakeStackTrap()
@@ -2644,15 +2644,15 @@ RunEnd:
     EndIf
     DevService()
     While Waiting <> 0 And RunBank > 0 And Dl11TxRdy = 0
-      Tmp = Dl11TxDue - InstrCount           ; WAIT: let time pass to the
-      If Tmp < 1                             ; transmitter's next moment
-        Tmp = 1
+      Reg(#CPU_TMP) = Dl11TxDue - InstrCount           ; WAIT: let time pass to the
+      If Reg(#CPU_TMP) < 1                             ; transmitter's next moment
+        Reg(#CPU_TMP) = 1
       EndIf
-      If Tmp > RunBank
-        Tmp = RunBank
+      If Reg(#CPU_TMP) > RunBank
+        Reg(#CPU_TMP) = RunBank
       EndIf
-      InstrCount = InstrCount + Tmp
-      RunBank = RunBank - Tmp
+      InstrCount = InstrCount + Reg(#CPU_TMP)
+      RunBank = RunBank - Reg(#CPU_TMP)
       DevService()
     Wend
     If Waiting = 0 And RunBank > 0

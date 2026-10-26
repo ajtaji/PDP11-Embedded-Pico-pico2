@@ -320,6 +320,68 @@ __eaw1_slow:
 """
 
 
+# Byte auto modes use a one-byte step except through SP/PC. All other
+# modes use __eaw1 directly, retaining its checked indexed/deferred fallback.
+EAB1 = """__eab1:
+    mov r12, r0
+    movs r1, #7
+    ands r1, r0
+    movs r2, #1
+    cmp r1, #6
+    blo __eab1_step
+    movs r2, #2
+__eab1_step:
+    ldr r3, =global_eastep
+    str r2, [r3]
+    lsrs r3, r0, #3
+    cmp r3, #2
+    beq __eab1_inc
+    cmp r3, #4
+    beq __eab1_dec
+    b __eaw1
+__eab1_inc:
+    ldr r3, =global_eareg
+    str r1, [r3]
+    lsls r1, r1, #2
+    ldr r3, =global_reg
+    ldr r0, [r3, r1]
+    adds r2, r0, r2
+    uxth r2, r2
+    str r2, [r3, r1]
+    ldr r3, =global_tmp
+    str r0, [r3]
+    bx lr
+__eab1_dec:
+    cmp r1, #7
+    beq __eab1_slow
+    lsls r1, r1, #2
+    ldr r3, =global_reg
+    ldr r0, [r3, r1]
+    subs r0, r0, r2
+    uxth r0, r0
+    cmp r1, #24
+    bne __eab1_commit
+    lsrs r2, r0, #8
+    beq __eab1_slow
+__eab1_commit:
+    str r0, [r3, r1]
+    lsrs r1, r1, #2
+    ldr r3, =global_eareg
+    str r1, [r3]
+    movs r1, #4
+    ldr r3, =global_tmp
+    str r1, [r3]
+    bx lr
+__eab1_slow:
+    mov r0, r12
+    ldr r1, =global_easpec
+    str r0, [r1]
+    push {lr}
+    bl eabyte
+    pop {pc}
+"""
+
+
 def strip_generated(s):
     while U0 + G0 in s:                            # __eaw1's block, with its UNMAPPED ONLY lines
         i = s.index(U0 + G0)
@@ -347,9 +409,9 @@ def build(s):
     at = "                                         ; 1983, model differences 28 and 30)\n  Goto OpTable(Op >> 3)\n"
     if s.count(at) != 1:
         fail("the slow fetch's end moved; teach tools/asm_mov_gen.py.")
-    s = s.replace(at, at + U0 + G0 + "CompilerIf #ASM_EA = 1\n  ASM\n" + EAW1 + "  EndASM\nCompilerEndIf\n" + G1 + U1)
+    s = s.replace(at, at + U0 + G0 + "CompilerIf #ASM_EA = 1\n  ASM\n" + EAW1 + EAB1 + "  EndASM\nCompilerEndIf\n" + G1 + U1)
     # each handler's two entry points, for asm_check.pico
-    at = "; ---- END UNMAPPED ONLY ----\n  OpTableReady = 1\n"
+    at = "; ---- MOV ENTRY POINTS ----\n"
     if s.count(at) != 1:
         fail("the table's end moved; teach tools/asm_mov_gen.py.")
     fill = "".join("  MovAsm(%d) = ?InstructionMOV_01_M%d%d\n  MovRef(%d) = ?InstructionMOV_01_M%d%dRef\n"

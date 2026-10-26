@@ -232,8 +232,8 @@ ProcedureRAM.i FpNoTrap(code.i)
   Fec = code
   Fea = (FpBackupPc - 2) & $FFFF
   If (Fps & #FPS_ID) = 0
-    If TrapVector = 0 Or TrapVector = #TRAP_STACK
-      TrapVector = #VEC_FPE
+    If Reg(#CPU_TRAPVECTOR) = 0 Or Reg(#CPU_TRAPVECTOR) = #TRAP_STACK
+      Reg(#CPU_TRAPVECTOR) = #VEC_FPE
     EndIf
   EndIf
   ProcedureReturn 0
@@ -1008,9 +1008,9 @@ ProcedureRAM.i FpRdW(va.i, sp.i)                 ; a word of memory, through the
   FrwA = va & $FFFF
   If MmuOn
     If sp
-      MMReadWordE(FrwV, FrwA, CurI)
+      MMReadWordE(FrwV, FrwA, Reg(#CPU_CURI))
     Else
-      MMReadWordE(FrwV, FrwA, CurD)
+      MMReadWordE(FrwV, FrwA, Reg(#CPU_CURD))
     EndIf
     ProcedureReturn FrwV
   EndIf
@@ -1022,9 +1022,9 @@ ProcedureRAM FpWrW(va.i, sp.i, v.i)
   FrwV = v & $FFFF
   If MmuOn
     If sp
-      MMWriteWordE(FrwA, FrwV, CurI)
+      MMWriteWordE(FrwA, FrwV, Reg(#CPU_CURI))
     Else
-      MMWriteWordE(FrwA, FrwV, CurD)
+      MMWriteWordE(FrwA, FrwV, Reg(#CPU_CURD))
     EndIf
   Else
     WriteWord(FrwA, FrwV)
@@ -1038,8 +1038,8 @@ ProcedureRAM FpStackCheck(adr.i)
     If (PswHigh & $C000) = 0
       StackYellow = 1
       CpuErr = CpuErr | #CPUE_YELLOW
-      If TrapVector = 0
-        TrapVector = #TRAP_STACK
+      If Reg(#CPU_TRAPVECTOR) = 0
+        Reg(#CPU_TRAPVECTOR) = #TRAP_STACK
       EndIf
     EndIf
   EndIf
@@ -1102,7 +1102,7 @@ ProcedureRAM FpEa(spec.i, ln.i)
       Reg(7) = (Reg(7) + 2) & $FFFF
       FpAdr = FpRdW((Reg(FeR) + FeAdr) & $FFFF, 0) : FpSpace = 0
   EndSelect
-  If TrapVector = #VEC_BUS Or TrapVector = #VEC_MMU
+  If Reg(#CPU_TRAPVECTOR) = #VEC_BUS Or Reg(#CPU_TRAPVECTOR) = #VEC_MMU
     FpQuit = 1                                ; the address could not be read: the instruction stops
   EndIf
 EndProcedure
@@ -1123,9 +1123,9 @@ ProcedureRAM.i FpReadF(p.i, spec.i, ln.i)
     FrwFast = 0
     If MmuOn And (FpAdr & 1) = 0              ; the whole operand in one window: plain loads
       If FpSpace
-        FrwE = CurI + (FpAdr >> 13)
+        FrwE = Reg(#CPU_CURI) + (FpAdr >> 13)
       Else
-        FrwE = CurD + (FpAdr >> 13)
+        FrwE = Reg(#CPU_CURD) + (FpAdr >> 13)
       EndIf
       If FpAdr >= MapRLo(FrwE) And FpAdr + ln - 2 < MapRHi(FrwE)
         FrwFast = 1
@@ -1147,7 +1147,7 @@ ProcedureRAM.i FpReadF(p.i, spec.i, ln.i)
       EndIf
     EndIf
   EndIf
-  If TrapVector = #VEC_BUS Or TrapVector = #VEC_MMU
+  If Reg(#CPU_TRAPVECTOR) = #VEC_BUS Or Reg(#CPU_TRAPVECTOR) = #VEC_MMU
     FpQuit = 1
     ProcedureReturn 0
   EndIf
@@ -1182,9 +1182,9 @@ ProcedureRAM FpWriteF(p.i, spec.i, ln.i)        ; WriteFP from pair p
   EndIf
   If MmuOn                                    ; the whole operand in one write window: plain stores
     If FpSpace
-      FrwE = CurI + (FpAdr >> 13)
+      FrwE = Reg(#CPU_CURI) + (FpAdr >> 13)
     Else
-      FrwE = CurD + (FpAdr >> 13)
+      FrwE = Reg(#CPU_CURD) + (FpAdr >> 13)
     EndIf
     If FpAdr >= MapWLo(FrwE) And FpAdr + ln - 2 < MapWHi(FrwE)
       FrwA = FpAdr + MapHost(FrwE)
@@ -1203,7 +1203,7 @@ ProcedureRAM FpWriteF(p.i, spec.i, ln.i)        ; WriteFP from pair p
     FpWrW(FpAdr + 4, FpSpace, (PL(p) >> 16) & $FFFF)
     FpWrW(FpAdr + 6, FpSpace, PL(p) & $FFFF)
   EndIf
-  If TrapVector = #VEC_BUS Or TrapVector = #VEC_MMU
+  If Reg(#CPU_TRAPVECTOR) = #VEC_BUS Or Reg(#CPU_TRAPVECTOR) = #VEC_MMU
     FpQuit = 1
   EndIf
 EndProcedure
@@ -1295,10 +1295,10 @@ __fpo_m3:
     ldr.w r0, [r2, r12, lsl #2]
     movs r3, #2
     mov lr, r3
-    ldr r3, =global_curd
+    ldr r3, =global_reg + 72
     cmp.w r12, #7
     bne __fpo_m3d
-    ldr r3, =global_curi
+    ldr r3, =global_reg + 76
 __fpo_m3d:
     ldr r3, [r3]
     add.w r3, r3, r0, lsr #13
@@ -1331,7 +1331,7 @@ __fpo_m5:
     cmp.w r3, #0x100
     blt __fpo_slow
 __fpo_m5r:
-    ldr r3, =global_curd
+    ldr r3, =global_reg + 72
     ldr r3, [r3]
     add.w r3, r3, r0, lsr #13
     lsls r3, r3, #5
@@ -1350,7 +1350,7 @@ __fpo_m5r:
     b __fpo_have
 __fpo_m6:
     ldr r0, [r2, #28]
-    ldr r3, =global_curi
+    ldr r3, =global_reg + 76
     ldr r3, [r3]
     add.w r3, r3, r0, lsr #13
     lsls r3, r3, #5
@@ -1380,7 +1380,7 @@ __fpo_m6n:
     b __fpo_have
 __fpo_m7:
     ldr r0, [r2, #28]
-    ldr r3, =global_curi
+    ldr r3, =global_reg + 76
     ldr r3, [r3]
     add.w r3, r3, r0, lsr #13
     lsls r3, r3, #5
@@ -1407,7 +1407,7 @@ __fpo_m7n:
     mov.w r12, #7
     movs r3, #2
     mov lr, r3
-    ldr r3, =global_curd
+    ldr r3, =global_reg + 72
     ldr r3, [r3]
     add.w r3, r3, r0, lsr #13
     lsls r3, r3, #5
@@ -1430,10 +1430,10 @@ __fpo_have:
     str r0, [r3]
     ldr r3, =global_fpspace
     str r6, [r3]
-    ldr r3, =global_curd
+    ldr r3, =global_reg + 72
     cmp r6, #0
     beq __fpo_hd
-    ldr r3, =global_curi
+    ldr r3, =global_reg + 76
 __fpo_hd:
     ldr r3, [r3]
     add.w r3, r3, r0, lsr #13
@@ -1640,8 +1640,8 @@ EndProcedure
 ; keep nothing of its own there).
 ProcedureRAM FpCpuCc()
   SetNZ(FxN, FxZ)
-  FlagV = FxV << 15
-  FlagC = FxC << 16
+  Reg(#CPU_FLAGV) = FxV << 15
+  Reg(#CPU_FLAGC) = FxC << 16
 EndProcedure
 
 ; ---- the instruction -----------------------------------------------------
@@ -2390,11 +2390,11 @@ __fx_cfcc:
     ldr r2, [r3]
     ubfx r0, r2, #1, #1
     lsls r0, r0, #15
-    ldr r1, =global_flagv
+    ldr r1, =global_reg + 104
     str r0, [r1]
     and.w r0, r2, #1
     lsls r0, r0, #16
-    ldr r1, =global_flagc
+    ldr r1, =global_reg + 100
     str r0, [r1]
 __fx_end:
     ldr r2, =global_fpchgon

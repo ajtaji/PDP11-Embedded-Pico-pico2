@@ -1,6 +1,6 @@
 ; desktop/gen/core.pbi - WRITTEN BY desktop/tools/desktop_gen.py from the Pico 2's
 ; sources; do not edit (edit the board's files and run the tool again).
-; cpu.pico2 (7 ASM blocks dropped); fp11.pico2 (6 ASM blocks dropped); instructions_mmu.pico2 (315 ASM blocks dropped); instructions.pico2 (3 ASM blocks dropped); kw11.pico2 (0 ASM blocks dropped); rk11.pico2 (0 ASM blocks dropped); rp11.pico2 (0 ASM blocks dropped)
+; cpu.pico2 (7 ASM blocks dropped); fp11.pico2 (6 ASM blocks dropped); instructions_mmu.pico2 (357 ASM blocks dropped); instructions.pico2 (3 ASM blocks dropped); kw11.pico2 (0 ASM blocks dropped); rk11.pico2 (0 ASM blocks dropped); rp11.pico2 (0 ASM blocks dropped)
 
 Declare SmpBarrier()
 Declare CpuEventIn(k.l)
@@ -20,6 +20,7 @@ Declare BusError()
 Declare MmuMapEntry(e.i)
 Declare MmuCharge(k.l)
 Declare MmuRecompute()
+Declare MmuMapStale(e.i)
 Declare MmuRegChanged(r.i)
 Declare MmuReset()
 Declare.l MmuRegIndex(a.l)
@@ -31,10 +32,10 @@ Declare UbRegWrite(a.l, v.l)
 Declare.l UbPhys(ba.l)
 Declare.l IoRead(a.l)
 Declare IoWrite(a.l, v.l)
-Declare.l PdpReadWord(a.l)
-Declare PdpWriteWord(a.l, v.l)
-Declare.l PdpReadByte(a.l)
-Declare PdpWriteByte(a.l, v.l)
+Declare.i PdpReadWord(a.i)
+Declare PdpWriteWord(a.i, v.i)
+Declare.i PdpReadByte(a.i)
+Declare PdpWriteByte(a.i, v.i)
 Declare StackCheck()
 Declare Push(v.l)
 Declare.l Pop()
@@ -42,12 +43,13 @@ Declare.l FetchWord()
 Declare.l EaWord(spec.l)
 Declare.l EaByte(spec.l)
 Declare MmuAbort(bits.i, e.i)
+Declare MmuWindowWritten(e.i)
 Declare.l MmuPhys(va.l, e.l, write.l)
 Declare.l MmuIoAddr(pa.l)
-Declare.l MmuReadWord(va.l, e.l)
-Declare MmuWriteWord(va.l, e.l, v.l)
-Declare.l MmuReadByte(va.l, e.l)
-Declare MmuWriteByte(va.l, e.l, v.l)
+Declare.i MmuReadWord(va.i, e.i)
+Declare MmuWriteWord(va.i, e.i, v.i)
+Declare.i MmuReadByte(va.i, e.i)
+Declare MmuWriteByte(va.i, e.i, v.i)
 Declare.l EaWordM(spec.l)
 Declare.l EaByteM(spec.l)
 Declare PushM(v.l)
@@ -386,47 +388,65 @@ CompilerEndIf
 #J11_T_TRAP   = 1
 
 ; ---- machine state ---------------------------------------------------
+; Compact CPU state: two register banks, hot scalar words, fetch window.
+Global CurD.l
+Global CurI.l
+Global EaBase.l
+Global Ea.l
+Global Src.l
+Global Dst.l
+Global TrapVector.l
+Global FlagC.l
+Global FlagV.l
+Global Mmr0.l
+Global Mmr1.l
+Global MmuPcRec.l
+Global Tmp.l
+Global Adr.l
+Global EaSpec.l
+Global EaStep.l
+Global EaReg.l
+Global Dim RegAlt.l(6)
+Global Dim Fw.i(4)
 Global Dim Reg.l(8)         ; R0-R7, R6 = SP, R7 = PC. 16-bit values.
-Global GBase.i              ; @Reg(0), held in r5 (ReserveRegister below): the mapped loop's assembly reaches
+Global GBase.i ; @Reg(0), held in r5 (ReserveRegister below): the mapped loop's assembly reaches
                             ; the globals it touches on every instruction from it (tools/mmu_gen.py, base_rel)
 Global Dim Mem.u(#RAM_WORDS)
 CompilerIf #DESK_MEM = 1                ; a board with PSRAM (psram_pdp11.pico2)
-Global MemTop.l = #RAM_BYTES         ; the end of physical memory: #RAM_BYTES, or 3812 KB with the PSRAM
-Global MemLim.l = #RAM_BYTES         ; ... as the mapping in force reaches it: MemTop with 22-bit mapping,
+Global MemTop.l = #RAM_BYTES ; the end of physical memory: #RAM_BYTES, or 3812 KB with the PSRAM
+Global MemLim.l = #RAM_BYTES ; ... as the mapping in force reaches it: MemTop with 22-bit mapping,
                                      ; no more than 248 KB (the 18-bit I/O page's start) without (MmuRecompute)
-Global PsramOk.l                     ; the PSRAM is found, tested and in use (psram_pdp11.pico2)
-Global PsDrives.l                    ; bit d: RK drive d lives in the PSRAM
+Global PsramOk.l ; the PSRAM is found, tested and in use (psram_pdp11.pico2)
+Global PsDrives.l ; bit d: RK drive d lives in the PSRAM
 CompilerEndIf
 
-Global Op.l                 ; the instruction being executed
-Global Src.l, Dst.l, Res.l, Ea.l, Tmp.l   ; handler scratch - see SPEED
-Global FlagNZ.l             ; lazy N and Z - see SPEED
-Global FlagV.l, FlagC.l
-Global EaReg.l, EaStep.l    ; EaWord/EaByte scratch (Globals: cheaper than locals)
-Global Adr.l                ; the address Push, Pop, FetchWord and EaWord work on
-Global PswHigh.l            ; PSW bits 15-5 (mode, register set, priority, T)
+Global Op.l ; the instruction being executed
+Global Res.l ; handler scratch - see SPEED
+Global FlagNZ.l ; lazy N and Z - see SPEED
+; EaWord/EaByte scratch (Globals: cheaper than locals)
+; the address Push, Pop, FetchWord and EaWord work on
+Global PswHigh.l ; PSW bits 15-5 (mode, register set, priority, T)
 ; Global ClockCycles.i   ; commented out: nothing ever reads it (see CLOCK)
-Global TrapVector.l         ; non-zero = a trap to take after this instruction
-Global PswLate.l            ; a PSW written through 177776, to re-apply at the end (PswWrite)
-Global AbortPsw.l           ; the PSW before an instruction a bus error aborted (BusError)
-Global StackYellow.l        ; the kernel stack went below 000400 (StackCheck)
-Global TraceArm.l           ; the T bit was set when this instruction began (StartWindow)
+; non-zero = a trap to take after this instruction
+Global PswLate.l ; a PSW written through 177776, to re-apply at the end (PswWrite)
+Global AbortPsw.l ; the PSW before an instruction a bus error aborted (BusError)
+Global StackYellow.l ; the kernel stack went below 000400 (StackCheck)
+Global TraceArm.l ; the T bit was set when this instruction began (StartWindow)
 Global Dim StackBank.l(4)   ; the stack pointer of each mode not running (PswBanks)
-Global Dim RegAlt.l(6)      ; the register set not selected, R0-R5 (PswBanks)
-Global TrapPsw.l, TrapPc.l  ; TakeTrap's saved PSW and PC
+Global TrapPsw.l, TrapPc.l ; TakeTrap's saved PSW and PC
 
 ; The memory management unit - see THE MEMORY MANAGEMENT UNIT. An ENTRY is
 ; mode * 16 + space * 8 + page: mode 0 kernel, 1 supervisor, 3 user; space
 ; 0 I, 1 D; page = the top three bits of the virtual address.
-Global MmuOn.l              ; MMR0 bit 0: the mapped run loop runs while it is 1
-Global Mmr0.l, Mmr1.l, Mmr2.l, Mmr3.l
+Global MmuOn.l ; MMR0 bit 0: the mapped run loop runs while it is 1
+Global Mmr2.l, Mmr3.l
 Global Dim Pdr.l(64)        ; the registers, by entry
 Global Dim Par.l(64)
 Global Dim MapReg.l(64)     ; the registers an entry uses (a D entry uses I's when D space is off)
 Global Dim MapBase.l(64)    ; physical = virtual + MapBase, before the 18/22-bit mask
 Global Dim MapLo.l(64)      ; the virtual bytes the page length allows: MapLo <= va < MapHi
 Global Dim MapHi.l(64)
-Global Dim MapAcf.l(64)     ; 0 not resident, 1 read-only, 3 read/write
+Global Dim MapAcf.l(64)     ; -1 stale, 0 not resident, 1 read-only, 3 read/write
 ; THE FAST WINDOWS, one entry's five words together (2026-10-25): MapF(e * 8 +
 ; 0-4) is MapRLo, MapRHi, MapWLo, MapWHi and MapHost, so the mapped loop's
 ; assembly reaches all five from one base (tools/mmu_gen.py, map_rows) instead
@@ -447,22 +467,21 @@ EndMacro
 Macro MapHost(mE)           ; the fast windows' memory: virtual byte va is at host address va + MapHost
   MapF(((mE) << 3) + 4)
 EndMacro
-Global MapMask.l            ; $3FFFF (18-bit) or $3FFFFF (22-bit)
+Global MapMask.l ; $3FFFF (18-bit) or $3FFFFF (22-bit)
 Global Dim UbMap.l(32)      ; THE UNIBUS MAP: each register's 22-bit address (bit 0 always 0)
-Global CpuErr.l             ; the CPU error register (THE CPU ERROR AND MAINTENANCE REGISTERS)
-Global MaintTrap.l          ; the maintenance register's bit 3: a kernel HALT traps through 4
-Global CurI.l, CurD.l       ; the current mode's entry bases
-Global PrvBase.l            ; the previous mode's (mode * 16), for MFPI/MFPD/MTPI/MTPD
-Global TrapHeld.l            ; a trap a trap sequence left pending, across the mapped slow fetch
-Global EaBase.l             ; where the last mapped operand address lies (EaWordM)
-Global MmE.l                ; the mapped memory macros' entry
-Global RunSave.l            ; CpuRun's RunFrom while the mapped loop runs
+Global CpuErr.l ; the CPU error register (THE CPU ERROR AND MAINTENANCE REGISTERS)
+Global MaintTrap.l ; the maintenance register's bit 3: a kernel HALT traps through 4
+; the current mode's entry bases
+Global PrvBase.l ; the previous mode's (mode * 16), for MFPI/MFPD/MTPI/MTPD
+Global TrapHeld.l ; a trap a trap sequence left pending, across the mapped slow fetch
+; where the last mapped operand address lies (EaWordM)
+Global MmE.l ; the mapped memory macros' entry
+Global RunSave.l ; CpuRun's RunFrom while the mapped loop runs
 ; THE FETCH WINDOW AND THE INSTRUCTION'S ADDRESS, in one array so that the
 ; mapped tails (assembly, #ASM_TAILS) reach all four through one base
 ; register: Fw(0) FetchLo, Fw(1) FetchHi, Fw(2) FetchBase (MmuFetchWindow),
 ; Fw(3) the address of the mapped instruction being run (MMR2). A literal
 ; index costs compiled code nothing: Fw(1) is the address of Fw plus 4.
-Global Dim Fw.i(4)
 ; FwSave(m * 4 + 0..2): mode m's fetch window (Fw(0..2)) while another mode
 ; runs - PswBanks keeps it and gives it back, so a trap or an interrupt and
 ; its RTI do not find the window again each way (2026-10-21). Emptied with
@@ -483,6 +502,7 @@ Global Dim FwSave.i(16)
 ; PushM and PopM's fast paths in assembly (__pushm, __popm), and JSR, RTS and DIV
 ; in assembly in front of their plain handlers (tools/mmu_gen.py, pico2_ops; held to
 ; the plain ones by asm_check.pico2). Needs #ASM_EA = 1. 0: the plain handlers alone.
+#ASM_INDEXED = 0                       ; indexed CLR/TST/INC/DEC and byte CLR/TST
 #ASM_OPS = 0
 ; The FPJ11 floating point unit (fp11.pico2, included after this file): 1
 ; executes 170000-177777; 0 leaves them reserved instructions (trap to 10).
@@ -490,36 +510,36 @@ Global Dim FwSave.i(16)
 ; Its fraction multiply and divide in assembly (fp11.pico2, FpFracMulAsm and
 ; FpDivQAsm; held to FpFracMulRef and FpDivQRef by asm_check.pico2). 0: the Basic.
 #ASM_FP = 0
-Global Fps.l, Fec.l, Fea.l       ; its status, exception code and address (fp11.pico2)
+Global Fps.l, Fec.l, Fea.l ; its status, exception code and address (fp11.pico2)
 Global Dim FrH.l(6)              ; its six accumulators, high and low halves
 Global Dim FrL.l(6)
 ; Measured on a Pico 2 W, 2026-10-19 (V6 `time od /rkunix`, host-timed): 13.24 s
 ; before, 11.14 s with #ASM_MOV, 10.36 s with both; a Pico Plus 2 W 13.37 -> 10.44 s.
-Global MmuPcRec.l           ; the instruction MMR1 holds the changes of
-Global MmuTouches.l         ; reads and writes of the unit's registers, for tests
+; the instruction MMR1 holds the changes of
+Global MmuTouches.l ; reads and writes of the unit's registers, for tests
 Global Halted.l, Waiting.l
-Global PC.l                 ; the emulated PC between instructions; Reg(7) is its
+Global PC.l ; the emulated PC between instructions; Reg(7) is its
                             ; stale copy then (see THE EMULATED PC in instructions)
 
 ; The run loop's countdown and the machine's clock - see THE RUN WINDOW.
-Global RunLeft.l            ; instructions left in this window
-Global RunWindow.l          ; how many the window started with
-Global RunBank.l            ; instructions this CpuRun still owes after the window
-Global RunFrom.l            ; InstrCount when this CpuRun began
-Global InstrCount.l         ; instructions finished before this window began
+Global RunLeft.l ; instructions left in this window
+Global RunWindow.l ; how many the window started with
+Global RunBank.l ; instructions this CpuRun still owes after the window
+Global RunFrom.l ; InstrCount when this CpuRun began
+Global InstrCount.l ; instructions finished before this window began
 
 ; The console DL11 and the switch register - see THE I/O PAGE.
 Global Dl11RxDone.l, Dl11RxIe.l, Dl11RxBuf.l
-Global Dl11RxPolled.l      ; the program has looked at RCSR since the last character
-Global Dl11RxDue.l         ; InstrCount at which the receiver may take its next character
-Global Dl11RxReads.l       ; characters the program has read from RBUF (the stats block)
+Global Dl11RxPolled.l ; the program has looked at RCSR since the last character
+Global Dl11RxDue.l ; InstrCount at which the receiver may take its next character
+Global Dl11RxReads.l ; characters the program has read from RBUF (the stats block)
 Global Dl11TxRdy.l, Dl11TxIe.l, Dl11TxChar.l, Dl11TxDue.l
 Global SwitchReg.l, DisplayReg.l
-Global IntReq.l             ; interrupts asked for: #INT_DL11_RX | #INT_DL11_TX | #INT_RK | #INT_KW | #INT_RP
-Global RpPresent.l, RpBusy.l, RpIoPosted.l   ; the RP11 (rp11.pico2): an RP pack, a transfer, its request out
-Global CacheCcr.l           ; the cache control register's bits, kept (THE CACHE REGISTERS)
-Global DevActive.l          ; the disk or the clock needs a look every window (DevPoll, rk11/kw11)
-Global DevFast.l            ; the disk does: windows of #DEV_WINDOW, not #DEV_WINDOW_CLOCK
+Global IntReq.l ; interrupts asked for: #INT_DL11_RX | #INT_DL11_TX | #INT_RK | #INT_KW | #INT_RP
+Global RpPresent.l, RpBusy.l, RpIoPosted.l ; the RP11 (rp11.pico2): an RP pack, a transfer, its request out
+Global CacheCcr.l ; the cache control register's bits, kept (THE CACHE REGISTERS)
+Global DevActive.l ; the disk or the clock needs a look every window (DevPoll, rk11/kw11)
+Global DevFast.l ; the disk does: windows of #DEV_WINDOW, not #DEV_WINDOW_CLOCK
 ; The console's two byte queues - the ONLY things the firmware around the
 ; emulator touches. The emulator writes ConOut at its Head and reads ConIn
 ; at its Tail; the firmware does the opposite. Neither side calls the
@@ -535,9 +555,9 @@ Global ConInHead.l, ConInTail.l
 ; crosses between them is single-writer words and single-producer rings
 ; (ConOut: core 0 -> 1; ConIn: core 1 -> 0), each published with a barrier
 ; between the data and the index that announces it.
-Global KwSeq.l                   ; line-clock ticks: written by core 1 only (kw11, KwTick)
-Global DkReqSeq.l, DkReqOp.l, DkReqDrive.l, DkReqBlock.l   ; a storage request: core 0 writes (rk11, RkIo)
-Global DkDoneSeq.l, DkDoneResult.l                        ; its answer: core 1 writes (rk11, DkServe)
+Global KwSeq.l ; line-clock ticks: written by core 1 only (kw11, KwTick)
+Global DkReqSeq.l, DkReqOp.l, DkReqDrive.l, DkReqBlock.l ; a storage request: core 0 writes (rk11, RkIo)
+Global DkDoneSeq.l, DkDoneResult.l ; its answer: core 1 writes (rk11, DkServe)
 
 ; A data memory barrier: every store before it is visible to the other core
 ; before any store after it (and the same for loads). The language has no
@@ -788,9 +808,9 @@ EndProcedure
 ;                 ED (grows down), 2-1 access (00 and 10 not resident, 01
 ;                 read-only, 11 read/write). A write to a PDR or its PAR
 ;                 clears W.
-;  THE PRECOMPUTED MAP. Whenever a register changes, MmuMapEntry works
-;  out again, for the mode, space and page it maps (MmuRegChanged: one PAR
-;  or PDR; MmuRecompute: MMR3, all of them), the physical offset (MapBase), the
+;  THE PRECOMPUTED MAP. Register writes invalidate the affected entries;
+;  MmuPhys rebuilds each on first use, coalescing PAR/PDR writes and leaving
+;  unused pages unbuilt. MmuRecompute handles MMR3 eagerly. The physical offset (MapBase), the
 ;  virtual bytes the length allows (MapLo/MapHi) and the access - and the
 ;  FAST WINDOWS: the virtual range that is readable (MapRLo/MapRHi), or
 ;  writable with W already set (MapWLo/MapWHi), and lies wholly in ONE of
@@ -929,16 +949,22 @@ Procedure MmuRecompute()
   Next
 EndProcedure
 
-; One register pair (entry r) changed - a PAR or PDR write, or W set: only
-; its entry, and the D entry that borrows it, are worked out again. (A
-; program that rewrites its PARs in a loop must not pay for the whole map
-; each time: that starved USB for 17 ms in MAINDEC-11-DFKAB.)
+; One register pair changed. Invalidate both fast windows before returning:
+; no assembly reader can use stale translation or permissions. MapReg stays
+; valid because only MMR3 changes borrowing, and MmuRecompute is eager.
+; Keep the original host-time charge and all fetch-window invalidations.
+Procedure MmuMapStale(e.i)
+  MapAcf(e) = -1
+  MapF(e << 3) = #MAP_NONE
+  MapF((e << 3) + 2) = #MAP_NONE
+EndProcedure
+
 Procedure MmuRegChanged(r.i)
   MmuCharge(#MAP_COST_ENTRY)
-  MmuMapEntry(r)
+  MmuMapStale(r)
   If (r & 8) = 0
     If MapReg(r + 8) = r
-      MmuMapEntry(r + 8)
+      MmuMapStale(r + 8)
     EndIf
     FwSave((r >> 4) * 4) = #MAP_NONE     ; an I entry: its mode's fetch window is found again
     FwSave((r >> 4) * 4 + 1) = 0         ; (a D entry is never fetched through)
@@ -1033,10 +1059,20 @@ Procedure MmuRegWrite(a.l, v.l)
     r = MmuRegIndex(a)
     If r & $100
       r = r & $FF
-      Par(r) = v & $FFFF
+      v = v & $FFFF
+      If Par(r) = v And (Pdr(r) & $40) = 0
+        MmuCharge(#MAP_COST_ENTRY)
+        ProcedureReturn
+      EndIf
+      Par(r) = v
       Pdr(r) = Pdr(r) & ~$40
     Else
-      Pdr(r) = v & $7F0E
+      v = v & $7F0E
+      If Pdr(r) = v
+        MmuCharge(#MAP_COST_ENTRY)
+        ProcedureReturn
+      EndIf
+      Pdr(r) = v
     EndIf
     MmuRegChanged(r)
   EndIf
@@ -1298,26 +1334,26 @@ EndProcedure
 ; ======================================================================
 ;  MEMORY - the fast path is RAM; the I/O page and missing memory are slow
 ; ======================================================================
-Procedure.l PdpReadWord(a.l)
+Procedure.i PdpReadWord(a.i)
   If a & 1
     CpuErr = CpuErr | #CPUE_ODD
     BusError()
     ProcedureReturn 0
   EndIf
   If a < #RAM16
-    ProcedureReturn Mem(a >> 1)
+    ProcedureReturn PeekU(@Mem(0) + a)
   EndIf
   ProcedureReturn IoRead(a)
 EndProcedure
 
-Procedure PdpWriteWord(a.l, v.l)
+Procedure PdpWriteWord(a.i, v.i)
   If a & 1
     CpuErr = CpuErr | #CPUE_ODD
     BusError()
     ProcedureReturn
   EndIf
   If a < #RAM16
-    Mem(a >> 1) = v & $FFFF
+    PokeU(@Mem(0) + a, v)
     ProcedureReturn
   EndIf
   If a = #PSW_ADDR
@@ -1329,12 +1365,9 @@ EndProcedure
 
 ; A byte read of a device register is a word read (the bus has no other
 ; kind), so reading either half of RBUF clears DONE, as on the real bus.
-Procedure.l PdpReadByte(a.l)
+Procedure.i PdpReadByte(a.i)
   If a < #RAM16
-    If a & 1
-      ProcedureReturn (Mem(a >> 1) >> 8) & $FF
-    EndIf
-    ProcedureReturn Mem(a >> 1) & $FF
+    ProcedureReturn PeekA(@Mem(0) + a) & $FF
   EndIf
   If a & 1
     ProcedureReturn (IoRead(a - 1) >> 8) & $FF
@@ -1342,13 +1375,9 @@ Procedure.l PdpReadByte(a.l)
   ProcedureReturn IoRead(a) & $FF
 EndProcedure
 
-Procedure PdpWriteByte(a.l, v.l)
+Procedure PdpWriteByte(a.i, v.i)
   If a < #RAM16
-    If a & 1
-      Mem(a >> 1) = (Mem(a >> 1) & $00FF) | ((v & $FF) << 8)
-    Else
-      Mem(a >> 1) = (Mem(a >> 1) & $FF00) | (v & $FF)
-    EndIf
+    PokeA(@Mem(0) + a, v)
     ProcedureReturn
   EndIf
   If (a & $FFFE) = #PSW_ADDR
@@ -1427,7 +1456,7 @@ EndProcedure
 Macro MReadWord(mDest, mAdr)
   If mAdr < #RAM16
     If (mAdr & 1) = 0
-      mDest = Mem(mAdr >> 1)
+      mDest = PeekU(@Mem(0) + (mAdr))
     Else
       mDest = PdpReadWord(mAdr)
     EndIf
@@ -1439,7 +1468,7 @@ EndMacro
 Macro MWriteWord(mAdr, mVal)                   ; Mem is .u: the store keeps the low 16 bits
   If mAdr < #RAM16
     If (mAdr & 1) = 0
-      Mem(mAdr >> 1) = mVal
+      PokeU(@Mem(0) + (mAdr), mVal)
     Else
       PdpWriteWord(mAdr, mVal)
     EndIf
@@ -1450,11 +1479,7 @@ EndMacro
 
 Macro MReadByte(mDest, mAdr)
   If mAdr < #RAM16
-    If mAdr & 1
-      mDest = (Mem(mAdr >> 1) >> 8) & $FF
-    Else
-      mDest = Mem(mAdr >> 1) & $FF
-    EndIf
+    mDest = PeekA(@Mem(0) + (mAdr)) & $FF
   Else
     mDest = PdpReadByte(mAdr)
   EndIf
@@ -1462,11 +1487,7 @@ EndMacro
 
 Macro MWriteByte(mAdr, mVal)
   If mAdr < #RAM16
-    If mAdr & 1
-      Mem(mAdr >> 1) = (Mem(mAdr >> 1) & $00FF) | ((mVal & $FF) << 8)
-    Else
-      Mem(mAdr >> 1) = (Mem(mAdr >> 1) & $FF00) | (mVal & $FF)
-    EndIf
+    PokeA(@Mem(0) + (mAdr), mVal)
   Else
     PdpWriteByte(mAdr, mVal)
   EndIf
@@ -1665,9 +1686,21 @@ Procedure MmuAbort(bits.i, e.i)
   TrapVector = #VEC_MMU
 EndProcedure
 
+; Setting W changes only the writable window. Translation, read windows
+; and instruction fetch remain valid; a stale alias rebuilds on first use.
+Procedure MmuWindowWritten(e.i)
+  If MapAcf(e) >= 0
+    MapF((e << 3) + 2) = MapF(e << 3)
+    MapF((e << 3) + 3) = MapF((e << 3) + 1)
+  EndIf
+EndProcedure
+
 ; The physical address of va in entry e, or -1 after an abort.
 Procedure.l MmuPhys(va.l, e.l, write.l)
   Protected bits.l, r.l
+  If MapAcf(e) < 0
+    MmuMapEntry(e)
+  EndIf
   bits = 0
   If MapAcf(e) = 0
     bits = $8000
@@ -1686,7 +1719,13 @@ Procedure.l MmuPhys(va.l, e.l, write.l)
     r = MapReg(e)
     If (Pdr(r) & $40) = 0                ; the first write: W, and a fast window
       Pdr(r) = Pdr(r) | $40
-      MmuRegChanged(r)
+      MmuCharge(#MAP_COST_ENTRY)
+      MmuWindowWritten(r)
+      If (r & 8) = 0
+        If MapReg(r + 8) = r
+          MmuWindowWritten(r + 8)
+        EndIf
+      EndIf
     EndIf
   EndIf
   ProcedureReturn (va + MapBase(e)) & MapMask
@@ -1703,8 +1742,8 @@ Procedure.l MmuIoAddr(pa.l)
   ProcedureReturn -1
 EndProcedure
 
-Procedure.l MmuReadWord(va.l, e.l)
-  Protected pa.l
+Procedure.i MmuReadWord(va.i, e.i)
+  Protected pa.i
   If va & 1
     CpuErr = CpuErr | #CPUE_ODD
     BusError()
@@ -1715,7 +1754,7 @@ Procedure.l MmuReadWord(va.l, e.l)
     ProcedureReturn 0
   EndIf
   If pa < #RAM_BYTES
-    ProcedureReturn Mem(pa >> 1)
+    ProcedureReturn PeekU(@Mem(0) + pa)
   EndIf
   CompilerIf #DESK_MEM = 1
     If pa < MemLim                       ; the memory past 56 KB, in the PSRAM
@@ -1729,8 +1768,8 @@ Procedure.l MmuReadWord(va.l, e.l)
   ProcedureReturn PdpReadWord(pa)
 EndProcedure
 
-Procedure MmuWriteWord(va.l, e.l, v.l)
-  Protected pa.l
+Procedure MmuWriteWord(va.i, e.i, v.i)
+  Protected pa.i
   If va & 1
     CpuErr = CpuErr | #CPUE_ODD
     BusError()
@@ -1741,7 +1780,7 @@ Procedure MmuWriteWord(va.l, e.l, v.l)
     ProcedureReturn
   EndIf
   If pa < #RAM_BYTES
-    Mem(pa >> 1) = v & $FFFF
+    PokeU(@Mem(0) + pa, v)
     ProcedureReturn
   EndIf
   CompilerIf #DESK_MEM = 1
@@ -1756,17 +1795,14 @@ Procedure MmuWriteWord(va.l, e.l, v.l)
   EndIf
 EndProcedure
 
-Procedure.l MmuReadByte(va.l, e.l)
-  Protected pa.l
+Procedure.i MmuReadByte(va.i, e.i)
+  Protected pa.i
   pa = MmuPhys(va, e, 0)
   If pa < 0
     ProcedureReturn 0
   EndIf
   If pa < #RAM_BYTES                     ; Mem itself: PdpReadByte reaches only #RAM16 of it
-    If pa & 1
-      ProcedureReturn (Mem(pa >> 1) >> 8) & $FF
-    EndIf
-    ProcedureReturn Mem(pa >> 1) & $FF
+    ProcedureReturn PeekA(@Mem(0) + pa) & $FF
   EndIf
   CompilerIf #DESK_MEM = 1
     If pa < MemLim
@@ -1780,8 +1816,8 @@ Procedure.l MmuReadByte(va.l, e.l)
   ProcedureReturn PdpReadByte(pa)
 EndProcedure
 
-Procedure MmuWriteByte(va.l, e.l, v.l)
-  Protected pa.l
+Procedure MmuWriteByte(va.i, e.i, v.i)
+  Protected pa.i
   pa = MmuPhys(va, e, 1)
   If pa < 0
     ProcedureReturn
@@ -1800,11 +1836,7 @@ Procedure MmuWriteByte(va.l, e.l, v.l)
     PdpWriteByte(pa, v)
     ProcedureReturn
   EndIf
-  If pa & 1                              ; Mem itself: PdpWriteByte reaches only #RAM16 of it
-    Mem(pa >> 1) = (Mem(pa >> 1) & $00FF) | ((v & $FF) << 8)
-  Else
-    Mem(pa >> 1) = (Mem(pa >> 1) & $FF00) | (v & $FF)
-  EndIf
+  PokeA(@Mem(0) + pa, v)
 EndProcedure
 
 ; The fast path, INLINE: in the entry's fast window, a load or store; else
@@ -2002,7 +2034,6 @@ EndMacro
 ; which does X(R), -(R), (R)+ and (R) itself and comes here for everything
 ; else. EaSpec is where __eaw leaves the spec on the way (asm_check.pico2
 ; counts the calls that came here by it).
-Global EaSpec.l
 Procedure.l EaWordM(spec.l)
   EaWordMBody()
 EndProcedure
@@ -2353,6 +2384,18 @@ Procedure CpuReset()
   ; ClockCycles = 0
 EndProcedure
 
+
+; Read destinations in the compact state are array elements. Pass their
+; addresses explicitly: a macro assignment target must be a plain name.
+
+
+
+
+
+
+CompilerIf #DISK_BACKEND = 0
+Global SingleHit.l                      ; successful indexed native entries, hardware test only
+CompilerEndIf
 
 ; ======== fp11.pico2 (J11_18MHz_KDJ11_BF/pico2) ========
 ; ======================================================================
@@ -3673,10 +3716,18 @@ EndProcedure
 ;  Include it after cpu and before instructions.
 ; ======================================================================
 Global Dim OpTableM.i(8192)
-Global Dim OpAsmM.i(51)                 ; JSR, RTS, DIV: the assembly entry ...
-Global Dim OpRefM.i(51)                 ; ... and the plain one (tools/mmu_gen.py, pico2_ops)
+CompilerIf #DISK_BACKEND = 0
+Global Dim OpAsmM.i(65)                 ; JSR, RTS, DIV: the assembly entry ...
+CompilerEndIf
+CompilerIf #DISK_BACKEND = 0
+Global Dim OpRefM.i(65)                 ; ... and the plain one (tools/mmu_gen.py, pico2_ops)
+CompilerEndIf
+CompilerIf #DISK_BACKEND = 0
 Global Dim MovAsmM.l(7)                ; the MOV handlers by mode: the assembly entry ...
+CompilerEndIf
+CompilerIf #DISK_BACKEND = 0
 Global Dim MovRefM.l(7)                ; ... and the plain one (tools/mmu_gen.py, asm_mov)
+CompilerEndIf
 Global OpTableReadyM.l                    ; 0 until the first CpuRun fills OpTable
 Global FillFromM.l, FillCountM.l           ; Ops() - Globals, cheaper than locals
 
@@ -3828,6 +3879,153 @@ CompilerIf #ASM_EA = 1
 CompilerEndIf
 
 ;-MOV-------------------------------------------------------------------
+; ---- INDEXED HANDLERS ----
+; ---- IMX HANDLERS ----
+; ---- MEMORY HELPERS ----
+InstructionIX_CLR_0050M:
+CompilerIf #ASM_INDEXED = 1
+CompilerIf #DISK_BACKEND = 0
+  SingleHit = SingleHit + 1
+CompilerEndIf
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+  Goto InstructionCLR_0050RefM
+
+InstructionIX_TST_0057M:
+CompilerIf #ASM_INDEXED = 1
+CompilerIf #DISK_BACKEND = 0
+  SingleHit = SingleHit + 1
+CompilerEndIf
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+  Goto InstructionTST_0057RefM
+
+InstructionIX_INC_0052M:
+CompilerIf #ASM_INDEXED = 1
+CompilerIf #DISK_BACKEND = 0
+  SingleHit = SingleHit + 1
+CompilerEndIf
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+  Goto InstructionINC_0052RefM
+
+InstructionIX_DEC_0053M:
+CompilerIf #ASM_INDEXED = 1
+CompilerIf #DISK_BACKEND = 0
+  SingleHit = SingleHit + 1
+CompilerEndIf
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+  Goto InstructionDEC_0053RefM
+
+InstructionIX_CLRB_1050M:
+CompilerIf #ASM_INDEXED = 1
+CompilerIf #DISK_BACKEND = 0
+  SingleHit = SingleHit + 1
+CompilerEndIf
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+  Goto InstructionCLRB_1050RefM
+
+InstructionIX_TSTB_1057M:
+CompilerIf #ASM_INDEXED = 1
+CompilerIf #DISK_BACKEND = 0
+  SingleHit = SingleHit + 1
+CompilerEndIf
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+  Goto InstructionTSTB_1057RefM
+
+InstructionIMX_MOVB_11M:
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+  Goto InstructionMOVB_11RefM
+
+InstructionIMX_MOV_01M:
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+  Goto InstructionMOV_01RefM
+
+InstructionIMX_CMP_02M:
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+  Goto InstructionCMP_02RefM
+
+InstructionIMX_ADD_06M:
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+  Goto InstructionADD_06RefM
+
+InstructionIMX_SUB_16M:
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+  Goto InstructionSUB_16RefM
+
+InstructionIMX_BIT_03M:
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+  Goto InstructionBIT_03RefM
+
+InstructionIMX_BIC_04M:
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+  Goto InstructionBIC_04RefM
+
+InstructionIMX_BIS_05M:
+CompilerIf #ASM_OPS = 1
+CompilerIf #ASM_TAILS = 1
+CompilerElse
+  NextNativeM()
+CompilerEndIf
+CompilerEndIf
+  Goto InstructionBIS_05RefM
+
 InstructionMOV_01M:            ; 01SSDD   entries $0200-$03FF
 CompilerIf #ASM_OPS = 1
   PcOutM()
@@ -7511,6 +7709,9 @@ BuildTableM:
       OpTableM($1C00 | (FillFromM << 3) | FillCountM) = ?InstructionSUB_16_RMM
     Next
   Next
+; ---- INDEXED ENTRY POINTS ----
+; ---- IMX ENTRY POINTS ----
+; ---- FAST ENTRY POINTS ----
   ; ---- MOV by addressing mode (tools/mmu_gen.py, MOV_PAIRS) ----
   OpTableM($0204) = ?InstructionMOV_01_M04M
   OpTableM($020C) = ?InstructionMOV_01_M04M
@@ -7520,8 +7721,10 @@ BuildTableM:
   OpTableM($022C) = ?InstructionMOV_01_M04M
   OpTableM($0234) = ?InstructionMOV_01_M04M
   OpTableM($023C) = ?InstructionMOV_01_M04M
+CompilerIf #DISK_BACKEND = 0
   MovAsmM(0) = ?InstructionMOV_01_M04M
   MovRefM(0) = ?InstructionMOV_01_M04RefM
+CompilerEndIf
   OpTableM($0300) = ?InstructionMOV_01_M40M
   OpTableM($0308) = ?InstructionMOV_01_M40M
   OpTableM($0310) = ?InstructionMOV_01_M40M
@@ -7530,8 +7733,10 @@ BuildTableM:
   OpTableM($0328) = ?InstructionMOV_01_M40M
   OpTableM($0330) = ?InstructionMOV_01_M40M
   OpTableM($0338) = ?InstructionMOV_01_M40M
+CompilerIf #DISK_BACKEND = 0
   MovAsmM(1) = ?InstructionMOV_01_M40M
   MovRefM(1) = ?InstructionMOV_01_M40RefM
+CompilerEndIf
   OpTableM($0380) = ?InstructionMOV_01_M60M
   OpTableM($0388) = ?InstructionMOV_01_M60M
   OpTableM($0390) = ?InstructionMOV_01_M60M
@@ -7540,8 +7745,10 @@ BuildTableM:
   OpTableM($03A8) = ?InstructionMOV_01_M60M
   OpTableM($03B0) = ?InstructionMOV_01_M60M
   OpTableM($03B8) = ?InstructionMOV_01_M60M
+CompilerIf #DISK_BACKEND = 0
   MovAsmM(2) = ?InstructionMOV_01_M60M
   MovRefM(2) = ?InstructionMOV_01_M60RefM
+CompilerEndIf
   OpTableM($0384) = ?InstructionMOV_01_M64M
   OpTableM($038C) = ?InstructionMOV_01_M64M
   OpTableM($0394) = ?InstructionMOV_01_M64M
@@ -7550,8 +7757,10 @@ BuildTableM:
   OpTableM($03AC) = ?InstructionMOV_01_M64M
   OpTableM($03B4) = ?InstructionMOV_01_M64M
   OpTableM($03BC) = ?InstructionMOV_01_M64M
+CompilerIf #DISK_BACKEND = 0
   MovAsmM(3) = ?InstructionMOV_01_M64M
   MovRefM(3) = ?InstructionMOV_01_M64RefM
+CompilerEndIf
   OpTableM($0280) = ?InstructionMOV_01_M20M
   OpTableM($0288) = ?InstructionMOV_01_M20M
   OpTableM($0290) = ?InstructionMOV_01_M20M
@@ -7559,8 +7768,10 @@ BuildTableM:
   OpTableM($02A0) = ?InstructionMOV_01_M20M
   OpTableM($02A8) = ?InstructionMOV_01_M20M
   OpTableM($02B0) = ?InstructionMOV_01_M20M
+CompilerIf #DISK_BACKEND = 0
   MovAsmM(4) = ?InstructionMOV_01_M20M
   MovRefM(4) = ?InstructionMOV_01_M20RefM
+CompilerEndIf
   OpTableM($0381) = ?InstructionMOV_01_M61M
   OpTableM($0389) = ?InstructionMOV_01_M61M
   OpTableM($0391) = ?InstructionMOV_01_M61M
@@ -7569,8 +7780,10 @@ BuildTableM:
   OpTableM($03A9) = ?InstructionMOV_01_M61M
   OpTableM($03B1) = ?InstructionMOV_01_M61M
   OpTableM($03B9) = ?InstructionMOV_01_M61M
+CompilerIf #DISK_BACKEND = 0
   MovAsmM(5) = ?InstructionMOV_01_M61M
   MovRefM(5) = ?InstructionMOV_01_M61RefM
+CompilerEndIf
   OpTableM($0206) = ?InstructionMOV_01_M06M
   OpTableM($020E) = ?InstructionMOV_01_M06M
   OpTableM($0216) = ?InstructionMOV_01_M06M
@@ -7579,6 +7792,7 @@ BuildTableM:
   OpTableM($022E) = ?InstructionMOV_01_M06M
   OpTableM($0236) = ?InstructionMOV_01_M06M
   OpTableM($023E) = ?InstructionMOV_01_M06M
+CompilerIf #DISK_BACKEND = 0
   MovAsmM(6) = ?InstructionMOV_01_M06M
   MovRefM(6) = ?InstructionMOV_01_M06RefM
   OpAsmM(0) = ?InstructionJSR_004M
@@ -7683,6 +7897,69 @@ BuildTableM:
   OpRefM(49) = ?InstructionSUB_16_IRRefM
   OpAsmM(50) = ?InstructionSOB_077M
   OpRefM(50) = ?InstructionSOB_077RefM
+CompilerEndIf
+  OpTableM($12BE) = ?InstructionIMX_MOVB_11M
+CompilerIf #DISK_BACKEND = 0
+  OpAsmM(51) = ?InstructionIMX_MOVB_11M
+  OpRefM(51) = ?InstructionMOVB_11RefM
+CompilerEndIf
+  OpTableM($2BE) = ?InstructionIMX_MOV_01M
+CompilerIf #DISK_BACKEND = 0
+  OpAsmM(52) = ?InstructionIMX_MOV_01M
+  OpRefM(52) = ?InstructionMOV_01RefM
+CompilerEndIf
+  OpTableM($4BE) = ?InstructionIMX_CMP_02M
+CompilerIf #DISK_BACKEND = 0
+  OpAsmM(53) = ?InstructionIMX_CMP_02M
+  OpRefM(53) = ?InstructionCMP_02RefM
+CompilerEndIf
+  OpTableM($CBE) = ?InstructionIMX_ADD_06M
+CompilerIf #DISK_BACKEND = 0
+  OpAsmM(54) = ?InstructionIMX_ADD_06M
+  OpRefM(54) = ?InstructionADD_06RefM
+CompilerEndIf
+  OpTableM($1CBE) = ?InstructionIMX_SUB_16M
+CompilerIf #DISK_BACKEND = 0
+  OpAsmM(55) = ?InstructionIMX_SUB_16M
+  OpRefM(55) = ?InstructionSUB_16RefM
+CompilerEndIf
+  OpTableM($6BE) = ?InstructionIMX_BIT_03M
+CompilerIf #DISK_BACKEND = 0
+  OpAsmM(56) = ?InstructionIMX_BIT_03M
+  OpRefM(56) = ?InstructionBIT_03RefM
+CompilerEndIf
+  OpTableM($8BE) = ?InstructionIMX_BIC_04M
+CompilerIf #DISK_BACKEND = 0
+  OpAsmM(57) = ?InstructionIMX_BIC_04M
+  OpRefM(57) = ?InstructionBIC_04RefM
+CompilerEndIf
+  OpTableM($ABE) = ?InstructionIMX_BIS_05M
+CompilerIf #DISK_BACKEND = 0
+  OpAsmM(58) = ?InstructionIMX_BIS_05M
+  OpRefM(58) = ?InstructionBIS_05RefM
+CompilerEndIf
+CompilerIf #ASM_INDEXED = 1
+  OpTableM($146) = ?InstructionIX_CLR_0050M
+  OpTableM($17E) = ?InstructionIX_TST_0057M
+  OpTableM($156) = ?InstructionIX_INC_0052M
+  OpTableM($15E) = ?InstructionIX_DEC_0053M
+  OpTableM($1146) = ?InstructionIX_CLRB_1050M
+  OpTableM($117E) = ?InstructionIX_TSTB_1057M
+CompilerEndIf
+CompilerIf #DISK_BACKEND = 0
+  OpAsmM(59) = ?InstructionIX_CLR_0050M
+  OpRefM(59) = ?InstructionCLR_0050RefM
+  OpAsmM(60) = ?InstructionIX_TST_0057M
+  OpRefM(60) = ?InstructionTST_0057RefM
+  OpAsmM(61) = ?InstructionIX_INC_0052M
+  OpRefM(61) = ?InstructionINC_0052RefM
+  OpAsmM(62) = ?InstructionIX_DEC_0053M
+  OpRefM(62) = ?InstructionDEC_0053RefM
+  OpAsmM(63) = ?InstructionIX_CLRB_1050M
+  OpRefM(63) = ?InstructionCLRB_1050RefM
+  OpAsmM(64) = ?InstructionIX_TSTB_1057M
+  OpRefM(64) = ?InstructionTSTB_1057RefM
+CompilerEndIf
   OpTableReadyM = 1
   Goto RunStartM
 EndProcedure

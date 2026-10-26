@@ -169,7 +169,7 @@ EndProcedure
 Procedure.i RndMapped()
   Define t.i, e.i
   For t = 1 To 16
-    e = CurD + RndN(8)
+    e = Reg(#CPU_CURD) + RndN(8)
     If MapWHi(e) > MapWLo(e)
       ProcedureReturn (MapWLo(e) + RndN(MapWHi(e) - MapWLo(e))) & $FFFE
     EndIf
@@ -252,7 +252,7 @@ Procedure.i PickPc()
   For t = 1 To 200
     va = RndN($8000) * 2
     If va <= $FFF8
-      e = CurI + (va >> 13)
+      e = Reg(#CPU_CURI) + (va >> 13)
       If va >= MapRLo(e) And va + 6 <= MapRHi(e)
         ProcedureReturn va
       EndIf
@@ -264,10 +264,10 @@ EndProcedure
 Procedure SaveState()
   For GI = 0 To 7 : SReg(GI) = Reg(GI) : Next
   For GI = 0 To 63 : SPar(GI) = Par(GI) : SPdr(GI) = Pdr(GI) : Next
-  For GI = 0 To 5 : SAlt(GI) = RegAlt(GI) : Next
+  For GI = 0 To 5 : SAlt(GI) = Reg(#CPU_ALT + (GI)) : Next
   For GI = 0 To 3 : SBank(GI) = StackBank(GI) : Next
-  SNZ = NzRead() : SV = FlagV : SC = FlagC
-  SMmr0 = Mmr0 : SMmr1 = Mmr1 : SMmr3 = Mmr3 : SPcRec = MmuPcRec
+  SNZ = NzRead() : SV = Reg(#CPU_FLAGV) : SC = Reg(#CPU_FLAGC)
+  SMmr0 = Reg(#CPU_MMR0) : SMmr1 = Reg(#CPU_MMR1) : SMmr3 = Mmr3 : SPcRec = Reg(#CPU_MMUPCREC)
 EndProcedure
 
 ; Back to the saved state exactly: a trap in the run before may have changed
@@ -276,16 +276,157 @@ Procedure LoadState()
   PswSet(OpPsw)                         ; kernel, register set 0, priority 7 (and a previous mode)
   For GI = 0 To 7 : Reg(GI) = SReg(GI) : Next
   For GI = 0 To 63 : Par(GI) = SPar(GI) : Pdr(GI) = SPdr(GI) : Next
-  For GI = 0 To 5 : RegAlt(GI) = SAlt(GI) : Next
+  For GI = 0 To 5 : Reg(#CPU_ALT + (GI)) = SAlt(GI) : Next
   For GI = 0 To 3 : StackBank(GI) = SBank(GI) : Next
   Mmr3 = SMmr3
   MmuRecompute()
-  NzWrite(SNZ) : FlagV = SV : FlagC = SC
-  Mmr0 = SMmr0 : Mmr1 = SMmr1 : MmuPcRec = SPcRec : Mmr2 = 0
+  NzWrite(SNZ) : Reg(#CPU_FLAGV) = SV : Reg(#CPU_FLAGC) = SC
+  Reg(#CPU_MMR0) = SMmr0 : Reg(#CPU_MMR1) = SMmr1 : Reg(#CPU_MMUPCREC) = SPcRec : Mmr2 = 0
   MmuOn = 1
-  TrapVector = 0 : PswLate = 0 : AbortPsw = 0 : StackYellow = 0 : CpuErr = 0
+  Reg(#CPU_TRAPVECTOR) = 0 : PswLate = 0 : AbortPsw = 0 : StackYellow = 0 : CpuErr = 0
   TraceArm = 0 : Halted = 0 : Waiting = 0 : IntReq = 0 : DevActive = 0 : Dl11TxRdy = 1
-  Src = #NOT_RUN
+  Reg(#CPU_SRC) = #NOT_RUN
+EndProcedure
+
+ ; Random PAR/PDR bursts, followed by a mapped access: lazy versus rebuilding
+; every entry after every write. Replay the same random stream and compare
+; physical addresses, aborts, PDR W bits, fetch invalidation and map contents.
+Global TmmChecks.i, TmmFailures.i, TmmSeed.i, TmmAfter.i, TmmPass.i
+Global TmmI.i, TmmJ.i, TmmR.i, TmmAddr.i, TmmValue.i, TmmE.i, TmmVa.i, TmmWr.i, TmmPa.i
+; Snapshot storage borrows Shadow before the MOV tests fill it.
+
+ProcedureRAM MmuRegWriteRef(a.i, v.i)
+  Protected r.i
+  MmuTouches = MmuTouches + 1
+  If a = #MMR0_ADDR                      ; 15-13, 8 and 0 are writable
+    v = (Reg(#CPU_MMR0) & $00FE) | (v & $E101)
+    If (v ! Reg(#CPU_MMR0)) & 1
+      MmuOn = v & 1
+      CpuEventIn(1)                      ; the other run loop, from the next instruction
+    EndIf
+    Reg(#CPU_MMR0) = v
+  ElseIf a = #MMR3_ADDR
+    Mmr3 = v & $3F
+    MmuRecompute()
+  ElseIf a = #MMR1_ADDR Or a = #MMR2_ADDR
+    ProcedureReturn                      ; read-only
+  Else
+    r = MmuRegIndex(a)
+    If r & $100
+      r = r & $FF
+      Par(r) = v & $FFFF
+      Pdr(r) = Pdr(r) & ~$40
+    Else
+      Pdr(r) = v & $7F0E
+    EndIf
+    MmuRegChanged(r)
+  EndIf
+EndProcedure
+
+ProcedureRAM.i MmuPhysRef(va.i, e.i, write.i)
+  Protected bits.i, r.i
+  bits = 0
+  If MapAcf(e) = 0
+    bits = $8000
+  EndIf
+  If va < MapLo(e) Or va >= MapHi(e)
+    bits = bits | $4000
+  EndIf
+  If write <> 0 And MapAcf(e) = 1
+    bits = bits | $2000
+  EndIf
+  If bits
+    MmuAbort(bits, e)
+    ProcedureReturn -1
+  EndIf
+  If write
+    r = MapReg(e)
+    If (Pdr(r) & $40) = 0                ; the first write: W, and a fast window
+      Pdr(r) = Pdr(r) | $40
+      MmuRegChanged(r)
+    EndIf
+  EndIf
+  ProcedureReturn (va + MapBase(e)) & MapMask
+EndProcedure
+
+Procedure TmmOne()
+  OpPsw = $00E0
+  PswSet(OpPsw)
+  For TmmI = 0 To 63
+    Par(TmmI) = RndN($10000)
+    Pdr(TmmI) = RndN($8000) & $7F4E
+  Next
+  Mmr3 = RndN(64)
+  Reg(#CPU_MMR0) = RndN(2) * $E000
+  Reg(#CPU_MMR1) = RndN($10000)
+  SaveState()
+  TmmSeed = Seed
+  For TmmPass = 0 To 1
+    LoadState()
+    Seed = TmmSeed
+    For TmmI = 0 To 31
+      TmmR = RndN(48)
+      TmmAddr = $F4C0
+      If TmmR >= 32
+        TmmAddr = $FF80
+        TmmR = TmmR - 32
+      ElseIf TmmR >= 16
+        TmmAddr = $F480
+        TmmR = TmmR - 16
+      EndIf
+      TmmAddr = TmmAddr + TmmR * 2 + RndN(2) * 32
+      TmmValue = RndN($10000)
+      If RndN(2) : TmmValue = MmuRegRead(TmmAddr) : EndIf
+      If TmmPass = 0
+        MmuRegWrite(TmmAddr, TmmValue)
+      Else
+        MmuRegWriteRef(TmmAddr, TmmValue)
+      EndIf
+      If TmmPass = 1
+        For TmmJ = 0 To 63 : MmuMapEntry(TmmJ) : Next
+      EndIf
+    Next
+    ; Probe every mode and space, reads and writes, with all page offsets.
+    For TmmE = 0 To 63
+      TmmVa = ((TmmE & 7) << 13) | RndN($2000)
+      TmmWr = RndN(2)
+      Reg(#CPU_TRAPVECTOR) = 0 : AbortPsw = 0
+      If TmmPass = 0
+        TmmPa = MmuPhys(TmmVa, TmmE, TmmWr)
+      Else
+        TmmPa = MmuPhysRef(TmmVa, TmmE, TmmWr)
+        For TmmJ = 0 To 63 : MmuMapEntry(TmmJ) : Next
+      EndIf
+      TmmJ = TmmE * 15
+      If TmmPass = 0
+        PokeL(@Shadow(0) + (TmmJ) * 4, TmmPa)
+        PokeL(@Shadow(0) + (TmmJ + 1) * 4, Reg(#CPU_MMR0))
+        PokeL(@Shadow(0) + (TmmJ + 2) * 4, Reg(#CPU_MMR1))
+        PokeL(@Shadow(0) + (TmmJ + 3) * 4, Mmr2)
+        PokeL(@Shadow(0) + (TmmJ + 4) * 4, Reg(#CPU_TRAPVECTOR))
+        PokeL(@Shadow(0) + (TmmJ + 5) * 4, AbortPsw)
+        PokeL(@Shadow(0) + (TmmJ + 6) * 4, Pdr(MapReg(TmmE)))
+        PokeL(@Shadow(0) + (TmmJ + 7) * 4, MapBase(TmmE))
+        PokeL(@Shadow(0) + (TmmJ + 8) * 4, Reg(#CPU_FW + (0)))
+        PokeL(@Shadow(0) + (TmmJ + 9) * 4, FwSave((TmmE >> 4) * 4))
+        PokeL(@Shadow(0) + (TmmJ + 10) * 4, MapF((TmmE << 3) + 0))
+        PokeL(@Shadow(0) + (TmmJ + 11) * 4, MapF((TmmE << 3) + 1))
+        PokeL(@Shadow(0) + (TmmJ + 12) * 4, MapF((TmmE << 3) + 2))
+        PokeL(@Shadow(0) + (TmmJ + 13) * 4, MapF((TmmE << 3) + 3))
+        PokeL(@Shadow(0) + (TmmJ + 14) * 4, MapF((TmmE << 3) + 4))
+      Else
+        If PeekL(@Shadow(0) + (TmmJ) * 4) <> TmmPa Or PeekL(@Shadow(0) + (TmmJ + 1) * 4) <> Reg(#CPU_MMR0) Or PeekL(@Shadow(0) + (TmmJ + 2) * 4) <> Reg(#CPU_MMR1) Or PeekL(@Shadow(0) + (TmmJ + 3) * 4) <> Mmr2 Or PeekL(@Shadow(0) + (TmmJ + 4) * 4) <> Reg(#CPU_TRAPVECTOR) Or PeekL(@Shadow(0) + (TmmJ + 5) * 4) <> AbortPsw Or PeekL(@Shadow(0) + (TmmJ + 6) * 4) <> Pdr(MapReg(TmmE)) Or PeekL(@Shadow(0) + (TmmJ + 7) * 4) <> MapBase(TmmE) Or PeekL(@Shadow(0) + (TmmJ + 8) * 4) <> Reg(#CPU_FW + (0)) Or PeekL(@Shadow(0) + (TmmJ + 9) * 4) <> FwSave((TmmE >> 4) * 4)
+          TmmFailures = TmmFailures + 1
+        EndIf
+        For TmmR = 0 To 4
+          If PeekL(@Shadow(0) + (TmmJ + 10 + TmmR) * 4) <> MapF((TmmE << 3) + TmmR)
+            TmmFailures = TmmFailures + 1
+          EndIf
+        Next
+        TmmChecks = TmmChecks + 1
+      EndIf
+    Next
+  Next
 EndProcedure
 
 ; Run the one instruction at TPc through entry target; snapshot what it left.
@@ -301,24 +442,24 @@ Procedure Snap(*snap.i, *diff.i, *nd.i)
   PokeL(GS, GK)
   For GI = 0 To 7 : PokeL(GS + 4 + GI * 4, Reg(GI)) : Next
   PokeL(GS + 36, NzRead())
-  PokeL(GS + 40, FlagV & $8000)
-  PokeL(GS + 44, FlagC & $10000)
-  PokeL(GS + 48, Mmr0)
-  PokeL(GS + 52, Mmr1)
+  PokeL(GS + 40, Reg(#CPU_FLAGV) & $8000)
+  PokeL(GS + 44, Reg(#CPU_FLAGC) & $10000)
+  PokeL(GS + 48, Reg(#CPU_MMR0))
+  PokeL(GS + 52, Reg(#CPU_MMR1))
   PokeL(GS + 56, Mmr2)
-  PokeL(GS + 60, MmuPcRec)
-  PokeL(GS + 64, TrapVector)
+  PokeL(GS + 60, Reg(#CPU_MMUPCREC))
+  PokeL(GS + 64, Reg(#CPU_TRAPVECTOR))
   PokeL(GS + 68, CpuErr)
   PokeL(GS + 72, StackYellow)
-  PokeL(GS + 76, Fw(0))
-  PokeL(GS + 80, Fw(1))
-  PokeL(GS + 84, Fw(3))
+  PokeL(GS + 76, Reg(#CPU_FW + (0)))
+  PokeL(GS + 80, Reg(#CPU_FW + (1)))
+  PokeL(GS + 84, Reg(#CPU_FW + (3)))
   PokeL(GS + 88, PswGet())
   GK2 = 0
   For GI = 0 To 63 : GK2 = GK2 * 31 + Pdr(GI) : Next
   PokeL(GS + 92, GK2)
   PokeL(GS + 96, Halted)
-  PokeL(GS + 100, Bool(Src = #NOT_RUN))
+  PokeL(GS + 100, Bool(Reg(#CPU_SRC) = #NOT_RUN))
   ; memory against the shadow: note what changed, then put it back
   GN2 = 0
   For GI = 0 To #RAM_WORDS - 1
@@ -351,7 +492,7 @@ Procedure OneCheck()
   EndIf
   TRd = RndN(8)
   TOp = $1000 | (Osm << 9) | (TRs << 6) | (Odm << 3) | TRd
-  Ow = TPc + MapHost(CurI + (TPc >> 13))
+  Ow = TPc + MapHost(Reg(#CPU_CURI) + (TPc >> 13))
   PokeU(Ow, TOp)
   PokeU(Ow + 2, RndN($10000))           ; an index word
   If RndN(4) <> 0
@@ -361,18 +502,18 @@ Procedure OneCheck()
     Shadow(Oi) = Mem(Oi)
   Next
   ; the condition codes, MMR0 (sometimes frozen), MMR1 and its instruction
-  NzWrite(Rnd()) : FlagV = Rnd() : FlagC = Rnd()
-  Mmr0 = 1 | (RndN(8) << 1)
+  NzWrite(Rnd()) : Reg(#CPU_FLAGV) = Rnd() : Reg(#CPU_FLAGC) = Rnd()
+  Reg(#CPU_MMR0) = 1 | (RndN(8) << 1)
   If RndN(8) = 0
-    Mmr0 = Mmr0 | ((RndN(7) + 1) << 13)
+    Reg(#CPU_MMR0) = Reg(#CPU_MMR0) | ((RndN(7) + 1) << 13)
   EndIf
-  Mmr1 = RndN($10000)
+  Reg(#CPU_MMR1) = RndN($10000)
   If RndN(3) = 0
-    Mmr1 = Mmr1 & $FF00
+    Reg(#CPU_MMR1) = Reg(#CPU_MMR1) & $FF00
   EndIf
-  MmuPcRec = RndN($10000)
+  Reg(#CPU_MMUPCREC) = RndN($10000)
   If RndN(2)
-    MmuPcRec = TPc                      ; MMR1 already belongs to this instruction
+    Reg(#CPU_MMUPCREC) = TPc                      ; MMR1 already belongs to this instruction
   EndIf
   SaveState()
   LoadState()
@@ -466,19 +607,19 @@ Procedure EaSnap(*s.i)
   PokeL(GS, ER)
   For GI = 0 To 7 : PokeL(GS + 4 + GI * 4, Reg(GI)) : Next
   PokeL(GS + 36, 0)                     ; EaReg, Tmp and Adr: EaWordM's own working words, which
-  PokeL(GS + 40, EaBase)                ; nothing reads after the address is formed - __eaw no
+  PokeL(GS + 40, Reg(#CPU_EABASE))                ; nothing reads after the address is formed - __eaw no
   PokeL(GS + 44, 0)                     ; longer stores them (2026-10-25); EaBase the access that
   PokeL(GS + 48, 0)                     ; follows uses, so it is held to the plain one
-  PokeL(GS + 52, Mmr0)
-  PokeL(GS + 56, Mmr1)
+  PokeL(GS + 52, Reg(#CPU_MMR0))
+  PokeL(GS + 56, Reg(#CPU_MMR1))
   PokeL(GS + 60, Mmr2)
-  PokeL(GS + 64, MmuPcRec)
-  PokeL(GS + 68, TrapVector)
+  PokeL(GS + 64, Reg(#CPU_MMUPCREC))
+  PokeL(GS + 68, Reg(#CPU_TRAPVECTOR))
   PokeL(GS + 72, CpuErr)
   PokeL(GS + 76, StackYellow)
   PokeL(GS + 80, AbortPsw)
-  PokeL(GS + 84, Bool(EaSpec = #EA_NONE))
-  PokeL(GS + 88, EaStep)
+  PokeL(GS + 84, Bool(Reg(#CPU_EASPEC) = #EA_NONE))
+  PokeL(GS + 88, Reg(#CPU_EASTEP))
 EndProcedure
 
 Procedure.i PickMode()
@@ -507,41 +648,41 @@ Procedure EaOne()
     Ei = PickPc()                       ; a PC whose next word is in the I window: X(R)'s fast path
     If Ei >= 0
       Reg(7) = Ei
-      PokeU(Ei + MapHost(CurI + (Ei >> 13)), (RndMapped() - Reg(RndN(7))) & $FFFF)
+      PokeU(Ei + MapHost(Reg(#CPU_CURI) + (Ei >> 13)), (RndMapped() - Reg(RndN(7))) & $FFFF)
     EndIf
   EndIf
   ESpec = RndN(64)
   If RndN(3) <> 0                       ; mostly the six modes the assembly does
     ESpec = (ESpec & 7) | (PickMode() << 3)
   EndIf
-  NzWrite(Rnd()) : FlagV = Rnd() : FlagC = Rnd()
-  Mmr0 = 1 | (RndN(8) << 1)
+  NzWrite(Rnd()) : Reg(#CPU_FLAGV) = Rnd() : Reg(#CPU_FLAGC) = Rnd()
+  Reg(#CPU_MMR0) = 1 | (RndN(8) << 1)
   If RndN(8) = 0
-    Mmr0 = Mmr0 | ((RndN(7) + 1) << 13)
+    Reg(#CPU_MMR0) = Reg(#CPU_MMR0) | ((RndN(7) + 1) << 13)
   EndIf
-  Mmr1 = RndN($10000)
+  Reg(#CPU_MMR1) = RndN($10000)
   If RndN(3) = 0
-    Mmr1 = Mmr1 & $FF00
+    Reg(#CPU_MMR1) = Reg(#CPU_MMR1) & $FF00
   EndIf
-  Fw(3) = RndN($10000)
-  MmuPcRec = RndN($10000)
+  Reg(#CPU_FW + (3)) = RndN($10000)
+  Reg(#CPU_MMUPCREC) = RndN($10000)
   If RndN(2)
-    MmuPcRec = Fw(3)
+    Reg(#CPU_MMUPCREC) = Reg(#CPU_FW + (3))
   EndIf
   SaveState()
   LoadState()
   ER = 0
-  EaSpec = #EA_NONE
+  Reg(#CPU_EASPEC) = #EA_NONE
   If EaByteMode
     EabAsm()
   Else
     EaAsm()
   EndIf
   EaSnap(@EaA(0))
-  Ei = Fw(3)
+  Ei = Reg(#CPU_FW + (3))
   LoadState()
-  Fw(3) = Ei
-  EaSpec = #EA_NONE
+  Reg(#CPU_FW + (3)) = Ei
+  Reg(#CPU_EASPEC) = #EA_NONE
   If EaByteMode
     ER = EaByteM(ESpec)
   Else
@@ -626,30 +767,30 @@ EndProcedure
 
 Procedure EuPrep()
   For Ei = 0 To 7 : Reg(Ei) = EuReg(Ei) : Next
-  TrapVector = 0 : CpuErr = 0 : StackYellow = 0 : AbortPsw = 0
-  EaReg = -1 : Tmp = -1 : Adr = -1 : EaStep = -1
+  Reg(#CPU_TRAPVECTOR) = 0 : CpuErr = 0 : StackYellow = 0 : AbortPsw = 0
+  Reg(#CPU_EAREG) = -1 : Reg(#CPU_TMP) = -1 : Reg(#CPU_ADR) = -1 : Reg(#CPU_EASTEP) = -1
   ER = 0
-  EaSpec = #EA_NONE
+  Reg(#CPU_EASPEC) = #EA_NONE
 EndProcedure
 
 Procedure EuSnap(*s.i)
   GS = *s
   PokeL(GS, ER)
   For GI = 0 To 7 : PokeL(GS + 4 + GI * 4, Reg(GI)) : Next
-  PokeL(GS + 36, EaReg)
-  PokeL(GS + 40, Tmp)
-  PokeL(GS + 44, Adr)
-  PokeL(GS + 48, EaStep)
-  PokeL(GS + 52, TrapVector)
+  PokeL(GS + 36, Reg(#CPU_EAREG))
+  PokeL(GS + 40, Reg(#CPU_TMP))
+  PokeL(GS + 44, Reg(#CPU_ADR))
+  PokeL(GS + 48, Reg(#CPU_EASTEP))
+  PokeL(GS + 52, Reg(#CPU_TRAPVECTOR))
   PokeL(GS + 56, CpuErr)
   PokeL(GS + 60, StackYellow)
   PokeL(GS + 64, AbortPsw)
-  PokeL(GS + 68, Bool(EaSpec = #EA_NONE))
+  PokeL(GS + 68, Bool(Reg(#CPU_EASPEC) = #EA_NONE))
 EndProcedure
 
 Procedure EuOne()
   PswSet($00E0)
-  Mmr0 = 0 : MmuOn = 0
+  Reg(#CPU_MMR0) = 0 : MmuOn = 0
   For Ei = 0 To 7 : EuReg(Ei) = RndRegU() : Next
   ESpec = RndN(64)
   If RndN(4) <> 0                       ; mostly modes 1 to 7
@@ -804,11 +945,11 @@ Procedure FoSnap(*s.i)
   PokeL(GS + 56, FpChgOn * FpChgReg)
   PokeL(GS + 60, FpChgOn * FpChgVal)
   PokeL(GS + 64, FpQuit)
-  PokeL(GS + 68, TrapVector)
+  PokeL(GS + 68, Reg(#CPU_TRAPVECTOR))
   PokeL(GS + 72, Fec)
   PokeL(GS + 76, Fps)
-  PokeL(GS + 80, Mmr0)
-  PokeL(GS + 84, Mmr1)
+  PokeL(GS + 80, Reg(#CPU_MMR0))
+  PokeL(GS + 84, Reg(#CPU_MMR1))
   PokeL(GS + 88, CpuErr)
   PokeL(GS + 92, StackYellow)
   GN2 = 0 : GK2 = 0
@@ -870,19 +1011,19 @@ Procedure FpOpOne()
         Fv = Reg(Fn)
       EndIf
       Fl = RndMapped()                  ; the address X(R) forms
-      PokeU(Fq + MapHost(CurI + (Fq >> 13)), (Fl - Fv) & $FFFF)
+      PokeU(Fq + MapHost(Reg(#CPU_CURI) + (Fq >> 13)), (Fl - Fv) & $FFFF)
       If Fm = 7 And RndN(4) <> 0
-        FoPoke(Fl, CurD, RndMapped())
+        FoPoke(Fl, Reg(#CPU_CURD), RndMapped())
       EndIf
     EndIf
   ElseIf Fm = 3 And RndN(4) <> 0
     If Fn = 7
-      FoPoke(Reg(7), CurI, RndMapped())
+      FoPoke(Reg(7), Reg(#CPU_CURI), RndMapped())
     Else
-      FoPoke(Reg(Fn), CurD, RndMapped())
+      FoPoke(Reg(Fn), Reg(#CPU_CURD), RndMapped())
     EndIf
   ElseIf Fm = 5 And RndN(4) <> 0
-    FoPoke(Reg(Fn) - 2, CurD, RndMapped())
+    FoPoke(Reg(Fn) - 2, Reg(#CPU_CURD), RndMapped())
   EndIf
   Fps0 = RndN($10000) & #FPS_RW
   Fh = RndW() : Fl = RndW()
@@ -992,13 +1133,13 @@ Procedure FaSnap(*s.i, r.i)
   PokeL(GS + 12, Fps)
   PokeL(GS + 16, Fec)
   PokeL(GS + 20, Fea)
-  PokeL(GS + 24, TrapVector)
+  PokeL(GS + 24, Reg(#CPU_TRAPVECTOR))
 EndProcedure
 
 Procedure FaPrep()
   PH(#P_FAC) = FaH : PL(#P_FAC) = FaL
   PH(#P_SRC) = FbH : PL(#P_SRC) = FbL
-  Fps = FaFps : Fec = 0 : Fea = 0 : TrapVector = 0
+  Fps = FaFps : Fec = 0 : Fea = 0 : Reg(#CPU_TRAPVECTOR) = 0
 EndProcedure
 
 Procedure FpAddOne()
@@ -1084,15 +1225,15 @@ Procedure FxSnap(*s.i)
   PokeL(GS + 80, Fps)
   PokeL(GS + 84, Fec)
   PokeL(GS + 88, Fea)
-  PokeL(GS + 92, TrapVector)
+  PokeL(GS + 92, Reg(#CPU_TRAPVECTOR))
   PokeL(GS + 96, FpQuit)
   PokeL(GS + 100, NzRead())
-  PokeL(GS + 104, FlagV & $8000)
-  PokeL(GS + 108, FlagC & $10000)
+  PokeL(GS + 104, Reg(#CPU_FLAGV) & $8000)
+  PokeL(GS + 108, Reg(#CPU_FLAGC) & $10000)
   PokeL(GS + 112, CpuErr)
   PokeL(GS + 116, StackYellow)
-  PokeL(GS + 120, Mmr0)
-  PokeL(GS + 124, Mmr1)
+  PokeL(GS + 120, Reg(#CPU_MMR0))
+  PokeL(GS + 124, Reg(#CPU_MMR1))
   GN2 = 0 : GK2 = 0
   For GI = 0 To #RAM_WORDS - 1
     If Mem(GI) <> Shadow(GI)
@@ -1183,7 +1324,7 @@ EndProcedure
 ; the dividend and divisor often at the edges (0, -1, 077777, 100000, a quotient
 ; just out of range). The same fields and the same memory as the MOV check.
 Global OpChecks.i, OpFailures.i, OpFirst.i, OpKind.i, OpR.i
-Global Dim OpCount.i(51)
+Global Dim OpCount.i(65)
 Global Dim EdgeW.i(8)
 Global Dim OpsFast.i(14)                ; the register fast paths (tools/mmu_gen.py, FAST): the opcode ...
 Global Dim OpsFastK.i(14)               ; ... and its form: 1 Rs,Rd, 2 Rd or #n,Rd, 3 SOB
@@ -1197,6 +1338,8 @@ Procedure.i RndEdge()
   ProcedureReturn RndN($10000)
 EndProcedure
 
+Global ForceForm.i = -1, FormI.i, FormBefore.i, FormChecked.i
+
 Procedure OpsOne()
   OpPsw = $00E0
   PswSet($00E0)
@@ -1207,6 +1350,17 @@ Procedure OpsOne()
     ProcedureReturn
   EndIf
   OpKind = RndN(51)
+  If ForceForm = 8 : OpKind = 19
+  ElseIf ForceForm = 9 : OpKind = 4
+  ElseIf ForceForm = 10 : OpKind = 5
+  ElseIf ForceForm = 11 : OpKind = 6
+  ElseIf ForceForm = 12 : OpKind = 20
+  ElseIf ForceForm = 13 : OpKind = 21
+  ElseIf ForceForm = 0 : OpKind = 16
+  ElseIf ForceForm = 1 : OpKind = 10
+  ElseIf ForceForm = 2 : OpKind = 3
+  ElseIf ForceForm >= 3 : OpKind = ForceForm + 8
+  EndIf
   OpR = RndN(8)
   If OpKind = 8 Or OpKind = 9           ; MFPI/MTPI: kernel, the previous mode kernel, supervisor or user
     Oi = RndN(3)
@@ -1270,6 +1424,24 @@ Procedure OpsOne()
       EndIf
     EndIf
   EndIf
+  If ForceForm >= 0
+    If ForceForm = 0 : TOp = $95F0
+    ElseIf ForceForm = 1 : TOp = $15F0
+    ElseIf ForceForm = 2 : TOp = $25F0
+    ElseIf ForceForm = 3 : TOp = $65F0
+    ElseIf ForceForm = 4 : TOp = $E5F0
+    ElseIf ForceForm = 5 : TOp = $35F0
+    ElseIf ForceForm = 6 : TOp = $45F0
+    ElseIf ForceForm = 7 : TOp = $55F0
+    ElseIf ForceForm = 8 : TOp = $0A30
+    ElseIf ForceForm = 9 : TOp = $0BF0
+    ElseIf ForceForm = 10 : TOp = $0AB0
+    ElseIf ForceForm = 11 : TOp = $0AF0
+    ElseIf ForceForm = 12 : TOp = $8A30
+    Else : TOp = $8BF0
+    EndIf
+    TOp = TOp | RndN(8)
+  EndIf
   If OpKind >= 3 And RndN(3) = 0
     Reg(TOp & 7) = RndEdge()
   EndIf
@@ -1279,7 +1451,7 @@ Procedure OpsOne()
   If OpKind >= 4 And (TOp & $38) = $08 And (TOp & 7) < 7 And RndN(2) = 0   ; (R): the word it names, at an edge
     Oi = RndMapped()
     Reg(TOp & 7) = Oi
-    PokeU(MapHost(CurD + (Oi >> 13)) + Oi, EdgeW(RndN(8)))
+    PokeU(MapHost(Reg(#CPU_CURD) + (Oi >> 13)) + Oi, EdgeW(RndN(8)))
   EndIf
   If (OpKind = 8 Or OpKind = 9) And (TOp & 7) < 6 And RndN(2) = 0
     Reg(TOp & 7) = RndMappedPrv((TOp >> 12) & 8)
@@ -1287,7 +1459,7 @@ Procedure OpsOne()
       Reg(TOp & 7) = (Reg(TOp & 7) + 2) & $FFFF      ; -(R) lands in the window
     EndIf
   EndIf
-  Ow = TPc + MapHost(CurI + (TPc >> 13))
+  Ow = TPc + MapHost(Reg(#CPU_CURI) + (TPc >> 13))
   PokeU(Ow, TOp)
   PokeU(Ow + 2, RndN($10000))
   If RndN(4) <> 0
@@ -1302,12 +1474,12 @@ Procedure OpsOne()
   EndIf
   If OpKind >= 3 And RndN(3) = 0                          ; a memory operand at an edge
     Oi = RndMapped()
-    PokeU(MapHost(CurD + (Oi >> 13)) + Oi, RndEdge())
+    PokeU(MapHost(Reg(#CPU_CURD) + (Oi >> 13)) + Oi, RndEdge())
   EndIf
   For Oi = 0 To #RAM_WORDS - 1
     Shadow(Oi) = Mem(Oi)
   Next
-  NzWrite(Rnd()) : FlagV = Rnd() : FlagC = Rnd()
+  NzWrite(Rnd()) : Reg(#CPU_FLAGV) = Rnd() : Reg(#CPU_FLAGC) = Rnd()
   If RndN(2)
     NzWrite(RndN(2) * $8000)          ; N set or clear plainly (SXT)
   EndIf
@@ -1315,23 +1487,24 @@ Procedure OpsOne()
     Oi = RndN(4)
     If Oi = 0 : NzWrite(0) : ElseIf Oi = 1 : NzWrite($10000) : ElseIf Oi = 2 : NzWrite($8000) : Else : NzWrite(1) : EndIf
   EndIf
-  Mmr0 = 1 | (RndN(8) << 1)
+  Reg(#CPU_MMR0) = 1 | (RndN(8) << 1)
   If RndN(8) = 0
-    Mmr0 = Mmr0 | ((RndN(7) + 1) << 13)
+    Reg(#CPU_MMR0) = Reg(#CPU_MMR0) | ((RndN(7) + 1) << 13)
   EndIf
-  Mmr1 = RndN($10000)
-  MmuPcRec = RndN($10000)
+  Reg(#CPU_MMR1) = RndN($10000)
+  Reg(#CPU_MMUPCREC) = RndN($10000)
   If RndN(2)
-    MmuPcRec = TPc
+    Reg(#CPU_MMUPCREC) = TPc
   EndIf
   SaveState()
   LoadState()
-  RunOnce(OpAsmM(OpKind))
+  If ForceForm >= 0 : RunOnce(OpAsmM(51 + ForceForm)) : Else : RunOnce(OpAsmM(OpKind)) : EndIf
   Snap(@SnapA(0), @DiffA(0), @NDiffA)
   LoadState()
-  RunOnce(OpRefM(OpKind))
+  If ForceForm >= 0 : RunOnce(OpRefM(51 + ForceForm)) : Else : RunOnce(OpRefM(OpKind)) : EndIf
   Snap(@SnapB(0), @DiffB(0), @NDiffB)
-  OpTableM(TOp >> 3) = OpAsmM(OpKind)  ; the table as built
+  If ForceForm >= 0 : OpTableM(TOp >> 3) = OpAsmM(51 + ForceForm) : Else : OpTableM(TOp >> 3) = OpAsmM(OpKind) : EndIf
+  If ForceForm >= 0 And ForceForm < 8 And SnapA(25) = 1 : OpCount(51 + ForceForm) = OpCount(51 + ForceForm) + 1 : EndIf
   OpPsw = $00E0
   OpChecks = OpChecks + 1
   OpCount(OpKind) = OpCount(OpKind) + 1
@@ -1360,7 +1533,7 @@ Procedure OpsOne()
         If Oi < NDiffB : Say(" B@") : Oct(DiffB(Oi * 2) * 2) : Say("=") : Oct(DiffB(Oi * 2 + 1)) : EndIf
       Next
       Say(" sp=") : Oct(SReg(6)) : Say(" r=") : Oct(SReg(TOp & 7)) : Say(" pc=") : Oct(TPc) : Say(" nz=") : Num(SNZ)
-      Say(" ea=") : Oct(Ea) : Eol()
+      Say(" ea=") : Oct(Reg(#CPU_EA)) : Eol()
     EndIf
     If OpFirst < 0
       OpFirst = OpChecks
@@ -1371,6 +1544,28 @@ Procedure OpsOne()
       Eol()
     EndIf
   EndIf
+EndProcedure
+
+Global MbAdr.i, MbVal.i, MbRes.i, MbOld.i, MbWant.i, MbChecks.i, MbFailures.i
+Procedure MByteOne()
+  MbAdr = RndN(#RAM16)
+  MbVal = Rnd()
+  MbOld = Mem(MbAdr >> 1)
+  MbWant = MbOld & $FF
+  If MbAdr & 1 : MbWant = MbOld >> 8 : EndIf
+  MbRes = ReadByte(MbAdr)
+  If MbRes <> MbWant : MbFailures = MbFailures + 1 : EndIf
+  MReadByte(MbRes, MbAdr)
+  If MbRes <> MbWant : MbFailures = MbFailures + 1 : EndIf
+  MbWant = (MbOld & $FF00) | (MbVal & $FF)
+  If MbAdr & 1 : MbWant = (MbOld & $FF) | ((MbVal & $FF) << 8) : EndIf
+  WriteByte(MbAdr, MbVal)
+  If Mem(MbAdr >> 1) <> MbWant : MbFailures = MbFailures + 1 : EndIf
+  Mem(MbAdr >> 1) = MbOld
+  MWriteByte(MbAdr, MbVal)
+  If Mem(MbAdr >> 1) <> MbWant : MbFailures = MbFailures + 1 : EndIf
+  Mem(MbAdr >> 1) = MbOld
+  MbChecks = MbChecks + 4
 EndProcedure
 
 Procedure Main()
@@ -1422,6 +1617,22 @@ Procedure Main()
   FpInit()
   Say("ASMCHECK start: the mapped loop's MOV handlers and __eaw, assembly against plain") : Eol()
   Repeat
+    For Mr = 1 To #ROUND * 10
+      MByteOne()
+      UsbSerialTask()
+      SafetyPet()
+    Next
+    Say("ASMCHECK bytes checks=") : Num(MbChecks) : Say(" failures=") : Num(MbFailures)
+    If MbFailures = 0 : Say(" PASS") : Else : Say(" FAIL") : EndIf
+    Eol()
+    For Mr = 1 To #ROUND / 4
+      TmmOne()
+      UsbSerialTask()
+      SafetyPet()
+    Next
+    Say("ASMCHECK mmu checks=") : Num(TmmChecks) : Say(" failures=") : Num(TmmFailures)
+    If TmmFailures = 0 : Say(" PASS") : Else : Say(" FAIL") : EndIf
+    Eol()
     Mt0 = Micros()
     For Mr = 1 To #ROUND
       OneCheck()
@@ -1481,6 +1692,64 @@ Procedure Main()
       Say(" PASS")
     Else
       Say(" FAIL first=") : Num(EuFirst) : Say(" spec=") : Oct(EuFirstSpec) : Say(" field=") : Num(EuFirstField)
+    EndIf
+    Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
+    FormBefore = OpFailures
+    FormChecked = OpChecks
+    For FormI = 0 To 7
+      ForceForm = FormI
+      For Mr = 1 To #ROUND / 4
+        OpsOne()
+        UsbSerialTask()
+        SafetyPet()
+      Next
+    Next
+    ForceForm = -1
+    Say("ASMCHECK imx checks=") : Num(OpChecks - FormChecked) : Say(" failures=") : Num(OpFailures - FormBefore)
+    Say(" fast=")
+    For FormI = 0 To 7 : Num(OpCount(51 + FormI)) : Say(" ") : Next
+    If OpFailures = FormBefore : Say(" PASS") : Else : Say(" FAIL") : EndIf
+    Eol()
+    FormBefore = OpFailures
+    FormChecked = OpChecks
+    SingleHit = 0
+    For FormI = 8 To 13
+      ForceForm = FormI
+      For Mr = 1 To #ROUND / 4
+        OpsOne()
+        UsbSerialTask()
+        SafetyPet()
+      Next
+    Next
+    ForceForm = -1
+    Say("ASMCHECK indexed checks=") : Num(OpChecks - FormChecked) : Say(" failures=") : Num(OpFailures - FormBefore)
+    Say(" fast=") : Num(SingleHit)
+    If OpFailures = FormBefore And SingleHit > 0 : Say(" PASS") : Else : Say(" FAIL") : EndIf
+    Eol()
+    Mt0 = Micros()
+    For Mr = 1 To #ROUND
+      OpsOne()
+      UsbSerialTask()
+      SafetyPet()
+    Next
+    Say("ASMCHECK ops checks=") : Num(OpChecks) : Say(" jsr=") : Num(OpCount(0)) : Say(" rts=") : Num(OpCount(1))
+    Say(" div=") : Num(OpCount(2)) : Say(" cmp=") : Num(OpCount(3)) : Say(" tst=") : Num(OpCount(4))
+    Say(" inc=") : Num(OpCount(5)) : Say(" dec=") : Num(OpCount(6)) : Say(" sxt=") : Num(OpCount(7))
+    Say(" mfpi=") : Num(OpCount(8)) : Say(" mtpi=") : Num(OpCount(9)) : Say(" mov=") : Num(OpCount(10))
+    Say(" add=") : Num(OpCount(11)) : Say(" sub=") : Num(OpCount(12)) : Say(" bit=") : Num(OpCount(13))
+    Say(" bic=") : Num(OpCount(14)) : Say(" bis=") : Num(OpCount(15)) : Say(" movb=") : Num(OpCount(16))
+    Say(" cmpb=") : Num(OpCount(17)) : Say(" bitb=") : Num(OpCount(18)) : Say(" clr=") : Num(OpCount(19))
+    Say(" clrb=") : Num(OpCount(20)) : Say(" tstb=") : Num(OpCount(21))
+    Oi = 0
+    For Oj = 22 To 36 : Oi = Oi + OpCount(Oj) : Next
+    Say(" branches=") : Num(Oi)
+    Oi = 0
+    For Oj = 37 To 50 : Oi = Oi + OpCount(Oj) : Next
+    Say(" fastpaths=") : Num(Oi) : Say(" failures=") : Num(OpFailures)
+    If OpFailures = 0
+      Say(" PASS")
+    Else
+      Say(" FAIL first=") : Num(OpFirst)
     EndIf
     Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
     Mt0 = Micros()
@@ -1549,32 +1818,6 @@ Procedure Main()
       Say(" PASS")
     Else
       Say(" FAIL first=") : Num(FxFirst)
-    EndIf
-    Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
-    Mt0 = Micros()
-    For Mr = 1 To #ROUND
-      OpsOne()
-      UsbSerialTask()
-      SafetyPet()
-    Next
-    Say("ASMCHECK ops checks=") : Num(OpChecks) : Say(" jsr=") : Num(OpCount(0)) : Say(" rts=") : Num(OpCount(1))
-    Say(" div=") : Num(OpCount(2)) : Say(" cmp=") : Num(OpCount(3)) : Say(" tst=") : Num(OpCount(4))
-    Say(" inc=") : Num(OpCount(5)) : Say(" dec=") : Num(OpCount(6)) : Say(" sxt=") : Num(OpCount(7))
-    Say(" mfpi=") : Num(OpCount(8)) : Say(" mtpi=") : Num(OpCount(9)) : Say(" mov=") : Num(OpCount(10))
-    Say(" add=") : Num(OpCount(11)) : Say(" sub=") : Num(OpCount(12)) : Say(" bit=") : Num(OpCount(13))
-    Say(" bic=") : Num(OpCount(14)) : Say(" bis=") : Num(OpCount(15)) : Say(" movb=") : Num(OpCount(16))
-    Say(" cmpb=") : Num(OpCount(17)) : Say(" bitb=") : Num(OpCount(18)) : Say(" clr=") : Num(OpCount(19))
-    Say(" clrb=") : Num(OpCount(20)) : Say(" tstb=") : Num(OpCount(21))
-    Oi = 0
-    For Oj = 22 To 36 : Oi = Oi + OpCount(Oj) : Next
-    Say(" branches=") : Num(Oi)
-    Oi = 0
-    For Oj = 37 To 50 : Oi = Oi + OpCount(Oj) : Next
-    Say(" fastpaths=") : Num(Oi) : Say(" failures=") : Num(OpFailures)
-    If OpFailures = 0
-      Say(" PASS")
-    Else
-      Say(" FAIL first=") : Num(OpFirst)
     EndIf
     Say(" ms=") : Num((Micros() - Mt0) / 1000) : Eol()
   ForEver

@@ -221,8 +221,29 @@ CompilerEndIf
 #J11_T_TRAP   = 1
 
 ; ---- machine state ---------------------------------------------------
-Global Dim Reg.i(8)         ; R0-R7, R6 = SP, R7 = PC. 16-bit values.
-Global GBase.i              ; @Reg(0), held in r5 (ReserveRegister below): the mapped loop's assembly reaches
+; Compact CPU state: two register banks, hot scalar words, fetch window.
+#CPU_ALT = 8
+#CPU_CURD = 18
+#CPU_CURI = 19
+#CPU_EABASE = 20
+#CPU_EA = 21
+#CPU_SRC = 22
+#CPU_DST = 23
+#CPU_TRAPVECTOR = 24
+#CPU_FLAGC = 25
+#CPU_FLAGV = 26
+#CPU_MMR0 = 27
+#CPU_MMR1 = 28
+#CPU_MMUPCREC = 29
+#CPU_TMP = 30
+#CPU_ADR = 31
+#CPU_EASPEC = 32
+#CPU_EASTEP = 33
+#CPU_EAREG = 34
+#CPU_FW = 14
+#CPU_WORDS = 35
+Global Dim Reg.i(#CPU_WORDS)         ; R0-R7, R6 = SP, R7 = PC. 16-bit values.
+Global GBase.i ; @Reg(0), held in r5 (ReserveRegister below): the mapped loop's assembly reaches
                             ; the globals it touches on every instruction from it (tools/mmu_gen.py, base_rel)
 Global Dim Mem.u(#RAM_WORDS)
 CompilerIf #PSRAM = 1                ; a board with PSRAM (psram_pdp11.pico2)
@@ -231,42 +252,40 @@ CompilerIf #PS_MEM_UNCACHED = 1
 CompilerElse
 #PS_MEM = $10FF2000                  ; ... or the window through the XIP cache (psram_pdp11.pico2, THE LAYOUT: the memory is first in the chip)
 CompilerEndIf
-Global MemTop.i = #RAM_BYTES         ; the end of physical memory: #RAM_BYTES, or 3812 KB with the PSRAM
-Global MemLim.i = #RAM_BYTES         ; ... as the mapping in force reaches it: MemTop with 22-bit mapping,
+Global MemTop.i = #RAM_BYTES ; the end of physical memory: #RAM_BYTES, or 3812 KB with the PSRAM
+Global MemLim.i = #RAM_BYTES ; ... as the mapping in force reaches it: MemTop with 22-bit mapping,
                                      ; no more than 248 KB (the 18-bit I/O page's start) without (MmuRecompute)
-Global PsramOk.i                     ; the PSRAM is found, tested and in use (psram_pdp11.pico2)
-Global PsDrives.i                    ; bit d: RK drive d lives in the PSRAM
+Global PsramOk.i ; the PSRAM is found, tested and in use (psram_pdp11.pico2)
+Global PsDrives.i ; bit d: RK drive d lives in the PSRAM
 CompilerEndIf
 
-Global Op.i                 ; the instruction being executed
-Global Src.i, Dst.i, Res.i, Ea.i, Tmp.i   ; handler scratch - see SPEED
-Global FlagNZ.i             ; lazy N and Z - see SPEED
-Global FlagV.i, FlagC.i
-Global EaReg.i, EaStep.i    ; EaWord/EaByte scratch (Globals: cheaper than locals)
-Global Adr.i                ; the address Push, Pop, FetchWord and EaWord work on
-Global PswHigh.i            ; PSW bits 15-5 (mode, register set, priority, T)
+Global Op.i ; the instruction being executed
+Global Res.i ; handler scratch - see SPEED
+Global FlagNZ.i ; lazy N and Z - see SPEED
+; EaWord/EaByte scratch (Globals: cheaper than locals)
+; the address Push, Pop, FetchWord and EaWord work on
+Global PswHigh.i ; PSW bits 15-5 (mode, register set, priority, T)
 ; Global ClockCycles.i   ; commented out: nothing ever reads it (see CLOCK)
-Global TrapVector.i         ; non-zero = a trap to take after this instruction
-Global PswLate.i            ; a PSW written through 177776, to re-apply at the end (PswWrite)
-Global AbortPsw.i           ; the PSW before an instruction a bus error aborted (BusError)
-Global StackYellow.i        ; the kernel stack went below 000400 (StackCheck)
-Global TraceArm.i           ; the T bit was set when this instruction began (StartWindow)
+; non-zero = a trap to take after this instruction
+Global PswLate.i ; a PSW written through 177776, to re-apply at the end (PswWrite)
+Global AbortPsw.i ; the PSW before an instruction a bus error aborted (BusError)
+Global StackYellow.i ; the kernel stack went below 000400 (StackCheck)
+Global TraceArm.i ; the T bit was set when this instruction began (StartWindow)
 Global Dim StackBank.i(4)   ; the stack pointer of each mode not running (PswBanks)
-Global Dim RegAlt.i(6)      ; the register set not selected, R0-R5 (PswBanks)
-Global TrapPsw.i, TrapPc.i  ; TakeTrap's saved PSW and PC
+Global TrapPsw.i, TrapPc.i ; TakeTrap's saved PSW and PC
 
 ; The memory management unit - see THE MEMORY MANAGEMENT UNIT. An ENTRY is
 ; mode * 16 + space * 8 + page: mode 0 kernel, 1 supervisor, 3 user; space
 ; 0 I, 1 D; page = the top three bits of the virtual address.
-Global MmuOn.i              ; MMR0 bit 0: the mapped run loop runs while it is 1
-Global Mmr0.i, Mmr1.i, Mmr2.i, Mmr3.i
+Global MmuOn.i ; MMR0 bit 0: the mapped run loop runs while it is 1
+Global Mmr2.i, Mmr3.i
 Global Dim Pdr.i(64)        ; the registers, by entry
 Global Dim Par.i(64)
 Global Dim MapReg.i(64)     ; the registers an entry uses (a D entry uses I's when D space is off)
 Global Dim MapBase.i(64)    ; physical = virtual + MapBase, before the 18/22-bit mask
 Global Dim MapLo.i(64)      ; the virtual bytes the page length allows: MapLo <= va < MapHi
 Global Dim MapHi.i(64)
-Global Dim MapAcf.i(64)     ; 0 not resident, 1 read-only, 3 read/write
+Global Dim MapAcf.i(64)     ; -1 stale, 0 not resident, 1 read-only, 3 read/write
 ; THE FAST WINDOWS, one entry's five words together (2026-10-25): MapF(e * 8 +
 ; 0-4) is MapRLo, MapRHi, MapWLo, MapWHi and MapHost, so the mapped loop's
 ; assembly reaches all five from one base (tools/mmu_gen.py, map_rows) instead
@@ -287,22 +306,21 @@ EndMacro
 Macro MapHost(mE)           ; the fast windows' memory: virtual byte va is at host address va + MapHost
   MapF(((mE) << 3) + 4)
 EndMacro
-Global MapMask.i            ; $3FFFF (18-bit) or $3FFFFF (22-bit)
+Global MapMask.i ; $3FFFF (18-bit) or $3FFFFF (22-bit)
 Global Dim UbMap.i(32)      ; THE UNIBUS MAP: each register's 22-bit address (bit 0 always 0)
-Global CpuErr.i             ; the CPU error register (THE CPU ERROR AND MAINTENANCE REGISTERS)
-Global MaintTrap.i          ; the maintenance register's bit 3: a kernel HALT traps through 4
-Global CurI.i, CurD.i       ; the current mode's entry bases
-Global PrvBase.i            ; the previous mode's (mode * 16), for MFPI/MFPD/MTPI/MTPD
-Global TrapHeld.i            ; a trap a trap sequence left pending, across the mapped slow fetch
-Global EaBase.i             ; where the last mapped operand address lies (EaWordM)
-Global MmE.i                ; the mapped memory macros' entry
-Global RunSave.i            ; CpuRun's RunFrom while the mapped loop runs
+Global CpuErr.i ; the CPU error register (THE CPU ERROR AND MAINTENANCE REGISTERS)
+Global MaintTrap.i ; the maintenance register's bit 3: a kernel HALT traps through 4
+; the current mode's entry bases
+Global PrvBase.i ; the previous mode's (mode * 16), for MFPI/MFPD/MTPI/MTPD
+Global TrapHeld.i ; a trap a trap sequence left pending, across the mapped slow fetch
+; where the last mapped operand address lies (EaWordM)
+Global MmE.i ; the mapped memory macros' entry
+Global RunSave.i ; CpuRun's RunFrom while the mapped loop runs
 ; THE FETCH WINDOW AND THE INSTRUCTION'S ADDRESS, in one array so that the
 ; mapped tails (assembly, #ASM_TAILS) reach all four through one base
 ; register: Fw(0) FetchLo, Fw(1) FetchHi, Fw(2) FetchBase (MmuFetchWindow),
 ; Fw(3) the address of the mapped instruction being run (MMR2). A literal
 ; index costs compiled code nothing: Fw(1) is the address of Fw plus 4.
-Global Dim Fw.i(4)
 ; FwSave(m * 4 + 0..2): mode m's fetch window (Fw(0..2)) while another mode
 ; runs - PswBanks keeps it and gives it back, so a trap or an interrupt and
 ; its RTI do not find the window again each way (2026-10-21). Emptied with
@@ -323,6 +341,7 @@ Global Dim FwSave.i(16)
 ; PushM and PopM's fast paths in assembly (__pushm, __popm), and JSR, RTS and DIV
 ; in assembly in front of their plain handlers (tools/mmu_gen.py, pico2_ops; held to
 ; the plain ones by asm_check.pico2). Needs #ASM_EA = 1. 0: the plain handlers alone.
+#ASM_INDEXED = 1                       ; indexed CLR/TST/INC/DEC and byte CLR/TST
 #ASM_OPS = 1
 ; The FPJ11 floating point unit (fp11.pico2, included after this file): 1
 ; executes 170000-177777; 0 leaves them reserved instructions (trap to 10).
@@ -330,36 +349,36 @@ Global Dim FwSave.i(16)
 ; Its fraction multiply and divide in assembly (fp11.pico2, FpFracMulAsm and
 ; FpDivQAsm; held to FpFracMulRef and FpDivQRef by asm_check.pico2). 0: the Basic.
 #ASM_FP = 1
-Global Fps.i, Fec.i, Fea.i       ; its status, exception code and address (fp11.pico2)
+Global Fps.i, Fec.i, Fea.i ; its status, exception code and address (fp11.pico2)
 Global Dim FrH.i(6)              ; its six accumulators, high and low halves
 Global Dim FrL.i(6)
 ; Measured on a Pico 2 W, 2026-10-19 (V6 `time od /rkunix`, host-timed): 13.24 s
 ; before, 11.14 s with #ASM_MOV, 10.36 s with both; a Pico Plus 2 W 13.37 -> 10.44 s.
-Global MmuPcRec.i           ; the instruction MMR1 holds the changes of
-Global MmuTouches.i         ; reads and writes of the unit's registers, for tests
+; the instruction MMR1 holds the changes of
+Global MmuTouches.i ; reads and writes of the unit's registers, for tests
 Global Halted.i, Waiting.i
-Global PC.i                 ; the emulated PC between instructions; Reg(7) is its
+Global PC.i ; the emulated PC between instructions; Reg(7) is its
                             ; stale copy then (see THE EMULATED PC in instructions)
 
 ; The run loop's countdown and the machine's clock - see THE RUN WINDOW.
-Global RunLeft.i            ; instructions left in this window
-Global RunWindow.i          ; how many the window started with
-Global RunBank.i            ; instructions this CpuRun still owes after the window
-Global RunFrom.i            ; InstrCount when this CpuRun began
-Global InstrCount.i         ; instructions finished before this window began
+Global RunLeft.i ; instructions left in this window
+Global RunWindow.i ; how many the window started with
+Global RunBank.i ; instructions this CpuRun still owes after the window
+Global RunFrom.i ; InstrCount when this CpuRun began
+Global InstrCount.i ; instructions finished before this window began
 
 ; The console DL11 and the switch register - see THE I/O PAGE.
 Global Dl11RxDone.i, Dl11RxIe.i, Dl11RxBuf.i
-Global Dl11RxPolled.i      ; the program has looked at RCSR since the last character
-Global Dl11RxDue.i         ; InstrCount at which the receiver may take its next character
-Global Dl11RxReads.i       ; characters the program has read from RBUF (the stats block)
+Global Dl11RxPolled.i ; the program has looked at RCSR since the last character
+Global Dl11RxDue.i ; InstrCount at which the receiver may take its next character
+Global Dl11RxReads.i ; characters the program has read from RBUF (the stats block)
 Global Dl11TxRdy.i, Dl11TxIe.i, Dl11TxChar.i, Dl11TxDue.i
 Global SwitchReg.i, DisplayReg.i
-Global IntReq.i             ; interrupts asked for: #INT_DL11_RX | #INT_DL11_TX | #INT_RK | #INT_KW | #INT_RP
-Global RpPresent.i, RpBusy.i, RpIoPosted.i   ; the RP11 (rp11.pico2): an RP pack, a transfer, its request out
-Global CacheCcr.i           ; the cache control register's bits, kept (THE CACHE REGISTERS)
-Global DevActive.i          ; the disk or the clock needs a look every window (DevPoll, rk11/kw11)
-Global DevFast.i            ; the disk does: windows of #DEV_WINDOW, not #DEV_WINDOW_CLOCK
+Global IntReq.i ; interrupts asked for: #INT_DL11_RX | #INT_DL11_TX | #INT_RK | #INT_KW | #INT_RP
+Global RpPresent.i, RpBusy.i, RpIoPosted.i ; the RP11 (rp11.pico2): an RP pack, a transfer, its request out
+Global CacheCcr.i ; the cache control register's bits, kept (THE CACHE REGISTERS)
+Global DevActive.i ; the disk or the clock needs a look every window (DevPoll, rk11/kw11)
+Global DevFast.i ; the disk does: windows of #DEV_WINDOW, not #DEV_WINDOW_CLOCK
 ; The console's two byte queues - the ONLY things the firmware around the
 ; emulator touches. The emulator writes ConOut at its Head and reads ConIn
 ; at its Tail; the firmware does the opposite. Neither side calls the
@@ -375,9 +394,9 @@ Global ConInHead.i, ConInTail.i
 ; crosses between them is single-writer words and single-producer rings
 ; (ConOut: core 0 -> 1; ConIn: core 1 -> 0), each published with a barrier
 ; between the data and the index that announces it.
-Global KwSeq.i                   ; line-clock ticks: written by core 1 only (kw11, KwTick)
-Global DkReqSeq.i, DkReqOp.i, DkReqDrive.i, DkReqBlock.i   ; a storage request: core 0 writes (rk11, RkIo)
-Global DkDoneSeq.i, DkDoneResult.i                        ; its answer: core 1 writes (rk11, DkServe)
+Global KwSeq.i ; line-clock ticks: written by core 1 only (kw11, KwTick)
+Global DkReqSeq.i, DkReqOp.i, DkReqDrive.i, DkReqBlock.i ; a storage request: core 0 writes (rk11, RkIo)
+Global DkDoneSeq.i, DkDoneResult.i ; its answer: core 1 writes (rk11, DkServe)
 
 ; A data memory barrier: every store before it is visible to the other core
 ; before any store after it (and the same for loads). The language has no
@@ -502,7 +521,7 @@ ProcedureRAM SetNZ(n.i, z.i)
 EndProcedure
 
 ProcedureRAM.i PswGet()
-  ProcedureReturn (PswHigh & $FFF0) | (FlagN() << 3) | (FlagZ() << 2) | ((FlagV >> 14) & 2) | ((FlagC >> 16) & 1)
+  ProcedureReturn (PswHigh & $FFF0) | (FlagN() << 3) | (FlagZ() << 2) | ((Reg(#CPU_FLAGV) >> 14) & 2) | ((Reg(#CPU_FLAGC) >> 16) & 1)
 EndProcedure
 
 ; THE MODES AND THE TWO REGISTER SETS. The J-11 keeps a separate stack
@@ -518,26 +537,26 @@ ProcedureRAM PswBanks(v.i)
   If (v ! PswHigh) & $C000
     StackBank((PswHigh >> 14) & 3) = Reg(6)
     Reg(6) = StackBank((v >> 14) & 3)
-    t = CurI >> 2                        ; the old mode's fetch window, kept for its return
-    FwSave(t) = Fw(0)
-    FwSave(t + 1) = Fw(1)
-    FwSave(t + 2) = Fw(2)
+    t = Reg(#CPU_CURI) >> 2                        ; the old mode's fetch window, kept for its return
+    FwSave(t) = Reg(#CPU_FW + (0))
+    FwSave(t + 1) = Reg(#CPU_FW + (1))
+    FwSave(t + 2) = Reg(#CPU_FW + (2))
   EndIf
   If (v ! PswHigh) & $0800
     For i = 0 To 5
       t = Reg(i)
-      Reg(i) = RegAlt(i)
-      RegAlt(i) = t
+      Reg(i) = Reg(#CPU_ALT + (i))
+      Reg(#CPU_ALT + (i)) = t
     Next
   EndIf
-  CurI = ((v >> 14) & 3) << 4            ; the memory management unit's entry bases
-  CurD = CurI + 8
+  Reg(#CPU_CURI) = ((v >> 14) & 3) << 4            ; the memory management unit's entry bases
+  Reg(#CPU_CURD) = Reg(#CPU_CURI) + 8
   PrvBase = ((v >> 12) & 3) << 4
   If (v ! PswHigh) & $C000             ; a new mode: its own fetch window, as it left it (or
-    t = CurI >> 2                        ; empty: FwSave, below). The register set and the
-    Fw(0) = FwSave(t)                    ; previous mode do not touch the fetch, so they keep it
-    Fw(1) = FwSave(t + 1)
-    Fw(2) = FwSave(t + 2)
+    t = Reg(#CPU_CURI) >> 2                        ; empty: FwSave, below). The register set and the
+    Reg(#CPU_FW + (0)) = FwSave(t)                    ; previous mode do not touch the fetch, so they keep it
+    Reg(#CPU_FW + (1)) = FwSave(t + 1)
+    Reg(#CPU_FW + (2)) = FwSave(t + 2)
   EndIf
 EndProcedure
 
@@ -564,8 +583,8 @@ ProcedureRAM PswSet(v.i)
   EndIf
   PswHigh = v & $FFF0
   SetNZ((v >> 3) & 1, (v >> 2) & 1)
-  FlagV = v << 14
-  FlagC = v << 16
+  Reg(#CPU_FLAGV) = v << 14
+  Reg(#CPU_FLAGC) = v << 16
   IntCheck()
   If v & $10                             ; T set: one instruction per window (StartWindow)
     CpuEventIn(1)
@@ -589,8 +608,8 @@ ProcedureRAM PswWrite(v.i)
   v = (v & $FFEF) | (PswHigh & $10)
   PswSet(v)
   PswLate = v | $10000
-  If TrapVector = 0
-    TrapVector = #TRAP_PSW_LATE
+  If Reg(#CPU_TRAPVECTOR) = 0
+    Reg(#CPU_TRAPVECTOR) = #TRAP_PSW_LATE
   EndIf
 EndProcedure
 
@@ -604,10 +623,10 @@ EndProcedure
 ; condition codes after its memory accesses - and SlowTail puts it back
 ; before taking the trap.
 ProcedureRAM BusError()
-  If TrapVector <> #VEC_BUS
+  If Reg(#CPU_TRAPVECTOR) <> #VEC_BUS
     AbortPsw = PswGet() | $10000
   EndIf
-  TrapVector = #VEC_BUS
+  Reg(#CPU_TRAPVECTOR) = #VEC_BUS
 EndProcedure
 
 ; ======================================================================
@@ -631,9 +650,9 @@ EndProcedure
 ;                 ED (grows down), 2-1 access (00 and 10 not resident, 01
 ;                 read-only, 11 read/write). A write to a PDR or its PAR
 ;                 clears W.
-;  THE PRECOMPUTED MAP. Whenever a register changes, MmuMapEntry works
-;  out again, for the mode, space and page it maps (MmuRegChanged: one PAR
-;  or PDR; MmuRecompute: MMR3, all of them), the physical offset (MapBase), the
+;  THE PRECOMPUTED MAP. Register writes invalidate the affected entries;
+;  MmuPhys rebuilds each on first use, coalescing PAR/PDR writes and leaving
+;  unused pages unbuilt. MmuRecompute handles MMR3 eagerly. The physical offset (MapBase), the
 ;  virtual bytes the length allows (MapLo/MapHi) and the access - and the
 ;  FAST WINDOWS: the virtual range that is readable (MapRLo/MapRHi), or
 ;  writable with W already set (MapWLo/MapWHi), and lies wholly in ONE of
@@ -761,39 +780,45 @@ ProcedureRAM MmuRecompute()
     MmuMapEntry(e)
   Next
   MmuCharge(#MAP_COST_ALL)
-  CurI = ((PswHigh >> 14) & 3) << 4
-  CurD = CurI + 8
+  Reg(#CPU_CURI) = ((PswHigh >> 14) & 3) << 4
+  Reg(#CPU_CURD) = Reg(#CPU_CURI) + 8
   PrvBase = ((PswHigh >> 12) & 3) << 4
-  Fw(0) = #MAP_NONE                    ; the fetch window is found again, every mode's
-  Fw(1) = 0
+  Reg(#CPU_FW + (0)) = #MAP_NONE                    ; the fetch window is found again, every mode's
+  Reg(#CPU_FW + (1)) = 0
   For e = 0 To 3
     FwSave(e * 4) = #MAP_NONE
     FwSave(e * 4 + 1) = 0
   Next
 EndProcedure
 
-; One register pair (entry r) changed - a PAR or PDR write, or W set: only
-; its entry, and the D entry that borrows it, are worked out again. (A
-; program that rewrites its PARs in a loop must not pay for the whole map
-; each time: that starved USB for 17 ms in MAINDEC-11-DFKAB.)
+; One register pair changed. Invalidate both fast windows before returning:
+; no assembly reader can use stale translation or permissions. MapReg stays
+; valid because only MMR3 changes borrowing, and MmuRecompute is eager.
+; Keep the original host-time charge and all fetch-window invalidations.
+ProcedureRAM MmuMapStale(e.i)
+  MapAcf(e) = -1
+  MapF(e << 3) = #MAP_NONE
+  MapF((e << 3) + 2) = #MAP_NONE
+EndProcedure
+
 ProcedureRAM MmuRegChanged(r.i)
   MmuCharge(#MAP_COST_ENTRY)
-  MmuMapEntry(r)
+  MmuMapStale(r)
   If (r & 8) = 0
     If MapReg(r + 8) = r
-      MmuMapEntry(r + 8)
+      MmuMapStale(r + 8)
     EndIf
     FwSave((r >> 4) * 4) = #MAP_NONE     ; an I entry: its mode's fetch window is found again
     FwSave((r >> 4) * 4 + 1) = 0         ; (a D entry is never fetched through)
-    If (r & $30) = CurI
-      Fw(0) = #MAP_NONE
-      Fw(1) = 0
+    If (r & $30) = Reg(#CPU_CURI)
+      Reg(#CPU_FW + (0)) = #MAP_NONE
+      Reg(#CPU_FW + (1)) = 0
     EndIf
   EndIf
 EndProcedure
 
 ProcedureRAM MmuReset()                     ; power-up and the bus INIT: MMR0 and MMR3 cleared
-  Mmr0 = 0
+  Reg(#CPU_MMR0) = 0
   Mmr3 = 0
   If MmuOn
     MmuOn = 0
@@ -836,15 +861,15 @@ ProcedureRAM.i MmuRegRead(a.i)
   Protected r.i
   MmuTouches = MmuTouches + 1
   If a = #MMR0_ADDR
-    ProcedureReturn Mmr0
+    ProcedureReturn Reg(#CPU_MMR0)
   ElseIf a = #MMR1_ADDR
-    If (Mmr0 & $E000) = 0 And MmuPcRec <> Fw(3)
+    If (Reg(#CPU_MMR0) & $E000) = 0 And Reg(#CPU_MMUPCREC) <> Reg(#CPU_FW + (3))
       ProcedureReturn 0                  ; nothing recorded for this instruction yet
     EndIf
-    ProcedureReturn Mmr1
+    ProcedureReturn Reg(#CPU_MMR1)
   ElseIf a = #MMR2_ADDR
-    If (Mmr0 & $E000) = 0
-      ProcedureReturn Fw(3)
+    If (Reg(#CPU_MMR0) & $E000) = 0
+      ProcedureReturn Reg(#CPU_FW + (3))
     EndIf
     ProcedureReturn Mmr2
   ElseIf a = #MMR3_ADDR
@@ -861,12 +886,12 @@ ProcedureRAM MmuRegWrite(a.i, v.i)
   Protected r.i
   MmuTouches = MmuTouches + 1
   If a = #MMR0_ADDR                      ; 15-13, 8 and 0 are writable
-    v = (Mmr0 & $00FE) | (v & $E101)
-    If (v ! Mmr0) & 1
+    v = (Reg(#CPU_MMR0) & $00FE) | (v & $E101)
+    If (v ! Reg(#CPU_MMR0)) & 1
       MmuOn = v & 1
       CpuEventIn(1)                      ; the other run loop, from the next instruction
     EndIf
-    Mmr0 = v
+    Reg(#CPU_MMR0) = v
   ElseIf a = #MMR3_ADDR
     Mmr3 = v & $3F
     MmuRecompute()
@@ -876,10 +901,20 @@ ProcedureRAM MmuRegWrite(a.i, v.i)
     r = MmuRegIndex(a)
     If r & $100
       r = r & $FF
-      Par(r) = v & $FFFF
+      v = v & $FFFF
+      If Par(r) = v And (Pdr(r) & $40) = 0
+        MmuCharge(#MAP_COST_ENTRY)
+        ProcedureReturn
+      EndIf
+      Par(r) = v
       Pdr(r) = Pdr(r) & ~$40
     Else
-      Pdr(r) = v & $7F0E
+      v = v & $7F0E
+      If Pdr(r) = v
+        MmuCharge(#MAP_COST_ENTRY)
+        ProcedureReturn
+      EndIf
+      Pdr(r) = v
     EndIf
     MmuRegChanged(r)
   EndIf
@@ -1146,7 +1181,7 @@ ProcedureRAM.i ReadWord(a.i)
     ProcedureReturn 0
   EndIf
   If a < #RAM16
-    ProcedureReturn Mem(a >> 1)
+    ProcedureReturn PeekU(@Mem(0) + a)
   EndIf
   ProcedureReturn IoRead(a)
 EndProcedure
@@ -1158,7 +1193,7 @@ ProcedureRAM WriteWord(a.i, v.i)
     ProcedureReturn
   EndIf
   If a < #RAM16
-    Mem(a >> 1) = v & $FFFF
+    PokeU(@Mem(0) + a, v)
     ProcedureReturn
   EndIf
   If a = #PSW_ADDR
@@ -1172,10 +1207,7 @@ EndProcedure
 ; kind), so reading either half of RBUF clears DONE, as on the real bus.
 ProcedureRAM.i ReadByte(a.i)
   If a < #RAM16
-    If a & 1
-      ProcedureReturn (Mem(a >> 1) >> 8) & $FF
-    EndIf
-    ProcedureReturn Mem(a >> 1) & $FF
+    ProcedureReturn PeekA(@Mem(0) + a) & $FF
   EndIf
   If a & 1
     ProcedureReturn (IoRead(a - 1) >> 8) & $FF
@@ -1185,11 +1217,7 @@ EndProcedure
 
 ProcedureRAM WriteByte(a.i, v.i)
   If a < #RAM16
-    If a & 1
-      Mem(a >> 1) = (Mem(a >> 1) & $00FF) | ((v & $FF) << 8)
-    Else
-      Mem(a >> 1) = (Mem(a >> 1) & $FF00) | (v & $FF)
-    EndIf
+    PokeA(@Mem(0) + a, v)
     ProcedureReturn
   EndIf
   If (a & $FFFE) = #PSW_ADDR
@@ -1267,7 +1295,7 @@ EndProcedure
 Macro MReadWord(mDest, mAdr)
   If mAdr < #RAM16
     If (mAdr & 1) = 0
-      mDest = Mem(mAdr >> 1)
+      mDest = PeekU(@Mem(0) + (mAdr))
     Else
       mDest = ReadWord(mAdr)
     EndIf
@@ -1279,7 +1307,7 @@ EndMacro
 Macro MWriteWord(mAdr, mVal)                   ; Mem is .u: the store keeps the low 16 bits
   If mAdr < #RAM16
     If (mAdr & 1) = 0
-      Mem(mAdr >> 1) = mVal
+      PokeU(@Mem(0) + (mAdr), mVal)
     Else
       WriteWord(mAdr, mVal)
     EndIf
@@ -1290,11 +1318,7 @@ EndMacro
 
 Macro MReadByte(mDest, mAdr)
   If mAdr < #RAM16
-    If mAdr & 1
-      mDest = (Mem(mAdr >> 1) >> 8) & $FF
-    Else
-      mDest = Mem(mAdr >> 1) & $FF
-    EndIf
+    mDest = PeekA(@Mem(0) + (mAdr)) & $FF
   Else
     mDest = ReadByte(mAdr)
   EndIf
@@ -1302,11 +1326,7 @@ EndMacro
 
 Macro MWriteByte(mAdr, mVal)
   If mAdr < #RAM16
-    If mAdr & 1
-      Mem(mAdr >> 1) = (Mem(mAdr >> 1) & $00FF) | ((mVal & $FF) << 8)
-    Else
-      Mem(mAdr >> 1) = (Mem(mAdr >> 1) & $FF00) | (mVal & $FF)
-    EndIf
+    PokeA(@Mem(0) + (mAdr), mVal)
   Else
     WriteByte(mAdr, mVal)
   EndIf
@@ -1326,8 +1346,8 @@ ProcedureRAM StackCheck()
     If (PswHigh & $C000) = 0                 ; kernel mode only
       StackYellow = 1
       CpuErr = CpuErr | #CPUE_YELLOW
-      If TrapVector = 0
-        TrapVector = #TRAP_STACK             ; send the instruction through SlowTail
+      If Reg(#CPU_TRAPVECTOR) = 0
+        Reg(#CPU_TRAPVECTOR) = #TRAP_STACK             ; send the instruction through SlowTail
       EndIf
     EndIf
   EndIf
@@ -1343,25 +1363,25 @@ Macro StackCheckFast()
 EndMacro
 
 ProcedureRAM Push(v.i)
-  Adr = (Reg(6) - 2) & $FFFF
-  Reg(6) = Adr
+  Reg(#CPU_ADR) = (Reg(6) - 2) & $FFFF
+  Reg(6) = Reg(#CPU_ADR)
   StackCheckFast()
-  MWriteWord(Adr, v)
+  MWriteWord(Reg(#CPU_ADR), v)
 EndProcedure
 
 ProcedureRAM.i Pop()
-  Adr = Reg(6)
-  MReadWord(Tmp, Adr)
-  Reg(6) = (Adr + 2) & $FFFF
-  ProcedureReturn Tmp
+  Reg(#CPU_ADR) = Reg(6)
+  MReadWordSlot(@Reg(#CPU_TMP), Reg(#CPU_ADR))
+  Reg(6) = (Reg(#CPU_ADR) + 2) & $FFFF
+  ProcedureReturn Reg(#CPU_TMP)
 EndProcedure
 
 ; ---- instruction stream ----------------------------------------------
 ProcedureRAM.i FetchWord()
-  Adr = Reg(7)
-  MReadWord(Tmp, Adr)
-  Reg(7) = (Adr + 2) & $FFFF
-  ProcedureReturn Tmp
+  Reg(#CPU_ADR) = Reg(7)
+  MReadWordSlot(@Reg(#CPU_TMP), Reg(#CPU_ADR))
+  Reg(7) = (Reg(#CPU_ADR) + 2) & $FFFF
+  ProcedureReturn Reg(#CPU_TMP)
 EndProcedure
 
 ; ======================================================================
@@ -1370,69 +1390,69 @@ EndProcedure
 ;  spec = the six-bit mode/register field. Returns the operand's address.
 ; ======================================================================
 ProcedureRAM.i EaWord(spec.i)
-  EaReg = spec & 7
-  Tmp = (spec >> 3) & 7
+  Reg(#CPU_EAREG) = spec & 7
+  Reg(#CPU_TMP) = (spec >> 3) & 7
   ; The modes most used first (Mini-Unix and V6, desk profiles of 2026-10-02).
-  If Tmp = 6                             ; X(R)   a when R = PC
-    Adr = Reg(7)                             ; the index word (FetchWord, inline)
-    Reg(7) = (Adr + 2) & $FFFF
-    MReadWord(Tmp, Adr)
-    ProcedureReturn (Tmp + Reg(EaReg)) & $FFFF
-  ElseIf Tmp = 4                             ; -(R)
-    Reg(EaReg) = (Reg(EaReg) - 2) & $FFFF
-    If EaReg = 6
+  If Reg(#CPU_TMP) = 6                             ; X(R)   a when R = PC
+    Reg(#CPU_ADR) = Reg(7)                             ; the index word (FetchWord, inline)
+    Reg(7) = (Reg(#CPU_ADR) + 2) & $FFFF
+    MReadWordSlot(@Reg(#CPU_TMP), Reg(#CPU_ADR))
+    ProcedureReturn (Reg(#CPU_TMP) + Reg(Reg(#CPU_EAREG))) & $FFFF
+  ElseIf Reg(#CPU_TMP) = 4                             ; -(R)
+    Reg(Reg(#CPU_EAREG)) = (Reg(Reg(#CPU_EAREG)) - 2) & $FFFF
+    If Reg(#CPU_EAREG) = 6
       StackCheckFast()
     EndIf
-    ProcedureReturn Reg(EaReg)
-  ElseIf Tmp = 2                             ; (R)+   #n when R = PC
-    Tmp = Reg(EaReg)
-    Reg(EaReg) = (Tmp + 2) & $FFFF
-    ProcedureReturn Tmp
-  ElseIf Tmp = 1                                 ; (R)
-    ProcedureReturn Reg(EaReg)
-  ElseIf Tmp = 3                             ; @(R)+  @#a when R = PC
-    Adr = Reg(EaReg)
-    Reg(EaReg) = (Adr + 2) & $FFFF
-    MReadWord(Tmp, Adr)
-    ProcedureReturn Tmp
-  ElseIf Tmp = 5                             ; @-(R)
-    Adr = (Reg(EaReg) - 2) & $FFFF
-    Reg(EaReg) = Adr
-    If EaReg = 6
+    ProcedureReturn Reg(Reg(#CPU_EAREG))
+  ElseIf Reg(#CPU_TMP) = 2                             ; (R)+   #n when R = PC
+    Reg(#CPU_TMP) = Reg(Reg(#CPU_EAREG))
+    Reg(Reg(#CPU_EAREG)) = (Reg(#CPU_TMP) + 2) & $FFFF
+    ProcedureReturn Reg(#CPU_TMP)
+  ElseIf Reg(#CPU_TMP) = 1                                 ; (R)
+    ProcedureReturn Reg(Reg(#CPU_EAREG))
+  ElseIf Reg(#CPU_TMP) = 3                             ; @(R)+  @#a when R = PC
+    Reg(#CPU_ADR) = Reg(Reg(#CPU_EAREG))
+    Reg(Reg(#CPU_EAREG)) = (Reg(#CPU_ADR) + 2) & $FFFF
+    MReadWordSlot(@Reg(#CPU_TMP), Reg(#CPU_ADR))
+    ProcedureReturn Reg(#CPU_TMP)
+  ElseIf Reg(#CPU_TMP) = 5                             ; @-(R)
+    Reg(#CPU_ADR) = (Reg(Reg(#CPU_EAREG)) - 2) & $FFFF
+    Reg(Reg(#CPU_EAREG)) = Reg(#CPU_ADR)
+    If Reg(#CPU_EAREG) = 6
       StackCheckFast()
     EndIf
-    MReadWord(Tmp, Adr)
-    ProcedureReturn Tmp
-  ElseIf Tmp = 7                             ; @X(R)  @a when R = PC
-    Adr = Reg(7)
-    Reg(7) = (Adr + 2) & $FFFF
-    MReadWord(Tmp, Adr)
-    Adr = (Tmp + Reg(EaReg)) & $FFFF
-    MReadWord(Tmp, Adr)
-    ProcedureReturn Tmp
+    MReadWordSlot(@Reg(#CPU_TMP), Reg(#CPU_ADR))
+    ProcedureReturn Reg(#CPU_TMP)
+  ElseIf Reg(#CPU_TMP) = 7                             ; @X(R)  @a when R = PC
+    Reg(#CPU_ADR) = Reg(7)
+    Reg(7) = (Reg(#CPU_ADR) + 2) & $FFFF
+    MReadWordSlot(@Reg(#CPU_TMP), Reg(#CPU_ADR))
+    Reg(#CPU_ADR) = (Reg(#CPU_TMP) + Reg(Reg(#CPU_EAREG))) & $FFFF
+    MReadWordSlot(@Reg(#CPU_TMP), Reg(#CPU_ADR))
+    ProcedureReturn Reg(#CPU_TMP)
   EndIf
-  ProcedureReturn Reg(EaReg)
+  ProcedureReturn Reg(Reg(#CPU_EAREG))
 EndProcedure
 
 ; Byte operands step (R)+ and -(R) by one, except through SP and PC, which
 ; always step by two so they stay even.
 ProcedureRAM.i EaByte(spec.i)
-  EaReg = spec & 7
-  EaStep = 1
-  If EaReg >= 6
-    EaStep = 2
+  Reg(#CPU_EAREG) = spec & 7
+  Reg(#CPU_EASTEP) = 1
+  If Reg(#CPU_EAREG) >= 6
+    Reg(#CPU_EASTEP) = 2
   EndIf
-  Tmp = (spec >> 3) & 7
-  If Tmp = 2
-    Tmp = Reg(EaReg)
-    Reg(EaReg) = (Tmp + EaStep) & $FFFF
-    ProcedureReturn Tmp
-  ElseIf Tmp = 4
-    Reg(EaReg) = (Reg(EaReg) - EaStep) & $FFFF
-    If EaReg = 6
+  Reg(#CPU_TMP) = (spec >> 3) & 7
+  If Reg(#CPU_TMP) = 2
+    Reg(#CPU_TMP) = Reg(Reg(#CPU_EAREG))
+    Reg(Reg(#CPU_EAREG)) = (Reg(#CPU_TMP) + Reg(#CPU_EASTEP)) & $FFFF
+    ProcedureReturn Reg(#CPU_TMP)
+  ElseIf Reg(#CPU_TMP) = 4
+    Reg(Reg(#CPU_EAREG)) = (Reg(Reg(#CPU_EAREG)) - Reg(#CPU_EASTEP)) & $FFFF
+    If Reg(#CPU_EAREG) = 6
       StackCheckFast()
     EndIf
-    ProcedureReturn Reg(EaReg)
+    ProcedureReturn Reg(Reg(#CPU_EAREG))
   EndIf
   ProcedureReturn EaWord(spec)
 EndProcedure
@@ -1441,37 +1461,37 @@ EndProcedure
 ; macros, so the commonest source - a register - costs no call at all.
 Macro MSrcWord()
   If (Op & $0E00) = 0
-    Src = Reg((Op >> 6) & 7)
+    Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
   Else
 CompilerIf #ASM_EA = 1
   ASM Uses Op
     ubfx r0, r8, #6, #6
     bl __eau
-    ldr r1, =global_ea
+    ldr r1, =global_reg + 84
     str r0, [r1]
   EndASM
 CompilerElse
-    Ea = EaWord((Op >> 6) & $3F)
+    Reg(#CPU_EA) = EaWord((Op >> 6) & $3F)
 CompilerEndIf
-    MReadWord(Src, Ea)
+    MReadWordSlot(@Reg(#CPU_SRC), Reg(#CPU_EA))
   EndIf
 EndMacro
 
 Macro MSrcByte()
   If (Op & $0E00) = 0
-    Src = Reg((Op >> 6) & 7) & $FF
+    Reg(#CPU_SRC) = Reg((Op >> 6) & 7) & $FF
   Else
 CompilerIf #ASM_EA = 1
   ASM Uses Op
     ubfx r0, r8, #6, #6
     bl __eaub
-    ldr r1, =global_ea
+    ldr r1, =global_reg + 84
     str r0, [r1]
   EndASM
 CompilerElse
-    Ea = EaByte((Op >> 6) & $3F)
+    Reg(#CPU_EA) = EaByte((Op >> 6) & $3F)
 CompilerEndIf
-    MReadByte(Src, Ea)
+    MReadByteSlot(@Reg(#CPU_SRC), Reg(#CPU_EA))
   EndIf
 EndMacro
 
@@ -1484,11 +1504,11 @@ CompilerIf #ASM_EA = 1
   ASM Uses Op
     and.w r0, r8, #0x3f
     bl __eau
-    ldr r1, =global_ea
+    ldr r1, =global_reg + 84
     str r0, [r1]
   EndASM
 CompilerElse
-  Ea = EaWord(Op & $3F)
+  Reg(#CPU_EA) = EaWord(Op & $3F)
 CompilerEndIf
 EndMacro
 
@@ -1497,11 +1517,11 @@ CompilerIf #ASM_EA = 1
   ASM Uses Op
     and.w r0, r8, #0x3f
     bl __eaub
-    ldr r1, =global_ea
+    ldr r1, =global_reg + 84
     str r0, [r1]
   EndASM
 CompilerElse
-  Ea = EaByte(Op & $3F)
+  Reg(#CPU_EA) = EaByte(Op & $3F)
 CompilerEndIf
 EndMacro
 
@@ -1516,22 +1536,34 @@ EndMacro
 ProcedureRAM MmuAbort(bits.i, e.i)
   Protected r.i
   r = MapReg(e)
-  If (Mmr0 & $E000) = 0
-    Mmr0 = (Mmr0 & $0101) | bits | ((r >> 4) << 5) | (((r >> 3) & 1) << 4) | ((r & 7) << 1)
-    Mmr2 = Fw(3)                         ; frozen with MMR0
-    If MmuPcRec <> Fw(3)
-      Mmr1 = 0
+  If (Reg(#CPU_MMR0) & $E000) = 0
+    Reg(#CPU_MMR0) = (Reg(#CPU_MMR0) & $0101) | bits | ((r >> 4) << 5) | (((r >> 3) & 1) << 4) | ((r & 7) << 1)
+    Mmr2 = Reg(#CPU_FW + (3))                         ; frozen with MMR0
+    If Reg(#CPU_MMUPCREC) <> Reg(#CPU_FW + (3))
+      Reg(#CPU_MMR1) = 0
     EndIf
   EndIf
-  If TrapVector <> #VEC_BUS And TrapVector <> #VEC_MMU
+  If Reg(#CPU_TRAPVECTOR) <> #VEC_BUS And Reg(#CPU_TRAPVECTOR) <> #VEC_MMU
     AbortPsw = PswGet() | $10000
   EndIf
-  TrapVector = #VEC_MMU
+  Reg(#CPU_TRAPVECTOR) = #VEC_MMU
+EndProcedure
+
+; Setting W changes only the writable window. Translation, read windows
+; and instruction fetch remain valid; a stale alias rebuilds on first use.
+ProcedureRAM MmuWindowWritten(e.i)
+  If MapAcf(e) >= 0
+    MapF((e << 3) + 2) = MapF(e << 3)
+    MapF((e << 3) + 3) = MapF((e << 3) + 1)
+  EndIf
 EndProcedure
 
 ; The physical address of va in entry e, or -1 after an abort.
 ProcedureRAM.i MmuPhys(va.i, e.i, write.i)
   Protected bits.i, r.i
+  If MapAcf(e) < 0
+    MmuMapEntry(e)
+  EndIf
   bits = 0
   If MapAcf(e) = 0
     bits = $8000
@@ -1550,7 +1582,13 @@ ProcedureRAM.i MmuPhys(va.i, e.i, write.i)
     r = MapReg(e)
     If (Pdr(r) & $40) = 0                ; the first write: W, and a fast window
       Pdr(r) = Pdr(r) | $40
-      MmuRegChanged(r)
+      MmuCharge(#MAP_COST_ENTRY)
+      MmuWindowWritten(r)
+      If (r & 8) = 0
+        If MapReg(r + 8) = r
+          MmuWindowWritten(r + 8)
+        EndIf
+      EndIf
     EndIf
   EndIf
   ProcedureReturn (va + MapBase(e)) & MapMask
@@ -1579,7 +1617,7 @@ ProcedureRAM.i MmuReadWord(va.i, e.i)
     ProcedureReturn 0
   EndIf
   If pa < #RAM_BYTES
-    ProcedureReturn Mem(pa >> 1)
+    ProcedureReturn PeekU(@Mem(0) + pa)
   EndIf
   CompilerIf #PSRAM = 1
     If pa < MemLim                       ; the memory past 56 KB, in the PSRAM
@@ -1605,7 +1643,7 @@ ProcedureRAM MmuWriteWord(va.i, e.i, v.i)
     ProcedureReturn
   EndIf
   If pa < #RAM_BYTES
-    Mem(pa >> 1) = v & $FFFF
+    PokeU(@Mem(0) + pa, v)
     ProcedureReturn
   EndIf
   CompilerIf #PSRAM = 1
@@ -1627,10 +1665,7 @@ ProcedureRAM.i MmuReadByte(va.i, e.i)
     ProcedureReturn 0
   EndIf
   If pa < #RAM_BYTES                     ; Mem itself: ReadByte reaches only #RAM16 of it
-    If pa & 1
-      ProcedureReturn (Mem(pa >> 1) >> 8) & $FF
-    EndIf
-    ProcedureReturn Mem(pa >> 1) & $FF
+    ProcedureReturn PeekA(@Mem(0) + pa) & $FF
   EndIf
   CompilerIf #PSRAM = 1
     If pa < MemLim
@@ -1664,11 +1699,7 @@ ProcedureRAM MmuWriteByte(va.i, e.i, v.i)
     WriteByte(pa, v)
     ProcedureReturn
   EndIf
-  If pa & 1                              ; Mem itself: WriteByte reaches only #RAM16 of it
-    Mem(pa >> 1) = (Mem(pa >> 1) & $00FF) | ((v & $FF) << 8)
-  Else
-    Mem(pa >> 1) = (Mem(pa >> 1) & $FF00) | (v & $FF)
-  EndIf
+  PokeA(@Mem(0) + pa, v)
 EndProcedure
 
 ; The fast path, INLINE: in the entry's fast window, a load or store; else
@@ -1736,19 +1767,19 @@ EndMacro
 ; The operand macros the handlers use: in the space the last mapped operand
 ; address was formed in (EaWordM sets EaBase).
 Macro MMReadWord(mDest, mAdr)
-  MMReadWordE(mDest, mAdr, EaBase)
+  MMReadWordE(mDest, mAdr, Reg(#CPU_EABASE))
 EndMacro
 
 Macro MMWriteWord(mAdr, mVal)
-  MMWriteWordE(mAdr, mVal, EaBase)
+  MMWriteWordE(mAdr, mVal, Reg(#CPU_EABASE))
 EndMacro
 
 Macro MMReadByte(mDest, mAdr)
-  MMReadByteE(mDest, mAdr, EaBase)
+  MMReadByteE(mDest, mAdr, Reg(#CPU_EABASE))
 EndMacro
 
 Macro MMWriteByte(mAdr, mVal)
-  MMWriteByteE(mAdr, mVal, EaBase)
+  MMWriteByteE(mAdr, mVal, Reg(#CPU_EABASE))
 EndMacro
 
 ; MMR1: a register change an abort would leave behind (not while frozen).
@@ -1758,14 +1789,14 @@ EndMacro
 ; and autodecrement in the mapped loop, and a call cost more than the work
 ; (the speed pass of 2026-10-02: 5% of V6's cycles on the desk).
 Macro MmrRecord(mR, mAmt)
-  If (Mmr0 & $E000) = 0
-    If MmuPcRec <> Fw(3)
-      MmuPcRec = Fw(3)
-      Mmr1 = (((mAmt) & $1F) << 3) | (mR)
-    ElseIf (Mmr1 & $FF) = 0
-      Mmr1 = (((mAmt) & $1F) << 3) | (mR)
+  If (Reg(#CPU_MMR0) & $E000) = 0
+    If Reg(#CPU_MMUPCREC) <> Reg(#CPU_FW + (3))
+      Reg(#CPU_MMUPCREC) = Reg(#CPU_FW + (3))
+      Reg(#CPU_MMR1) = (((mAmt) & $1F) << 3) | (mR)
+    ElseIf (Reg(#CPU_MMR1) & $FF) = 0
+      Reg(#CPU_MMR1) = (((mAmt) & $1F) << 3) | (mR)
     Else
-      Mmr1 = (Mmr1 & $FF) | (((((mAmt) & $1F) << 3) | (mR)) << 8)
+      Reg(#CPU_MMR1) = (Reg(#CPU_MMR1) & $FF) | (((((mAmt) & $1F) << 3) | (mR)) << 8)
     EndIf
   EndIf
 EndMacro
@@ -1775,7 +1806,7 @@ EndMacro
 ; at an instruction's first register change (MmrRecord). (An instruction
 ; that loops on itself keeps adding to MMR1 - none of the diagnostics do.)
 Macro MmuInstrStart(mPc)
-  Fw(3) = mPc
+  Reg(#CPU_FW + (3)) = mPc
 EndMacro
 
 ; EaWord mapped: the index word and an immediate come from I space, every
@@ -1794,71 +1825,71 @@ EndMacro
 ; (swtch), and with (PC) read from D space V7 idled for ever after its first
 ; disk read (2026-10-21).
 Macro EaWordMBody()
-  EaReg = spec & 7
-  EaBase = CurD
-  Tmp = (spec >> 3) & 7
+  Reg(#CPU_EAREG) = spec & 7
+  Reg(#CPU_EABASE) = Reg(#CPU_CURD)
+  Reg(#CPU_TMP) = (spec >> 3) & 7
   ; The modes in the order V6 uses them (the desk profile of 2026-10-02):
   ; X(R) 44%, -(R) 28%, (R)+ 14%, (R) 10%, @(R)+ 4%, the rest under 1%.
-  If Tmp = 6                             ; X(R)   a when R = PC
-    Adr = Reg(7)
-    Reg(7) = (Adr + 2) & $FFFF
-    MMReadWordE(Tmp, Adr, CurI)
-    ProcedureReturn (Tmp + Reg(EaReg)) & $FFFF
-  ElseIf Tmp = 4                             ; -(R)
-    Reg(EaReg) = (Reg(EaReg) - 2) & $FFFF
-    MmrRecord(EaReg, -2)
-    If EaReg = 6
+  If Reg(#CPU_TMP) = 6                             ; X(R)   a when R = PC
+    Reg(#CPU_ADR) = Reg(7)
+    Reg(7) = (Reg(#CPU_ADR) + 2) & $FFFF
+    MMReadWordESlot(@Reg(#CPU_TMP), Reg(#CPU_ADR), Reg(#CPU_CURI))
+    ProcedureReturn (Reg(#CPU_TMP) + Reg(Reg(#CPU_EAREG))) & $FFFF
+  ElseIf Reg(#CPU_TMP) = 4                             ; -(R)
+    Reg(Reg(#CPU_EAREG)) = (Reg(Reg(#CPU_EAREG)) - 2) & $FFFF
+    MmrRecord(Reg(#CPU_EAREG), -2)
+    If Reg(#CPU_EAREG) = 6
       StackCheckFast()
-    ElseIf EaReg = 7
-      EaBase = CurI                      ; -(PC): I space (THE PC'S SPACE, below)
+    ElseIf Reg(#CPU_EAREG) = 7
+      Reg(#CPU_EABASE) = Reg(#CPU_CURI)                      ; -(PC): I space (THE PC'S SPACE, below)
     EndIf
-    ProcedureReturn Reg(EaReg)
-  ElseIf Tmp = 2                             ; (R)+   #n when R = PC
-    Tmp = Reg(EaReg)
-    Reg(EaReg) = (Tmp + 2) & $FFFF
-    If EaReg = 7
-      EaBase = CurI
+    ProcedureReturn Reg(Reg(#CPU_EAREG))
+  ElseIf Reg(#CPU_TMP) = 2                             ; (R)+   #n when R = PC
+    Reg(#CPU_TMP) = Reg(Reg(#CPU_EAREG))
+    Reg(Reg(#CPU_EAREG)) = (Reg(#CPU_TMP) + 2) & $FFFF
+    If Reg(#CPU_EAREG) = 7
+      Reg(#CPU_EABASE) = Reg(#CPU_CURI)
     Else
-      MmrRecord(EaReg, 2)
+      MmrRecord(Reg(#CPU_EAREG), 2)
     EndIf
-    ProcedureReturn Tmp
-  ElseIf Tmp = 1                                 ; (R)
-    If EaReg = 7
-      EaBase = CurI                      ; (PC): I space (THE PC'S SPACE, below)
+    ProcedureReturn Reg(#CPU_TMP)
+  ElseIf Reg(#CPU_TMP) = 1                                 ; (R)
+    If Reg(#CPU_EAREG) = 7
+      Reg(#CPU_EABASE) = Reg(#CPU_CURI)                      ; (PC): I space (THE PC'S SPACE, below)
     EndIf
-    ProcedureReturn Reg(EaReg)
-  ElseIf Tmp = 3                             ; @(R)+  @#a when R = PC
-    Adr = Reg(EaReg)
-    Reg(EaReg) = (Adr + 2) & $FFFF
-    If EaReg = 7
-      MMReadWordE(Tmp, Adr, CurI)
+    ProcedureReturn Reg(Reg(#CPU_EAREG))
+  ElseIf Reg(#CPU_TMP) = 3                             ; @(R)+  @#a when R = PC
+    Reg(#CPU_ADR) = Reg(Reg(#CPU_EAREG))
+    Reg(Reg(#CPU_EAREG)) = (Reg(#CPU_ADR) + 2) & $FFFF
+    If Reg(#CPU_EAREG) = 7
+      MMReadWordESlot(@Reg(#CPU_TMP), Reg(#CPU_ADR), Reg(#CPU_CURI))
     Else
-      MmrRecord(EaReg, 2)
-      MMReadWordE(Tmp, Adr, CurD)
+      MmrRecord(Reg(#CPU_EAREG), 2)
+      MMReadWordESlot(@Reg(#CPU_TMP), Reg(#CPU_ADR), Reg(#CPU_CURD))
     EndIf
-    ProcedureReturn Tmp
-  ElseIf Tmp = 5                             ; @-(R)
-    Adr = (Reg(EaReg) - 2) & $FFFF
-    Reg(EaReg) = Adr
-    MmrRecord(EaReg, -2)
-    If EaReg = 6
+    ProcedureReturn Reg(#CPU_TMP)
+  ElseIf Reg(#CPU_TMP) = 5                             ; @-(R)
+    Reg(#CPU_ADR) = (Reg(Reg(#CPU_EAREG)) - 2) & $FFFF
+    Reg(Reg(#CPU_EAREG)) = Reg(#CPU_ADR)
+    MmrRecord(Reg(#CPU_EAREG), -2)
+    If Reg(#CPU_EAREG) = 6
       StackCheckFast()
     EndIf
-    If EaReg = 7
-      MMReadWordE(Tmp, Adr, CurI)        ; @-(PC): the pointer from I space
+    If Reg(#CPU_EAREG) = 7
+      MMReadWordESlot(@Reg(#CPU_TMP), Reg(#CPU_ADR), Reg(#CPU_CURI))        ; @-(PC): the pointer from I space
     Else
-      MMReadWordE(Tmp, Adr, CurD)
+      MMReadWordESlot(@Reg(#CPU_TMP), Reg(#CPU_ADR), Reg(#CPU_CURD))
     EndIf
-    ProcedureReturn Tmp
-  ElseIf Tmp = 7                             ; @X(R)  @a when R = PC
-    Adr = Reg(7)
-    Reg(7) = (Adr + 2) & $FFFF
-    MMReadWordE(Tmp, Adr, CurI)
-    Adr = (Tmp + Reg(EaReg)) & $FFFF
-    MMReadWordE(Tmp, Adr, CurD)
-    ProcedureReturn Tmp
+    ProcedureReturn Reg(#CPU_TMP)
+  ElseIf Reg(#CPU_TMP) = 7                             ; @X(R)  @a when R = PC
+    Reg(#CPU_ADR) = Reg(7)
+    Reg(7) = (Reg(#CPU_ADR) + 2) & $FFFF
+    MMReadWordESlot(@Reg(#CPU_TMP), Reg(#CPU_ADR), Reg(#CPU_CURI))
+    Reg(#CPU_ADR) = (Reg(#CPU_TMP) + Reg(Reg(#CPU_EAREG))) & $FFFF
+    MMReadWordESlot(@Reg(#CPU_TMP), Reg(#CPU_ADR), Reg(#CPU_CURD))
+    ProcedureReturn Reg(#CPU_TMP)
   EndIf
-  ProcedureReturn Reg(EaReg)
+  ProcedureReturn Reg(Reg(#CPU_EAREG))
 EndMacro
 
 ; The mapped loop's handlers do not call this for the four commonest modes:
@@ -1866,54 +1897,53 @@ EndMacro
 ; which does X(R), -(R), (R)+ and (R) itself and comes here for everything
 ; else. EaSpec is where __eaw leaves the spec on the way (asm_check.pico2
 ; counts the calls that came here by it).
-Global EaSpec.i
 ProcedureRAM.i EaWordM(spec.i)
   EaWordMBody()
 EndProcedure
 
 ProcedureRAM.i EaByteM(spec.i)
-  EaReg = spec & 7
-  EaStep = 1
-  If EaReg >= 6
-    EaStep = 2
+  Reg(#CPU_EAREG) = spec & 7
+  Reg(#CPU_EASTEP) = 1
+  If Reg(#CPU_EAREG) >= 6
+    Reg(#CPU_EASTEP) = 2
   EndIf
-  Tmp = (spec >> 3) & 7
-  If Tmp = 2
-    EaBase = CurD
-    Tmp = Reg(EaReg)
-    Reg(EaReg) = (Tmp + EaStep) & $FFFF
-    If EaReg = 7
-      EaBase = CurI
+  Reg(#CPU_TMP) = (spec >> 3) & 7
+  If Reg(#CPU_TMP) = 2
+    Reg(#CPU_EABASE) = Reg(#CPU_CURD)
+    Reg(#CPU_TMP) = Reg(Reg(#CPU_EAREG))
+    Reg(Reg(#CPU_EAREG)) = (Reg(#CPU_TMP) + Reg(#CPU_EASTEP)) & $FFFF
+    If Reg(#CPU_EAREG) = 7
+      Reg(#CPU_EABASE) = Reg(#CPU_CURI)
     Else
-      MmrRecord(EaReg, EaStep)
+      MmrRecord(Reg(#CPU_EAREG), Reg(#CPU_EASTEP))
     EndIf
-    ProcedureReturn Tmp
-  ElseIf Tmp = 4
-    EaBase = CurD
-    Reg(EaReg) = (Reg(EaReg) - EaStep) & $FFFF
-    MmrRecord(EaReg, 0 - EaStep)
-    If EaReg = 6
+    ProcedureReturn Reg(#CPU_TMP)
+  ElseIf Reg(#CPU_TMP) = 4
+    Reg(#CPU_EABASE) = Reg(#CPU_CURD)
+    Reg(Reg(#CPU_EAREG)) = (Reg(Reg(#CPU_EAREG)) - Reg(#CPU_EASTEP)) & $FFFF
+    MmrRecord(Reg(#CPU_EAREG), 0 - Reg(#CPU_EASTEP))
+    If Reg(#CPU_EAREG) = 6
       StackCheckFast()
-    ElseIf EaReg = 7
-      EaBase = CurI                      ; -(PC): I space
+    ElseIf Reg(#CPU_EAREG) = 7
+      Reg(#CPU_EABASE) = Reg(#CPU_CURI)                      ; -(PC): I space
     EndIf
-    ProcedureReturn Reg(EaReg)
+    ProcedureReturn Reg(Reg(#CPU_EAREG))
   EndIf
   ProcedureReturn EaWordM(spec)
 EndProcedure
 
 ProcedureRAM PushM(v.i)
-  Adr = (Reg(6) - 2) & $FFFF
-  Reg(6) = Adr
+  Reg(#CPU_ADR) = (Reg(6) - 2) & $FFFF
+  Reg(6) = Reg(#CPU_ADR)
   StackCheckFast()
-  MMWriteWordE(Adr, v, CurD)
+  MMWriteWordE(Reg(#CPU_ADR), v, Reg(#CPU_CURD))
 EndProcedure
 
 ProcedureRAM.i PopM()
-  Adr = Reg(6)
-  MMReadWordE(Tmp, Adr, CurD)
-  Reg(6) = (Adr + 2) & $FFFF
-  ProcedureReturn Tmp
+  Reg(#CPU_ADR) = Reg(6)
+  MMReadWordESlot(@Reg(#CPU_TMP), Reg(#CPU_ADR), Reg(#CPU_CURD))
+  Reg(6) = (Reg(#CPU_ADR) + 2) & $FFFF
+  ProcedureReturn Reg(#CPU_TMP)
 EndProcedure
 
 ; THE FETCH WINDOW. The mapped loop fetches every instruction through three
@@ -1926,9 +1956,9 @@ EndProcedure
 ; changes.
 ProcedureRAM MmuFetchWindow(va.i)
   Protected e.i, lo.i, hi.i, bs.i
-  Fw(0) = #MAP_NONE
-  Fw(1) = 0
-  e = CurI + (va >> 13)
+  Reg(#CPU_FW + (0)) = #MAP_NONE
+  Reg(#CPU_FW + (1)) = 0
+  e = Reg(#CPU_CURI) + (va >> 13)
   If va < MapRLo(e) Or va >= MapRHi(e)
     ProcedureReturn
   EndIf
@@ -1939,57 +1969,57 @@ ProcedureRAM MmuFetchWindow(va.i)
     e = e - 1
     lo = MapRLo(e)
   Wend
-  e = CurI + (va >> 13)
+  e = Reg(#CPU_CURI) + (va >> 13)
   While (e & 7) < 7 And MapRLo(e + 1) = hi And MapHost(e + 1) = bs
     e = e + 1
     hi = MapRHi(e)
   Wend
-  Fw(0) = lo
-  Fw(1) = hi
-  Fw(2) = bs
+  Reg(#CPU_FW + (0)) = lo
+  Reg(#CPU_FW + (1)) = hi
+  Reg(#CPU_FW + (2)) = bs
 EndProcedure
 
 ProcedureRAM.i FetchWordM()
-  Adr = Reg(7)
-  MMReadWordE(Tmp, Adr, CurI)
-  Reg(7) = (Adr + 2) & $FFFF
-  MmuFetchWindow(Adr)                    ; the window the next fetches use
-  ProcedureReturn Tmp
+  Reg(#CPU_ADR) = Reg(7)
+  MMReadWordESlot(@Reg(#CPU_TMP), Reg(#CPU_ADR), Reg(#CPU_CURI))
+  Reg(7) = (Reg(#CPU_ADR) + 2) & $FFFF
+  MmuFetchWindow(Reg(#CPU_ADR))                    ; the window the next fetches use
+  ProcedureReturn Reg(#CPU_TMP)
 EndProcedure
 
 Macro MMSrcWord()
   If (Op & $0E00) = 0
-    Src = Reg((Op >> 6) & 7)
+    Reg(#CPU_SRC) = Reg((Op >> 6) & 7)
   Else
 CompilerIf #ASM_EA = 1
   ASM Uses Op
     ubfx r0, r8, #6, #6
     bl __eaw
-    ldr r1, =global_ea
+    ldr r1, =global_reg + 84
     str r0, [r1]
   EndASM
 CompilerElse
-    Ea = EaWordM((Op >> 6) & $3F)
+    Reg(#CPU_EA) = EaWordM((Op >> 6) & $3F)
 CompilerEndIf
-    MMReadWordE(Src, Ea, EaBase)
+    MMReadWordESlot(@Reg(#CPU_SRC), Reg(#CPU_EA), Reg(#CPU_EABASE))
   EndIf
 EndMacro
 
 Macro MMSrcByte()
   If (Op & $0E00) = 0
-    Src = Reg((Op >> 6) & 7) & $FF
+    Reg(#CPU_SRC) = Reg((Op >> 6) & 7) & $FF
   Else
 CompilerIf #ASM_EA = 1
   ASM Uses Op
     ubfx r0, r8, #6, #6
     bl __eab
-    ldr r1, =global_ea
+    ldr r1, =global_reg + 84
     str r0, [r1]
   EndASM
 CompilerElse
-    Ea = EaByteM((Op >> 6) & $3F)
+    Reg(#CPU_EA) = EaByteM((Op >> 6) & $3F)
 CompilerEndIf
-    MMReadByteE(Src, Ea, EaBase)
+    MMReadByteESlot(@Reg(#CPU_SRC), Reg(#CPU_EA), Reg(#CPU_EABASE))
   EndIf
 EndMacro
 
@@ -2017,8 +2047,8 @@ ProcedureRAM TakeTrap(vector.i)
   EndIf
   If PswLate                             ; a push landed on the PSW (177776): PswWrite
     PswLate = 0                          ; has applied it, and it must not be applied
-    If TrapVector = #TRAP_PSW_LATE       ; again at the end of the NEXT instruction,
-      TrapVector = 0                     ; over that instruction's condition codes
+    If Reg(#CPU_TRAPVECTOR) = #TRAP_PSW_LATE       ; again at the end of the NEXT instruction,
+      Reg(#CPU_TRAPVECTOR) = 0                     ; over that instruction's condition codes
     EndIf
   EndIf
   ; ClockCycles = ClockCycles + #J11_T_TRAP
@@ -2034,8 +2064,8 @@ ProcedureRAM TakeStackTrap()
     StackYellow = 0
     TakeTrap(#VEC_BUS)
     StackYellow = 0
-    If TrapVector = #TRAP_STACK
-      TrapVector = 0
+    If Reg(#CPU_TRAPVECTOR) = #TRAP_STACK
+      Reg(#CPU_TRAPVECTOR) = 0
     EndIf
   EndIf
 EndProcedure
@@ -2133,12 +2163,12 @@ EndProcedure
 ProcedureRAM StartWindow()
   RunLeft = RunBank
   If Dl11TxRdy = 0
-    Tmp = Dl11TxDue - InstrCount
-    If Tmp < 1
-      Tmp = 1
+    Reg(#CPU_TMP) = Dl11TxDue - InstrCount
+    If Reg(#CPU_TMP) < 1
+      Reg(#CPU_TMP) = 1
     EndIf
-    If Tmp < RunLeft
-      RunLeft = Tmp
+    If Reg(#CPU_TMP) < RunLeft
+      RunLeft = Reg(#CPU_TMP)
     EndIf
   EndIf
   If IntReq
@@ -2222,9 +2252,73 @@ ProcedureRAM CpuReset()
   Fea = 0
   Dl11TxRdy = 1
   PswSet($00E0)            ; kernel, priority 7
-  TrapVector = 0
+  Reg(#CPU_TRAPVECTOR) = 0
   Halted = 0
   Waiting = 0
   ; ClockCycles = 0
 EndProcedure
 
+
+; Read destinations in the compact state are array elements. Pass their
+; addresses explicitly: a macro assignment target must be a plain name.
+Macro MReadWordSlot(mDestAddr, mAdr)
+  If mAdr < #RAM16
+    If (mAdr & 1) = 0
+      PokeL(mDestAddr, PeekU(@Mem(0) + (mAdr)))
+    Else
+      PokeL(mDestAddr, ReadWord(mAdr))
+    EndIf
+  Else
+    PokeL(mDestAddr, ReadWord(mAdr))
+  EndIf
+EndMacro
+
+Macro MReadByteSlot(mDestAddr, mAdr)
+  If mAdr < #RAM16
+    PokeL(mDestAddr, PeekA(@Mem(0) + (mAdr)) & $FF)
+  Else
+    PokeL(mDestAddr, ReadByte(mAdr))
+  EndIf
+EndMacro
+
+Macro MMReadWordESlot(mDestAddr, mAdr, mBase)
+  MmE = (mBase) + (mAdr >> 13)
+  If mAdr >= MapRLo(MmE)
+    If mAdr < MapRHi(MmE)
+      If (mAdr & 1) = 0
+        PokeL(mDestAddr, PeekU(mAdr + MapHost(MmE)))
+      Else
+        PokeL(mDestAddr, MmuReadWord(mAdr, MmE))
+      EndIf
+    Else
+      PokeL(mDestAddr, MmuReadWord(mAdr, MmE))
+    EndIf
+  Else
+    PokeL(mDestAddr, MmuReadWord(mAdr, MmE))
+  EndIf
+EndMacro
+
+Macro MMReadByteESlot(mDestAddr, mAdr, mBase)
+  MmE = (mBase) + (mAdr >> 13)
+  If mAdr >= MapRLo(MmE)
+    If mAdr < MapRHi(MmE)
+      PokeL(mDestAddr, PeekA(mAdr + MapHost(MmE)) & $FF)
+    Else
+      PokeL(mDestAddr, MmuReadByte(mAdr, MmE))
+    EndIf
+  Else
+    PokeL(mDestAddr, MmuReadByte(mAdr, MmE))
+  EndIf
+EndMacro
+
+Macro MMReadWordSlot(mDestAddr, mAdr)
+  MMReadWordESlot(mDestAddr, mAdr, Reg(#CPU_EABASE))
+EndMacro
+
+Macro MMReadByteSlot(mDestAddr, mAdr)
+  MMReadByteESlot(mDestAddr, mAdr, Reg(#CPU_EABASE))
+EndMacro
+
+CompilerIf #DISK_BACKEND = 0
+Global SingleHit.i                      ; successful indexed native entries, hardware test only
+CompilerEndIf

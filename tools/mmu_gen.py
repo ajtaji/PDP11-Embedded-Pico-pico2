@@ -112,17 +112,21 @@ def generate():
     # the unmapped loop's own MOV handlers (and their table lines) stay out:
     # they use the unmapped operand code directly, and the Pico 2's mapped
     # loop gets handlers written here instead (specialise, below)
-    b0 = "; ---- UNMAPPED ONLY: MOV by addressing mode (tools/mmu_gen.py leaves this block out) ----\n"
-    b1 = "; ---- END UNMAPPED ONLY ----\n"
-    while b0 in raw:
-        i = raw.index(b0)
-        raw = raw[:i] + raw[raw.index(b1, i) + len(b1):]
-    # the unmapped loop's tails in assembly (#ASM_TAILS) stay out too: the
-    # mapped loop's tails are written from the macros in the Else branch
-    b0 = "; ---- UNMAPPED ONLY: the tails in assembly (tools/mmu_gen.py leaves this block out) ----\n"
-    while b0 in raw:
-        i = raw.index(b0)
-        raw = raw[:i] + raw[raw.index(b1, i) + len(b1):]
+    # Assembly wrappers can be nested inside an unmapped-only handler.
+    # Match marker depth, rather than stopping at the first inner end.
+    kept, depth = [], 0
+    for line in raw.splitlines(keepends=True):
+        if line.startswith("; ---- UNMAPPED ONLY:"):
+            depth += 1
+        elif line == "; ---- END UNMAPPED ONLY ----\n":
+            depth -= 1
+            if depth < 0:
+                fail("an unmatched UNMAPPED ONLY end marker")
+        elif depth == 0:
+            kept.append(line)
+    if depth:
+        fail("an unclosed UNMAPPED ONLY marker")
+    raw = "".join(kept)
     start = raw.index("Global Dim OpTable.Label(8192)")
     s = raw[start:]
 
@@ -2313,6 +2317,20 @@ def specialise(text):
     return text.replace("  OpTableReadyM = 1\n", fill + "  OpTableReadyM = 1\n")
 
 
+
+def reference_tables(text):
+    # Only the diskless comparison firmware reads these entry-point pairs.
+    # Production dispatch needs OpTableM, without the mirrors or their setup.
+    names=r'(?:OpAsmM|OpRefM|MovAsmM|MovRefM)'
+    text,n=re.subn(r'(?m)^Global Dim '+names+r'\.Label\([^\n]*\n',
+                   lambda m:'CompilerIf #DISK_BACKEND = 0\n'+m[0]+'CompilerEndIf\n',text)
+    if n!=4:fail('reference_tables: expected four comparison tables')
+    text,n=re.subn(r'(?m)(?:^  '+names+r'\(\d+\) = [^\n]*\n)+',
+                   lambda m:'CompilerIf #DISK_BACKEND = 0\n'+m[0]+'CompilerEndIf\n',text)
+    if not n:fail('reference_tables: no comparison entries found')
+    return text
+
+
 def main():
     body = generate()
     bad = []
@@ -2324,9 +2342,16 @@ def main():
             text = pico2_tails(text)
             text = pico2_eaw(text)
             text = pico2_ops(text)
+            from asm_imm_index_gen import generate as immediate_indexed
+            text = immediate_indexed(text)
+            from asm_indexed_gen import generate as indexed_single
+            text = indexed_single(text)
             text = own_tails(text)        # last: the assembly handlers' tails too
             text = map_rows(text)
-            text = base_rel(text)         # last: the hot globals from GBase (r5)
+            text = base_rel(text)         # the hot globals from GBase (r5)
+            from cpu_state_layout import forward as compact_cpu
+            text = compact_cpu(text, native_base=True)
+            text = reference_tables(text)
         else:                                # the Pico: its SRAM holds CpuRun (Mini-Unix); CpuRunM stays in flash
             text = text.replace("\nProcedureRAM.i CpuRunM(n.i)", "\nProcedure.i CpuRunM(n.i)", 1)
         if "--check" in sys.argv:
