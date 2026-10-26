@@ -26,7 +26,8 @@ The additional assembly pass reduces measured Unix work time by 1.6% on
 Pico W and 2.1% on Pico 2 W against the preceding firmware, with smaller
 program images. Coverage and limits: [BENCHMARKS](docs/BENCHMARKS.md#additional-assembly-pass-2026-10-26).
 
-Lato-derived Terminal Sans at 14 pixels is the default. The Pico rasterizes
+Lato-derived Terminal Sans at 16 pixels is the default, with gamma-corrected
+text edges ([14/16-pixel comparison](docs/FONT-READABILITY.md)). The Pico rasterizes
 the TrueType outlines itself and uses natural letter spacing. At the USB
 console, press **Ctrl-]**, release it, then **f** to switch faces, **+** to
 increase size, or **-** to decrease it. The guest keeps running. A monospace

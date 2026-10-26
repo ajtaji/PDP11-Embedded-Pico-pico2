@@ -8,9 +8,15 @@ firmware build for each screen and no executable driver loader.
 ## Live fonts
 
 The emulator rasterizes actual TrueType outlines on the Pico. The default
-face is Terminal Sans, derived from Lato Regular, at 14 pixels. Terminal Mono,
+face is Terminal Sans, derived from Lato Regular, at 16 pixels. Terminal Mono,
 derived from JetBrains Mono, is also included. Character spacing uses each
 font's advances and bearings. Lines wrap by pixel width.
+
+Text coverage is gamma encoded for an sRGB-like panel response before RGB565
+conversion. The four cached levels map to brightness 0, 156, 213 and 255,
+replacing 0, 85, 170 and 255. This brightens partially covered strokes without
+changing graphics colors or panel gamma registers. A hardware comparison of
+14 and 16 pixels selected 16 as the clearer default; [captured board glyphs](docs/font-2026-10-26.png) show both sizes. The comparison uses exported glyph/color data, not a photograph or optical calibration of the LCD.
 
 At the USB console, press Ctrl-], release it, then:
 
@@ -25,7 +31,7 @@ At the USB console, press Ctrl-], release it, then:
 These commands do not reach Unix. Font changes reflow the visible text and
 keep the guest running. Requests are queued until the current panel transfer
 and font generation finish. Font selection does not erase/program flash.
-The boot setting `readable` selects 14 pixels; `compact` selects 11 pixels.
+The boot setting `readable` selects 16 pixels; `compact` selects 11 pixels.
 Live changes are temporary until the next reboot.
 
 The rasterizer reads sfnt, cmap format 4, hmtx, loca and quadratic glyf

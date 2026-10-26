@@ -516,6 +516,14 @@ next-fetch tails are exercised. `CpuRunM(1)` alone cannot validate those tails.
 `--check` verifies that the generated fixture and reference are current.
 
 
+## Panel font palette snapshots
+
+Panel font snapshots now include a `C` line with the firmware's RGB565 text
+palette. `tools/font_capture.py` reconstructs that palette rather than
+assuming linear grey values, expects the 16-pixel readable default, and
+supports `--size 14` for an older or temporarily resized font. Its exercise
+returns to the starting size. See [the readability comparison](FONT-READABILITY.md).
+
 ## RP2040 FP11 native arithmetic checks
 
 `tools/fp11_vectors.py` generates deterministic, exact integer reference

@@ -7,6 +7,9 @@ Procedure FontCapture()
   Define i.i, b.i
   If TtReady = 0 : Say("FONT_BUSY") : Eol() : ProcedureReturn : EndIf
   Say("FONT ") : Num(TtFace) : Ch(32) : Num(TtSize) : Ch(32) : Num(TtLine) : Ch(32) : Num(TtCacheUsed) : Eol()
+  Say("C")
+  For i = 0 To 15 : Ch(32) : Num(TpLut(i)) : Next
+  Eol()
   For i = 0 To 94
     Say("G ") : Num(i) : Ch(32) : Num(TtWidth(i)) : Ch(32) : Num(TtHeight(i)) : Ch(32)
     Num(TtLeft(i)) : Ch(32) : Num(TtTop(i)) : Ch(32) : Num(TtAdvance(i)) : Ch(32) : Num(TtOffset(i)) : Eol()

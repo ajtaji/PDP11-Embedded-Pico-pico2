@@ -16,6 +16,14 @@ Global TpTop.i, TpX.i, TpY.i, TpEsc.i, TpP1.i, TpP2.i, TpNP.i, TpTail.i, TpOn.i
 Global TpNext.i, TpRow.i = -1, TpScan.i, TpCurOn.i, TpBlinkAt.i, TpCurX.i, TpCurY.i
 Global TpFrames.i, TpRowsSent.i, TpBells.i, TpFps.i, TpFpsFrames.i, TpFpsAt.i, TpSkipped.i
 
+; Encode linear glyph coverage for an sRGB-like panel response. This only
+; changes terminal greys: graphics pixels and the LCD's colour settings stay
+; untouched. Four cached coverage levels use entries 0, 5, 10 and 15.
+DataSection
+TpTextSrgb:
+  Data.a 0,73,102,124,141,156,170,182,193,203,213,222,231,239,247,255
+EndDataSection
+
 Procedure TtYield()
   Service()
   If TpFontLive
@@ -186,7 +194,7 @@ Procedure TermBegin()
   OutputAudioBegin()
   TpOn = PanelReady
   If TpOn = 0 : ProcedureReturn : EndIf
-  i = 14 : If OutputFont : i = 11 : EndIf
+  i = 16 : If OutputFont : i = 11 : EndIf
   If TtSelect(0, i) = 0 : TpOn = 0 : ProcedureReturn : EndIf
   TpFontAdvance = @TtAdvance(0)
   TpCh = TtLine
@@ -196,7 +204,7 @@ Procedure TermBegin()
   TpX0 = 2
   TpY0 = (PanelHeight - TpRows * TpCh) / 2
   For i = 0 To 15
-    v = i * 17
+    v = PeekA(?TpTextSrgb + i) & 255
     TpLut(i) = ((v >> 3) << 11) | ((v >> 2) << 5) | (v >> 3)
   Next
   For i = 0 To 80 * 24 - 1 : TpScr(i) = 32 : Next

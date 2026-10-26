@@ -567,7 +567,7 @@ to change the pixel size. The screen reflows and Unix keeps running. The Pico
 reads actual TrueType outlines and rasterizes glyphs at the selected size.
 The 4 KB glyph cache bounds the sizes available; a request that does not fit
 is refused and the previous font is regenerated. These live choices reset
-to the boot font after a restart. The default is Lato-derived 14 pixels.
+to the boot font after a restart. The default is Lato-derived 16 pixels.
 
 To generate a compact boot setting or another configuration:
 
