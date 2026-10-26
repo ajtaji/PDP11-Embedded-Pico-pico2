@@ -26,9 +26,11 @@ def patched_sources(fs):
         old = fs.read(inode).decode('ascii').splitlines(True) if inode else []
         new, pos = [], 0
         while i < len(lines) and not lines[i].startswith('--- '):
-            h = re.fullmatch(r'@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@\n', lines[i])
+            h = re.fullmatch(r'@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@\n', lines[i])
             assert h, lines[i]
-            start = max(0, int(h[1]) - 1)
+            # An insertion's old range ends AFTER this line; a nonempty
+            # range starts AT its one-based line number.
+            start = int(h[1]) if h[2] == '0' else max(0, int(h[1]) - 1)
             assert start >= pos
             new.extend(old[pos:start])
             pos = start
