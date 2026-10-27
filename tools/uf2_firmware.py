@@ -25,6 +25,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import flash_layout as FL  # noqa: E402
 import rk_image  # noqa: E402
+from uf2_codec import pad_pages
 
 XIP = FL.XIP
 
@@ -58,7 +59,8 @@ def main():
     open(a.o, "wb").write(rk_image.uf2(parts, chip[0]))
 
     back, fam2 = read_uf2(a.o)
-    if fam2 != fam or {o: p for o, p in back.items() if o >= FL.RADIO_LO} != packs:
+    expected = {a-XIP:p for a,p in pad_pages({XIP+o:p for o,p in packs.items()}).items()}
+    if fam2 != fam or {o: p for o, p in back.items() if o >= FL.RADIO_LO} != expected:
         os.remove(a.o)
         sys.exit("uf2_firmware: the packs did not come out byte-identical; nothing written")
     if bytes(b"".join(back[o] for o in sorted(back) if o < FL.RADIO_LO))[:len(fw)] != fw:

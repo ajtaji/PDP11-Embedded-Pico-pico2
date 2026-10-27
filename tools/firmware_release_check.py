@@ -4,7 +4,7 @@ import os,tempfile,argparse
 import hashlib,json,re,subprocess,struct
 from firmware_release import ROOT,FAMILY,PACKS,read_uf2,decode_bytes,payload_hash
 from output_config import decode,TARGETS
-from uf2_codec import check_bootrom,E10_SECTOR
+from uf2_codec import check_bootrom,E10_SECTOR,pad_pages
 ap=argparse.ArgumentParser(description=__doc__)
 ap.add_argument('--manifest',type=Path,default=ROOT/'images/manifest-2026-10-27.json')
 manifest=json.loads(ap.parse_args().manifest.read_text())
@@ -42,11 +42,13 @@ for folder,fw in [('pico2w-v6','pico2w-v6'),('picoplus2','picoplus2'),('picoplus
  packs={a:p for a,p in pages.items() if a>=PACKS}
  flash_size=0x800000 if folder.startswith('feather') else (0x1000000 if folder.startswith('picoplus2') else 0x400000)
  assert max(packs)+256<=0x10000000+flash_size-(0x100000 if folder!='pico2w-v6' else 0),rel
- assert old_family==family and packs=={a:p for a,p in old_pages.items() if a>=PACKS},rel
+ assert old_family==family and packs==pad_pages({a:p for a,p in old_pages.items() if a>=PACKS}),rel
  assert payload_hash(packs)==manifest['unchanged_disk_payload_sha256'][rel]
  _,code=read_uf2(ROOT/'images'/fw/'firmware.uf2')
  assert {a:p for a,p in pages.items() if a<PACKS}==code
-assert (ROOT/'images/picow-mini-unix/minix.uf2').read_bytes()==subprocess.check_output(['git','show',manifest['pack_base_revision']+':images/picow-mini-unix/minix.uf2'],cwd=ROOT)
+old_minix=decode_bytes(subprocess.check_output(['git','show',manifest['pack_base_revision']+':images/picow-mini-unix/minix.uf2'],cwd=ROOT))
+new_minix=read_uf2(ROOT/'images/picow-mini-unix/minix.uf2')
+assert new_minix==(old_minix[0],pad_pages(old_minix[1]))
 if 'v6_fp_kernel' in manifest:
  import v6fs
  from v6_fp_image import unpack_root,normalize_kernel

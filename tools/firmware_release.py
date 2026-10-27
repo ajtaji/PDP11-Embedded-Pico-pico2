@@ -32,7 +32,7 @@ def replace_program(old_path,new_program,family):
  if old_family!=family:raise ValueError('wrong chip family')
  if any(a>=E10_SECTOR or a<FLASH for a in new_program):raise ValueError('program reaches reserved E10 sector')
  if any(FLASH+0x200000<=a<PACKS for a in old):raise ValueError('combined image contains radio bytes')
- packs={a:p for a,p in old.items() if a>=PACKS}
+ packs=pad_pages({a:p for a,p in old.items() if a>=PACKS})
  if not packs:raise ValueError('combined image has no disk data')
  addresses=sorted(new_program)
  if addresses!=list(range(FLASH,FLASH+len(addresses)*256,256)):
@@ -103,7 +103,8 @@ def main():
   for panel in PANELS:
    save('images/output-settings/'+target+'-'+panel+'.uf2',uf2(record(panel,'silent'),target))
  minix=ROOT/'images/picow-mini-unix/minix.uf2'
- files.append({'path':minix.relative_to(ROOT).as_posix(),'bytes':minix.stat().st_size,'sha256':sha(minix.read_bytes())})
+ minix_family,minix_pages=read_uf2(minix)
+ save(minix.relative_to(ROOT).as_posix(),write_uf2(minix_pages,minix_family))
  manifest={'date':a.date,'runtime_source':source,'pack_base_revision':source,'compiler_sha256':a.compiler_sha256,'psram_profiles':{'picoplus2':'Pimoroni_Pico_Plus_2_W.board','feather':'Adafruit_Feather_RP2350_HSTX.board'},'audio':'silent','default_font':'Lato-derived Terminal Sans 16 px, sRGB text coverage','programs':list(programs)+['rp2350-demo'],'unchanged_disk_payload_sha256':disk_hashes,'files':files}
  kernel=ROOT/'media/unix/rkfp-j11'
  manifest['v6_fp_kernel']={'path':'media/unix/rkfp-j11','sha256':sha(kernel.read_bytes()),'boot':'rkfp','format':'V6 sysfix 0407 data-first','context':'FPS and six full D accumulators','sources':'docs/v6/FP-KERNEL.md'}
