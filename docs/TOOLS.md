@@ -566,6 +566,12 @@ recovery kernel. [Kernel format, updating and reproduction](v6/FP-KERNEL.md).
 
 ## BOOTSEL UF2 copy
 
+The updated PureMetal Forge uploader accepts these files directly through
+**Compiler > Flash Prebuilt File...** or `--radio-firmware`, retaining the
+E10 prefix and validating its transfer separately from the main image.
+Both PSRAM boards passed native uploads with exact full-flash preservation.
+The procedure below also works with older builds that reject the prefix.
+
 Enter BOOTSEL first (hold the button while plugging in USB, or send
 `ResetPicoToBootSel1254` to the running firmware's serial port). Confirm the
 `RP2350` or `RPI-RP2` drive appears, then drag the matching UF2 onto it in

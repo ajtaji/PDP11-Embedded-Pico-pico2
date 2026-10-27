@@ -1,0 +1,32 @@
+{
+  "date": "2026-10-27",
+  "ide_sha256": "d52351bffa1ad0c43926a0292f2bec6e9cef42c0b47f0f1b7e963c5660913ea1",
+  "ide_signed_and_timestamped": true,
+  "source_stamp_verified_sources": 218,
+  "desktop_checks": 68,
+  "desktop_failures": 0,
+  "disabled_e10_mutant_caught": true,
+  "physical_a2_rom_test": false,
+  "boards": [
+    {
+      "board": "feather",
+      "native_e10_upload_pass": true,
+      "uf2_sha256": "44a96a85b23fcc3d4ff1a219aad3436d8321610099025605c9d3335fa1aa48d2",
+      "flash_bytes": 8388608,
+      "all_main_pages_match": true,
+      "full_flash_unchanged": true,
+      "saved_unix_store_unchanged": true,
+      "settings_radio_packs_unchanged": true
+    },
+    {
+      "board": "picoplus2",
+      "native_e10_upload_pass": true,
+      "uf2_sha256": "2508149b436f95776421a54a8feadc49c9b1658516fca0f5b0ebbd3bbbb8bf5a",
+      "flash_bytes": 16777216,
+      "all_main_pages_match": true,
+      "full_flash_unchanged": true,
+      "saved_unix_store_unchanged": true,
+      "settings_radio_packs_unchanged": true
+    }
+  ]
+}

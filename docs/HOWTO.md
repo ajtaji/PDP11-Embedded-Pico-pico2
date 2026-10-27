@@ -160,7 +160,9 @@ Unplug at any time. On these boards the emulator never writes the flash (the PSR
 ## 6. Re-flash without the BOOTSEL button
 
 Current RP2350 prebuilt UF2s include the E10 workaround and complete touched
-4 KB sectors. Copy the whole file to BOOTSEL. Older IDE prebuilt uploaders
+4 KB sectors. The updated PureMetal Forge uploader accepts their E10
+prefix through Flash Prebuilt File or `--radio-firmware`. You can also
+copy the whole file to BOOTSEL. Older IDE prebuilt uploaders
 reject this standard prefix; use Explorer or the
 [BOOTSEL helper](TOOLS.md#bootsel-uf2-copy). The workaround uses a reserved
 sector below output settings, away from the saved Unix store. Do not remove
@@ -375,10 +377,10 @@ python tools/board_session.py --hub-port 9 --script docs/psram/proof.txt --out t
 
 ## 11. Flash and build from the PureMetal Forge IDE
 
-For the current RP2350 **prebuilt** images, use the BOOTSEL copy procedure
-in section 6: older IDE uploaders reject their E10 prefix. The historical
-IDE prebuilt workflow below applies to images/uploaders without that
-limitation. Building and uploading source remains available.
+The updated uploader accepts current RP2350 **prebuilt** images with their
+E10 prefix unchanged, so the IDE prebuilt workflow below is supported.
+Older IDE builds reject the prefix; use the BOOTSEL procedure in section 6
+with those builds. Building and uploading source remains available.
 
 Everything for the **Pico 2 W** and the **Pico W** can be done in the PureMetal Forge IDE (the OpenGL IDE or the Standard one; the menus are the same), with no command line and no BOOTSEL button once the board runs a PureMetal program. The IDE's upload resets the board, copies the file and waits for it to come back, as for any PureMetal program.
 

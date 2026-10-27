@@ -33,8 +33,12 @@ changed pack nonces prevent old saved blocks from being replayed onto it.
 For earlier V6 installations, the FP-enabled `rkfp` kernel still requires
 the V6 system-image update described in [the V6 guide](../docs/v6/FP-KERNEL.md).
 
-Copy the complete file to the BOOTSEL drive. Current RP2350 images include
-the RP2350-E10 workaround; older PureMetal Forge prebuilt uploaders reject
+The updated PureMetal Forge uploader accepts the complete RP2350 UF2,
+including its E10 prefix, through **Compiler > Flash Prebuilt File...**
+or `--radio-firmware`. Native uploads passed on both PSRAM boards with
+complete flash readbacks unchanged; [validation](UPLOADER-VALIDATION-2026-10-27.json).
+You can also copy the complete file to the BOOTSEL drive. Current RP2350
+images include the RP2350-E10 workaround; older prebuilt uploaders reject
 its separate Absolute-family prefix. Use Explorer or the
 [unchanged-copy helper](../docs/TOOLS.md#bootsel-uf2-copy); do not strip it.
 
