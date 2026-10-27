@@ -1,0 +1,79 @@
+!boot
+!wait 1
+stty -lcase
+/etc/mount /dev/rk1 /usr
+!timeout 120
+mkdir /compat
+cd /compat
+!raw cat >numbers
+!line
+!line 1 alpha
+!line 2 beta
+!line 3 gamma
+!eof
+!wait 0.2
+awk '{s += $1} END {print s}' numbers
+sed 's/alpha/omega/' numbers
+echo '12 34 + p' | dc
+!raw cat >note
+!line
+!line .nf
+!line Unix V7 compatibility check
+!eof
+!wait 0.2
+nroff note > formatted
+grep 'Unix V7' formatted
+!raw cat >hello.c
+!line
+!line double sqrt();
+!line main(){ double x; int n; x=sqrt(4.0); n=x*21; printf("V7CC %d\n",n); }
+!eof
+!wait 0.2
+cc -O hello.c -lm
+mv a.out hello
+./hello
+!raw cat >fhello.f
+!line
+!line       program test
+!line       double precision x
+!line       x=dsqrt(4.0d0)
+!line       write(6,10) x
+!line    10 format('F77 ',f6.2)
+!line       end
+!eof
+!wait 0.2
+f77 -o fhello fhello.f
+./fhello
+!raw cat >stress.c
+!line
+!line char a[24000][2]; char *q=a;
+!line main(){ int p[2],j,n,pid,k,st,e; unsigned i; char c;
+!line for(i=0;i<48000;i++) q[i]=i;
+!line if(pipe(p)<0){printf("STRESS PIPE FAILED\n");exit(1);}
+!line k=0;e=0;
+!line for(j=0;j<38;j++) {
+!line pid=fork(); if(pid<0){e++;break;}
+!line if(pid==0) {
+!line close(p[1]); if(read(p[0],&c,1)!=1)exit(2);
+!line for(i=0;i<48000;i++) if((q[i]&255)!=(i&255))exit(3);
+!line close(p[0]);exit(0);
+!line }
+!line k++;
+!line }
+!line close(p[0]);c='x';for(j=0;j<k;j++)if(write(p[1],&c,1)!=1)e++;
+!line close(p[1]);for(j=0;j<k;j++){wait(&st);if(st)e++;}
+!line printf("STRESS %d %d\n",k,e);
+!line }
+!eof
+!wait 0.2
+cc -O stress.c
+mv a.out stress
+time ./stress
+dd if=/dev/rrk1 of=raw bs=512 count=4
+wc raw
+sum raw
+echo v7-persist-20261027 > /persist
+sync
+!save
+cat /persist
+!stats

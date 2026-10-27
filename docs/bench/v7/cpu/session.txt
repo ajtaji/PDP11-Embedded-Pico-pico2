@@ -1,0 +1,100 @@
+!boot
+!wait 1
+stty -lcase
+/etc/mount /dev/rk1 /usr
+!timeout 120
+mkdir /hb
+cd /hb
+!raw cat >scall.c
+!line
+!line main(){ register int i; for(i=0;i<25000;i++) getpid(); }
+!eof
+!wait 0.2
+cc -O scall.c
+mv a.out scall
+!raw cat >loop.c
+!line
+!line main(){ long i; int *w; for(i=0;i<1000000;i++); w=(int *)&i; printf("Done\nLOOPCHECK %d %d\n",w[0],w[1]); }
+!eof
+!wait 0.2
+cc -O loop.c
+mv a.out loop
+!raw cat >pipes.c
+!line
+!line char buffer[512]; int fid[2];
+!line main(){ register int i;
+!line pipe(fid);
+!line if(fork()) {
+!line for(i=0;i<1024;i++)
+!line if(write(fid[1],buffer,512)<0) printf("Error writing %d\n",i);
+!line if(close(fid[1])!=0) printf("Error parent closing\n");
+!line } else {
+!line if(close(fid[1])!=0) printf("Error child closing\n");
+!line for(;;) if(read(fid[0],buffer,512)==0) break;
+!line }
+!line }
+!eof
+!wait 0.2
+cc -O pipes.c
+mv a.out pipes
+time ./scall
+time ./scall
+time ./scall
+time ./loop
+time ./loop
+time ./loop
+time ./pipes
+time ./pipes
+time ./pipes
+!raw cat >pcheck.c
+!line
+!line char b[512]; int f[2];
+!line main(){ int pid,i,n,k,st,e; e=0;
+!line for(i=0;i<512;i++)b[i]=i;
+!line if(pipe(f)<0){printf("PIPE CREATE FAILED\n");exit(1);}
+!line pid=fork();if(pid<0){printf("FORK FAILED\n");exit(1);}
+!line if(pid){
+!line close(f[0]);for(i=0;i<1024;i++)if(write(f[1],b,512)!=512)e++;
+!line close(f[1]);wait(&st);printf("PARENT 1024 ERR %d STATUS %d\n",e,st);exit(e!=0 || st!=0);
+!line }
+!line close(f[1]);k=0;
+!line while((n=read(f[0],b,512))>0){if(n!=512)e++;for(i=0;i<n;i++)if((b[i]&255)!=(i&255))e++;k++;}
+!line close(f[0]);printf("CHILD %d ERR %d END %d\n",k,e,n);exit(e!=0 || k!=1024 || n!=0);
+!line }
+!eof
+!wait 0.2
+cc -O pcheck.c
+mv a.out pcheck
+./pcheck
+ps
+sync
+ls /
+
+ps
+sync
+ls /
+!raw cat >fcalle.c
+!line
+!line main(){ register int i,j; for(i=0;i != -15536;i++) j = empty(i); printf("CALLCHECK %d %d\n",i,j); }
+!line empty(k) int k; { return(k); }
+!eof
+!wait 0.2
+cc -O fcalle.c
+mv a.out fcalle
+time ./fcalle
+time ./fcalle
+time ./fcalle
+!raw cat >fcalla.c
+!line
+!line main(){ register int i,j; for(i=0;i != -15536;i++) j = i; printf("CALLCHECK %d %d\n",i,j); }
+!eof
+!wait 0.2
+cc -O fcalla.c
+mv a.out fcalla
+time ./fcalla
+time ./fcalla
+time ./fcalla
+sync
+ls /
+
+!stats

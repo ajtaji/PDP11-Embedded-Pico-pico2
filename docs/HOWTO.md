@@ -326,7 +326,7 @@ first bell.
 
 ## 10. The PSRAM boards
 
-**Current images (2026-10-26).** `images/picoplus2/combined.uf2` and `images/feather/combined.uf2` contain the updated panel/font firmware and unchanged V6 packs, and were run on both boards. Their `firmware.uf2` downloads update an existing V6 or V7 installation without replacing the packs. The packs start at 0x10240000 and 0x104C0000; the saved-change store remains in the top 1 MB of flash.
+**Current images (2026-10-27).** `images/picoplus2/combined.uf2` and `images/feather/combined.uf2` contain the updated panel/font firmware and unchanged V6 packs, and were run on both boards. Their `firmware.uf2` downloads update an existing V6 or V7 installation without replacing the packs. The packs start at 0x10240000 and 0x104C0000; the saved-change store remains in the top 1 MB of flash.
 
 The supplied V6 kernel on the Pimoroni Pico Plus 2 W and Adafruit Feather RP2350 HSTX uses an 18-bit address space (up to 248 KB); the firmware provides 3812 KB for 22-bit guests. The V7 pack asks for 2040 KB. Their images are `images/picoplus2/combined.uf2` and `images/feather/combined.uf2`.
 

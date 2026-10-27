@@ -1,0 +1,119 @@
+!boot
+!wait 1
+stty -lcase
+/etc/mount /dev/rk1 /usr
+!timeout 120
+mkdir /hb
+cd /hb
+!raw cat >words
+!line
+!line Now
+!line is
+!line the
+!line time
+!line for
+!line all
+!line good
+!line men
+!line to
+!line come
+!line to
+!line the
+!line aid
+!line of
+!line their
+!line country
+!eof
+!wait 0.2
+!raw cat >tst.sh
+!line
+!line sort <words >sort.$$
+!line od sort.$$ | sort -n +1 >od.$$
+!line grep the sort.$$ | tee grep.$$ | wc >wc.$$
+!line rm sort.$$ grep.$$ od.$$ wc.$$
+!eof
+!wait 0.2
+time sh tst.sh
+time sh tst.sh
+time sh tst.sh
+!raw cat >m1.sh
+!line
+!line echo 1
+!line sh tst.sh &
+!line wait
+!eof
+!wait 0.2
+time sh m1.sh
+!raw cat >m2.sh
+!line
+!line echo 1
+!line sh tst.sh &
+!line echo 2
+!line sh tst.sh &
+!line wait
+!eof
+!wait 0.2
+time sh m2.sh
+!raw cat >m3.sh
+!line
+!line echo 1
+!line sh tst.sh &
+!line echo 2
+!line sh tst.sh &
+!line echo 3
+!line sh tst.sh &
+!line wait
+!eof
+!wait 0.2
+time sh m3.sh
+!raw cat >m4.sh
+!line
+!line echo 1
+!line sh tst.sh &
+!line echo 2
+!line sh tst.sh &
+!line echo 3
+!line sh tst.sh &
+!line echo 4
+!line sh tst.sh &
+!line wait
+!eof
+!wait 0.2
+time sh m4.sh
+!raw cat >m5.sh
+!line
+!line echo 1
+!line sh tst.sh &
+!line echo 2
+!line sh tst.sh &
+!line echo 3
+!line sh tst.sh &
+!line echo 4
+!line sh tst.sh &
+!line echo 5
+!line sh tst.sh &
+!line wait
+!eof
+!wait 0.2
+time sh m5.sh
+!raw cat >m6.sh
+!line
+!line echo 1
+!line sh tst.sh &
+!line echo 2
+!line sh tst.sh &
+!line echo 3
+!line sh tst.sh &
+!line echo 4
+!line sh tst.sh &
+!line echo 5
+!line sh tst.sh &
+!line echo 6
+!line sh tst.sh &
+!line wait
+!eof
+!wait 0.2
+time sh m6.sh
+sync
+ls /
+!stats

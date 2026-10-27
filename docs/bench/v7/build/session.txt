@@ -1,0 +1,58 @@
+!boot
+!wait 1
+stty -lcase
+/etc/mount /dev/rk1 /usr
+!timeout 120
+mkdir /ut
+cd /ut
+!raw cat >calc.c
+!line
+!line fib(n) int n; { if(n<2) return(n); return(fib(n-1)+fib(n-2)); }
+!line gcd(a,b) int a,b; { int t; while(b){ t=a%b; a=b; b=t; } return(a); }
+!line ucopy(a,b,n) char *a,*b; int n; { while(n--) *a++ = *b++; }
+!eof
+!wait 0.2
+!raw cat >main.c
+!line
+!line char a[512],b[512];
+!line main(){ int i,s,e; for(i=0;i<512;i++) a[i]=i;
+!line ucopy(b,a,512); e=0; for(i=0;i<512;i++) if(a[i]!=b[i]) e++;
+!line s=0; for(i=0;i<20;i++) s=+fib(12);
+!line printf("ARITH %d %d %d\n",s,gcd(1071,462),e); }
+!eof
+!wait 0.2
+cc -O -c calc.c
+cc -O -S main.c
+as - main.s
+mv a.out main.o
+ar r libu.a calc.o
+ar t libu.a
+cc main.o libu.a
+mv a.out run
+./run
+size run
+nm run
+cp run run2
+cmp run run2
+strip run
+./run
+cc -O main.c calc.c
+mv a.out run
+!raw cat >runs
+!line
+!line ./run
+!line ./run
+!line ./run
+!line ./run
+!line ./run
+!line ./run
+!line ./run
+!line ./run
+!line ./run
+!line ./run
+!eof
+!wait 0.2
+sh runs
+sync
+ls /
+!stats

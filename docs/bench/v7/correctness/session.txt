@@ -1,0 +1,68 @@
+!boot
+!wait 1
+stty -lcase
+/etc/mount /dev/rk1 /usr
+!timeout 120
+mkdir /hb
+chdir /hb
+!raw cat >words
+!line
+!line Now
+!line is
+!line the
+!line time
+!line for
+!line all
+!line good
+!line men
+!line to
+!line come
+!line to
+!line the
+!line aid
+!line of
+!line their
+!line country
+!eof
+!wait 0.2
+!raw cat >check.sh
+!line
+!line sort <words >sorted
+!line od sorted | sort -n +1 >octal
+!line grep the sorted | tee matched | wc >counts
+!line cat sorted
+!line cat matched
+!line cat counts
+!eof
+!wait 0.2
+sh check.sh
+!raw cat >checked.sh
+!line
+!line sort <words >sort.$$
+!line od sort.$$ | sort -n +1 >od.$$
+!line grep the sort.$$ | tee grep.$$ | wc >wc.$$
+!line cat wc.$$
+!line rm sort.$$ grep.$$ od.$$ wc.$$
+!eof
+!wait 0.2
+!raw cat >checked6.sh
+!line
+!line echo 1
+!line sh checked.sh &
+!line echo 2
+!line sh checked.sh &
+!line echo 3
+!line sh checked.sh &
+!line echo 4
+!line sh checked.sh &
+!line echo 5
+!line sh checked.sh &
+!line echo 6
+!line sh checked.sh &
+!line wait
+!eof
+!wait 0.2
+sh checked6.sh
+sync
+ls /
+!stats

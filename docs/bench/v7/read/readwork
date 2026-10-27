@@ -1,0 +1,12 @@
+od /rkunix >/dev/null
+ls -l /bin /etc /lib /usr/bin >/dev/null
+du /bin /usr/bin >/dev/null
+sum /bin/sh /bin/ls /bin/cc /bin/as /bin/ld
+od /rkunix >/dev/null
+ls -l /bin /etc /lib /usr/bin >/dev/null
+du /bin /usr/bin >/dev/null
+sum /bin/sh /bin/ls /bin/cc /bin/as /bin/ld
+od /rkunix >/dev/null
+ls -l /bin /etc /lib /usr/bin >/dev/null
+du /bin /usr/bin >/dev/null
+sum /bin/sh /bin/ls /bin/cc /bin/as /bin/ld

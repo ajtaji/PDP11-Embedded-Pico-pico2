@@ -14,7 +14,7 @@ The emulated machine has a panel and USB serial console, an RK11 disk controller
 - **Host tools:** [docs/TOOLS.md](docs/TOOLS.md)
 - **Forum:** <https://forum.ajtaji.com>
 
-## Current firmware: 2026-10-26
+## Current firmware: 2026-10-27
 
 The ready-to-flash images now include the CPU optimizations, standard panel
 console, and runtime TrueType fonts. LAFVIN ST7796 is the default screen on
@@ -22,10 +22,14 @@ both processors; Display Pack 2 ST7789, ILI9341 and HX8357D use the same
 firmware with a small [screen settings UF2](images/output-settings/).
 Only the LAFVIN glass has been checked in this update.
 
-The latest assembly pass increases measured Pico W floating-point throughput
-by 5.9% and frees 256 bytes of SRAM; Pico 2 W gains 284 bytes of SRAM.
-The complete Unix workload is essentially unchanged. Both retain full
-guest memory, overlays and panel/font features. [Fresh results and validation](docs/bench/assembly-2026-10-26.md).
+The latest PSRAM update adds aligned assembly sector transfers and a V7
+kernel with correct floating-point state across fork and exec. Both PSRAM
+boards pass the complete V7 Unix workload and floating-point checks.
+[Fresh historical benchmark comparisons](docs/bench/historical-2026-10-27.md)
+and [PSRAM results and limits](docs/bench/psram-2026-10-27.md) distinguish
+measured results from historical references. Whole-workload timing is
+essentially unchanged. Standard Pico programs and both demos rebuild to
+the same accepted bytes as the preceding release.
 
 Lato-derived Terminal Sans at 16 pixels is the default, with gamma-corrected
 text edges ([14/16-pixel comparison](docs/FONT-READABILITY.md)). The Pico rasterizes
@@ -39,7 +43,8 @@ Firmware-only uploads preserve the installed Unix kernel. RP2040 needs the
 FP-enabled **minix.uf2** when upgrading from an older interpreter-only pack.
 V6 images now boot **rkfp**, with proper floating-point process state;
 existing V6 installations need the new system image or kernel update as well.
-See [V6 kernel installation and rebuild](docs/v6/FP-KERNEL.md). V7 kernels are unchanged. Full combined images are for installing the firmware and Unix
+See [V6 kernel installation and rebuild](docs/v6/FP-KERNEL.md). The new V7 PSRAM system images also include FP context fixes; see the
+[V7 kernel guide](docs/v7/PSRAM-KERNEL.md). Full combined images install the firmware and Unix
 packs together. [Downloads, hashes and validation](images/README.md) list both.
 All packaged builds use silent audio; the shared PCM interface supports an
 optional Bluetooth backend or a custom output module ([details](OUTPUTS.md)).

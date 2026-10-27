@@ -1,0 +1,26 @@
+!boot
+!wait 1
+stty -lcase
+/etc/mount /dev/rk1 /usr
+!timeout 120
+!raw cat >/tmp/readwork
+!line
+!line od /rkunix >/dev/null
+!line ls -l /bin /etc /lib /usr/bin >/dev/null
+!line du /bin /usr/bin >/dev/null
+!line sum /bin/sh /bin/ls /bin/cc /bin/as /bin/ld
+!line od /rkunix >/dev/null
+!line ls -l /bin /etc /lib /usr/bin >/dev/null
+!line du /bin /usr/bin >/dev/null
+!line sum /bin/sh /bin/ls /bin/cc /bin/as /bin/ld
+!line od /rkunix >/dev/null
+!line ls -l /bin /etc /lib /usr/bin >/dev/null
+!line du /bin /usr/bin >/dev/null
+!line sum /bin/sh /bin/ls /bin/cc /bin/as /bin/ld
+!eof
+!wait 0.2
+sh /tmp/readwork
+ps
+sync
+ls /
+!stats

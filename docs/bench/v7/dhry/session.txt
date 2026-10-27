@@ -1,0 +1,497 @@
+!boot
+!wait 1
+stty -lcase
+/etc/mount /dev/rk1 /usr
+!timeout 120
+mkdir /hb
+cd /hb
+!raw cat >dhry.c
+!line
+!line struct	Record
+!line {
+!line struct Record		*PtrComp;
+!line int		Discr;
+!line int		EnumComp;
+!line int		IntComp;
+!line char StringComp[31];
+!line };
+!line extern int	Func1();
+!line extern int		Func2();
+!line main()
+!line {
+!line Proc0();
+!line exit(0);
+!line }
+!line int		IntGlob;
+!line int		BoolGlob;
+!line char		Char1Glob;
+!line char		Char2Glob;
+!line int Array1Glob[51];
+!line int Array2Glob[51][51];
+!line struct Record *	PtrGlb;
+!line struct Record *	PtrGlbNext;
+!line struct Record RecA, RecB;
+!line Proc0()
+!line {
+!line int		IntLoc1;
+!line  int		IntLoc2;
+!line int		IntLoc3;
+!line  char		CharLoc;
+!line  char		CharIndex;
+!line int	 	EnumLoc;
+!line char String1Loc[31];
+!line char String2Loc[31];
+!line extern char		*alloc();
+!line register int	i;
+!line PtrGlbNext = &RecB;
+!line PtrGlb = &RecA;
+!line PtrGlb->PtrComp = PtrGlbNext;
+!line PtrGlb->Discr = 1;
+!line PtrGlb->EnumComp = 3;
+!line PtrGlb->IntComp = 40;
+!line strcpy(PtrGlb->StringComp, "DHRYSTONE PROGRAM, SOME STRING");
+!line strcpy(String1Loc, "DHRYSTONE PROGRAM, 1'ST STRING");
+!line Array2Glob[8][7] = 10;
+!line for (i = 0; i < 10000; ++i)
+!line {
+!line Proc5();
+!line Proc4();
+!line IntLoc1 = 2;
+!line IntLoc2 = 3;
+!line strcpy(String2Loc, "DHRYSTONE PROGRAM, 2'ND STRING");
+!line EnumLoc = 2;
+!line BoolGlob = ! Func2(String1Loc, String2Loc);
+!line while (IntLoc1 < IntLoc2)
+!line {
+!line IntLoc3 = 5 * IntLoc1 - IntLoc2;
+!line Proc7(IntLoc1, IntLoc2, &IntLoc3);
+!line ++IntLoc1;
+!line }
+!line Proc8(Array1Glob, Array2Glob, IntLoc1, IntLoc3);
+!line Proc1(PtrGlb);
+!line for (CharIndex = 'A'; CharIndex <= Char2Glob; ++CharIndex)
+!line if (EnumLoc == Func1(CharIndex, 'C'))
+!line Proc6(1, &EnumLoc);
+!line IntLoc3 = IntLoc2 * IntLoc1;
+!line IntLoc2 = IntLoc3 / IntLoc1;
+!line IntLoc2 = 7 * (IntLoc3 - IntLoc2) - IntLoc1;
+!line Proc2(&IntLoc1);
+!line }
+!line printf("DHRYCHECK %d %d %d %d %d %d %d\n",IntGlob,BoolGlob,Array1Glob[8],Array2Glob[8][7],IntLoc1,IntLoc2,IntLoc3);
+!line printf("DHRYREC %d %d %d %d\n",PtrGlb->IntComp,PtrGlbNext->IntComp,Char1Glob,Char2Glob);
+!line }
+!line Proc1(PtrParIn)
+!line  struct Record *	PtrParIn;
+!line {
+!line memcpy(&((*(PtrParIn->PtrComp))), PtrGlb, sizeof((*(PtrParIn->PtrComp))));
+!line PtrParIn->IntComp = 5;
+!line (*(PtrParIn->PtrComp)).IntComp = PtrParIn->IntComp;
+!line (*(PtrParIn->PtrComp)).PtrComp = PtrParIn->PtrComp;
+!line Proc3((*(PtrParIn->PtrComp)).PtrComp);
+!line if ((*(PtrParIn->PtrComp)).Discr == 1)
+!line {
+!line (*(PtrParIn->PtrComp)).IntComp = 6;
+!line Proc6(PtrParIn->EnumComp, &(*(PtrParIn->PtrComp)).EnumComp);
+!line (*(PtrParIn->PtrComp)).PtrComp = PtrGlb->PtrComp;
+!line Proc7((*(PtrParIn->PtrComp)).IntComp, 10, &(*(PtrParIn->PtrComp)).IntComp);
+!line }
+!line else
+!line memcpy(PtrParIn, &((*(PtrParIn->PtrComp))), sizeof((*(PtrParIn->PtrComp))));
+!line }
+!line Proc2(IntParIO)
+!line int	*IntParIO;
+!line {
+!line  int		IntLoc;
+!line  int		EnumLoc;
+!line IntLoc = *IntParIO + 10;
+!line for(;;)
+!line {
+!line if (Char1Glob == 'A')
+!line {
+!line --IntLoc;
+!line *IntParIO = IntLoc - IntGlob;
+!line EnumLoc = 1;
+!line }
+!line if (EnumLoc == 1)
+!line break;
+!line }
+!line }
+!line Proc3(PtrParOut)
+!line struct Record *	*PtrParOut;
+!line {
+!line if (PtrGlb != 0)
+!line *PtrParOut = PtrGlb->PtrComp;
+!line else
+!line IntGlob = 100;
+!line Proc7(10, IntGlob, &PtrGlb->IntComp);
+!line }
+!line Proc4()
+!line {
+!line  int	BoolLoc;
+!line BoolLoc = Char1Glob == 'A';
+!line BoolLoc =| BoolGlob;
+!line Char2Glob = 'B';
+!line }
+!line Proc5()
+!line {
+!line Char1Glob = 'A';
+!line BoolGlob = 0;
+!line }
+!line extern int Func3();
+!line Proc6(EnumParIn, EnumParOut)
+!line  int	EnumParIn;
+!line  int	*EnumParOut;
+!line {
+!line *EnumParOut = EnumParIn;
+!line if (! Func3(EnumParIn) )
+!line *EnumParOut = 4;
+!line switch (EnumParIn)
+!line {
+!line case 1:	*EnumParOut = 1; break;
+!line case 2:	if (IntGlob > 100) *EnumParOut = 1;
+!line else *EnumParOut = 4;
+!line break;
+!line case 3:	*EnumParOut = 2; break;
+!line case 4:	break;
+!line case 5:	*EnumParOut = 3;
+!line }
+!line }
+!line Proc7(IntParI1, IntParI2, IntParOut)
+!line int	IntParI1;
+!line int	IntParI2;
+!line int	*IntParOut;
+!line {
+!line  int	IntLoc;
+!line IntLoc = IntParI1 + 2;
+!line *IntParOut = IntParI2 + IntLoc;
+!line }
+!line Proc8(Array1Par, Array2Par, IntParI1, IntParI2)
+!line int Array1Par[51];
+!line int Array2Par[51][51];
+!line int	IntParI1;
+!line int	IntParI2;
+!line {
+!line  int	IntLoc;
+!line  int	IntIndex;
+!line IntLoc = IntParI1 + 5;
+!line Array1Par[IntLoc] = IntParI2;
+!line Array1Par[IntLoc+1] = Array1Par[IntLoc];
+!line Array1Par[IntLoc+30] = IntLoc;
+!line for (IntIndex = IntLoc; IntIndex <= (IntLoc+1); ++IntIndex)
+!line Array2Par[IntLoc][IntIndex] = IntLoc;
+!line ++Array2Par[IntLoc][IntLoc-1];
+!line Array2Par[IntLoc+20][IntLoc] = Array1Par[IntLoc];
+!line IntGlob = 5;
+!line }
+!line int Func1(CharPar1, CharPar2)
+!line char	CharPar1;
+!line char	CharPar2;
+!line {
+!line  char	CharLoc1;
+!line  char	CharLoc2;
+!line CharLoc1 = CharPar1;
+!line CharLoc2 = CharLoc1;
+!line if (CharLoc2 != CharPar2)
+!line return (1);
+!line else
+!line return (2);
+!line }
+!line int Func2(StrParI1, StrParI2)
+!line char StrParI1[31];
+!line char StrParI2[31];
+!line {
+!line  int		IntLoc;
+!line  char	CharLoc;
+!line IntLoc = 1;
+!line while (IntLoc <= 1)
+!line if (Func1(StrParI1[IntLoc], StrParI2[IntLoc+1]) == 1)
+!line {
+!line CharLoc = 'A';
+!line ++IntLoc;
+!line }
+!line if (CharLoc >= 'W' && CharLoc <= 'Z')
+!line IntLoc = 7;
+!line if (CharLoc == 'X')
+!line return(1);
+!line else
+!line {
+!line if (strcmp(StrParI1, StrParI2) > 0)
+!line {
+!line IntLoc =+ 7;
+!line return (1);
+!line }
+!line else
+!line return (0);
+!line }
+!line }
+!line int Func3(EnumParIn)
+!line  int	EnumParIn;
+!line {
+!line  int	EnumLoc;
+!line EnumLoc = EnumParIn;
+!line if (EnumLoc == 3) return (1);
+!line return (0);
+!line }
+!line memcpy(d, s, l)
+!line char	*d;
+!line char	*s;
+!line int	l;
+!line {
+!line while (l--) *d++ = *s++;
+!line }
+!line
+!line strcpy(d,s) char *d,*s; { while(*d++ = *s++); }
+!line strcmp(a,b) char *a,*b; { while (*a == *b && *a != 0) { a++; b++; } return (*a - *b); }
+!eof
+!wait 0.2
+cc -O dhry.c
+mv a.out dhry
+time ./dhry
+time ./dhry
+time ./dhry
+!raw cat >dhryr.c
+!line
+!line struct	Record
+!line {
+!line struct Record		*PtrComp;
+!line int		Discr;
+!line int		EnumComp;
+!line int		IntComp;
+!line char StringComp[31];
+!line };
+!line extern int	Func1();
+!line extern int		Func2();
+!line main()
+!line {
+!line Proc0();
+!line exit(0);
+!line }
+!line int		IntGlob;
+!line int		BoolGlob;
+!line char		Char1Glob;
+!line char		Char2Glob;
+!line int Array1Glob[51];
+!line int Array2Glob[51][51];
+!line struct Record *	PtrGlb;
+!line struct Record *	PtrGlbNext;
+!line struct Record RecA, RecB;
+!line Proc0()
+!line {
+!line int		IntLoc1;
+!line register int		IntLoc2;
+!line int		IntLoc3;
+!line register char		CharIndex;
+!line int	 	EnumLoc;
+!line char String1Loc[31];
+!line char String2Loc[31];
+!line extern char		*alloc();
+!line register int	i;
+!line PtrGlbNext = &RecB;
+!line PtrGlb = &RecA;
+!line PtrGlb->PtrComp = PtrGlbNext;
+!line PtrGlb->Discr = 1;
+!line PtrGlb->EnumComp = 3;
+!line PtrGlb->IntComp = 40;
+!line strcpy(PtrGlb->StringComp, "DHRYSTONE PROGRAM, SOME STRING");
+!line strcpy(String1Loc, "DHRYSTONE PROGRAM, 1'ST STRING");
+!line Array2Glob[8][7] = 10;
+!line for (i = 0; i < 10000; ++i)
+!line {
+!line Proc5();
+!line Proc4();
+!line IntLoc1 = 2;
+!line IntLoc2 = 3;
+!line strcpy(String2Loc, "DHRYSTONE PROGRAM, 2'ND STRING");
+!line EnumLoc = 2;
+!line BoolGlob = ! Func2(String1Loc, String2Loc);
+!line while (IntLoc1 < IntLoc2)
+!line {
+!line IntLoc3 = 5 * IntLoc1 - IntLoc2;
+!line Proc7(IntLoc1, IntLoc2, &IntLoc3);
+!line ++IntLoc1;
+!line }
+!line Proc8(Array1Glob, Array2Glob, IntLoc1, IntLoc3);
+!line Proc1(PtrGlb);
+!line for (CharIndex = 'A'; CharIndex <= Char2Glob; ++CharIndex)
+!line if (EnumLoc == Func1(CharIndex, 'C'))
+!line Proc6(1, &EnumLoc);
+!line IntLoc3 = IntLoc2 * IntLoc1;
+!line IntLoc2 = IntLoc3 / IntLoc1;
+!line IntLoc2 = 7 * (IntLoc3 - IntLoc2) - IntLoc1;
+!line Proc2(&IntLoc1);
+!line }
+!line printf("DHRYCHECK %d %d %d %d %d %d %d\n",IntGlob,BoolGlob,Array1Glob[8],Array2Glob[8][7],IntLoc1,IntLoc2,IntLoc3);
+!line printf("DHRYREC %d %d %d %d\n",PtrGlb->IntComp,PtrGlbNext->IntComp,Char1Glob,Char2Glob);
+!line }
+!line Proc1(PtrParIn)
+!line struct Record *	PtrParIn;
+!line {
+!line memcpy(&((*(PtrParIn->PtrComp))), PtrGlb, sizeof((*(PtrParIn->PtrComp))));
+!line PtrParIn->IntComp = 5;
+!line (*(PtrParIn->PtrComp)).IntComp = PtrParIn->IntComp;
+!line (*(PtrParIn->PtrComp)).PtrComp = PtrParIn->PtrComp;
+!line Proc3((*(PtrParIn->PtrComp)).PtrComp);
+!line if ((*(PtrParIn->PtrComp)).Discr == 1)
+!line {
+!line (*(PtrParIn->PtrComp)).IntComp = 6;
+!line Proc6(PtrParIn->EnumComp, &(*(PtrParIn->PtrComp)).EnumComp);
+!line (*(PtrParIn->PtrComp)).PtrComp = PtrGlb->PtrComp;
+!line Proc7((*(PtrParIn->PtrComp)).IntComp, 10, &(*(PtrParIn->PtrComp)).IntComp);
+!line }
+!line else
+!line memcpy(PtrParIn, &((*(PtrParIn->PtrComp))), sizeof((*(PtrParIn->PtrComp))));
+!line }
+!line Proc2(IntParIO)
+!line int	*IntParIO;
+!line {
+!line register int		IntLoc;
+!line register int		EnumLoc;
+!line IntLoc = *IntParIO + 10;
+!line for(;;)
+!line {
+!line if (Char1Glob == 'A')
+!line {
+!line --IntLoc;
+!line *IntParIO = IntLoc - IntGlob;
+!line EnumLoc = 1;
+!line }
+!line if (EnumLoc == 1)
+!line break;
+!line }
+!line }
+!line Proc3(PtrParOut)
+!line struct Record *	*PtrParOut;
+!line {
+!line if (PtrGlb != 0)
+!line *PtrParOut = PtrGlb->PtrComp;
+!line else
+!line IntGlob = 100;
+!line Proc7(10, IntGlob, &PtrGlb->IntComp);
+!line }
+!line Proc4()
+!line {
+!line register int	BoolLoc;
+!line BoolLoc = Char1Glob == 'A';
+!line BoolLoc =| BoolGlob;
+!line Char2Glob = 'B';
+!line }
+!line Proc5()
+!line {
+!line Char1Glob = 'A';
+!line BoolGlob = 0;
+!line }
+!line extern int Func3();
+!line Proc6(EnumParIn, EnumParOut)
+!line int	EnumParIn;
+!line int	*EnumParOut;
+!line {
+!line *EnumParOut = EnumParIn;
+!line if (! Func3(EnumParIn) )
+!line *EnumParOut = 4;
+!line switch (EnumParIn)
+!line {
+!line case 1:	*EnumParOut = 1; break;
+!line case 2:	if (IntGlob > 100) *EnumParOut = 1;
+!line else *EnumParOut = 4;
+!line break;
+!line case 3:	*EnumParOut = 2; break;
+!line case 4:	break;
+!line case 5:	*EnumParOut = 3;
+!line }
+!line }
+!line Proc7(IntParI1, IntParI2, IntParOut)
+!line int	IntParI1;
+!line int	IntParI2;
+!line int	*IntParOut;
+!line {
+!line register int	IntLoc;
+!line IntLoc = IntParI1 + 2;
+!line *IntParOut = IntParI2 + IntLoc;
+!line }
+!line Proc8(Array1Par, Array2Par, IntParI1, IntParI2)
+!line int Array1Par[51];
+!line int Array2Par[51][51];
+!line int	IntParI1;
+!line int	IntParI2;
+!line {
+!line register int	IntLoc;
+!line register int	IntIndex;
+!line IntLoc = IntParI1 + 5;
+!line Array1Par[IntLoc] = IntParI2;
+!line Array1Par[IntLoc+1] = Array1Par[IntLoc];
+!line Array1Par[IntLoc+30] = IntLoc;
+!line for (IntIndex = IntLoc; IntIndex <= (IntLoc+1); ++IntIndex)
+!line Array2Par[IntLoc][IntIndex] = IntLoc;
+!line ++Array2Par[IntLoc][IntLoc-1];
+!line Array2Par[IntLoc+20][IntLoc] = Array1Par[IntLoc];
+!line IntGlob = 5;
+!line }
+!line int Func1(CharPar1, CharPar2)
+!line char	CharPar1;
+!line char	CharPar2;
+!line {
+!line register char	CharLoc1;
+!line register char	CharLoc2;
+!line CharLoc1 = CharPar1;
+!line CharLoc2 = CharLoc1;
+!line if (CharLoc2 != CharPar2)
+!line return (1);
+!line else
+!line return (2);
+!line }
+!line int Func2(StrParI1, StrParI2)
+!line char StrParI1[31];
+!line char StrParI2[31];
+!line {
+!line register int		IntLoc;
+!line register char	CharLoc;
+!line IntLoc = 1;
+!line while (IntLoc <= 1)
+!line if (Func1(StrParI1[IntLoc], StrParI2[IntLoc+1]) == 1)
+!line {
+!line CharLoc = 'A';
+!line ++IntLoc;
+!line }
+!line if (CharLoc >= 'W' && CharLoc <= 'Z')
+!line IntLoc = 7;
+!line if (CharLoc == 'X')
+!line return(1);
+!line else
+!line {
+!line if (strcmp(StrParI1, StrParI2) > 0)
+!line {
+!line IntLoc =+ 7;
+!line return (1);
+!line }
+!line else
+!line return (0);
+!line }
+!line }
+!line int Func3(EnumParIn)
+!line int	EnumParIn;
+!line {
+!line register int	EnumLoc;
+!line EnumLoc = EnumParIn;
+!line if (EnumLoc == 3) return (1);
+!line return (0);
+!line }
+!line memcpy(d, s, l)
+!line char	*d;
+!line char	*s;
+!line int	l;
+!line {
+!line while (l--) *d++ = *s++;
+!line }
+!line
+!line strcpy(d,s) char *d,*s; { while(*d++ = *s++); }
+!line strcmp(a,b) char *a,*b; { while (*a == *b && *a != 0) { a++; b++; } return (*a - *b); }
+!eof
+!wait 0.2
+cc -O dhryr.c
+mv a.out dhryr
+time ./dhryr
+time ./dhryr
+time ./dhryr
+sync
+ls /
+!stats

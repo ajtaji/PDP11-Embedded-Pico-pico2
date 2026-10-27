@@ -1,0 +1,793 @@
+{
+  "date": "2026-10-27",
+  "runtime_source": "d2a84159b8c116bdbdd961b1da770c703fa462a2",
+  "source_hash_format": "UTF-8 with LF line endings",
+  "physical_boards": true,
+  "clock_mhz": 150,
+  "guest_memory_kb": 2040,
+  "v7_buffers": 29,
+  "kernel_native_sha256": "47987bb1dd685e7415b531b16a2a1f48e289497ac126e6cc05b74ea2d53b9484",
+  "kernel_installed_sha256": "024d224bab2c81315971dfd751bd2e38d27ffb9729bbd0c30228bed77f46ce55",
+  "results": {
+    "feather": {
+      "unix_before": {
+        "build": {
+          "seconds": 13.778497219085693,
+          "groups": {
+            "setup": 0.9415879249572754,
+            "compile": 6.118741989135742,
+            "assemble": 0.33454084396362305,
+            "archive": 0.30641627311706543,
+            "link": 1.1795878410339355,
+            "execute": 0.3873636722564697,
+            "inspect": 2.0935099124908447,
+            "file": 0.33994340896606445,
+            "strip": 0.15193915367126465,
+            "repeated execution": 1.9248661994934082
+          },
+          "dropped_clock_ticks": 0,
+          "lost_input": 0,
+          "commands": 24
+        },
+        "ipc": {
+          "seconds": 8.092939853668213,
+          "groups": {
+            "setup": 0.7254068851470947,
+            "compile": 3.8017160892486572,
+            "IPC": 0.11404681205749512,
+            "file syscalls": 0.12193751335144043,
+            "repeated IPC and files": 2.169386625289917,
+            "processes": 1.1604459285736084
+          },
+          "dropped_clock_ticks": 0,
+          "lost_input": 0,
+          "commands": 12
+        },
+        "text": {
+          "seconds": 10.207041025161743,
+          "groups": {
+            "setup": 0.8091907501220703,
+            "compile": 2.5300564765930176,
+            "generate": 0.12146210670471191,
+            "sort": 0.8775839805603027,
+            "verify sort": 0.5051999092102051,
+            "compare": 0.7363793849945068,
+            "pipeline": 1.3969273567199707,
+            "verify grep": 0.13982558250427246,
+            "translate": 0.11017894744873047,
+            "verify translation": 0.12827396392822266,
+            "count": 0.24641847610473633,
+            "split": 0.1508936882019043,
+            "join": 0.14064741134643555,
+            "copy": 0.0869748592376709,
+            "link": 0.08507108688354492,
+            "rename": 0.10170960426330566,
+            "edit": 0.27995896339416504,
+            "diff": 0.3621363639831543,
+            "block I/O": 0.18017220497131348,
+            "calculator": 0.3264284133911133,
+            "format": 0.45490193367004395,
+            "verify formatting": 0.1470165252685547,
+            "filesystem": 0.28963303565979004
+          },
+          "dropped_clock_ticks": 0,
+          "lost_input": 0,
+          "commands": 38
+        },
+        "read": {
+          "seconds": 44.33703422546387,
+          "groups": {
+            "setup": 0.5156197547912598,
+            "repeated Unix utilities": 42.66153621673584,
+            "processes": 1.1598782539367676
+          },
+          "dropped_clock_ticks": 3,
+          "lost_input": 0,
+          "commands": 6
+        }
+      },
+      "unix_after": {
+        "build": {
+          "seconds": 13.615545511245728,
+          "groups": {
+            "setup": 0.931837797164917,
+            "compile": 5.968374252319336,
+            "assemble": 0.33097004890441895,
+            "archive": 0.30349254608154297,
+            "link": 1.1658334732055664,
+            "execute": 0.3878192901611328,
+            "inspect": 2.103459596633911,
+            "file": 0.3344545364379883,
+            "strip": 0.15080595016479492,
+            "repeated execution": 1.9384980201721191
+          },
+          "dropped_clock_ticks": 0,
+          "lost_input": 0,
+          "commands": 24
+        },
+        "ipc": {
+          "seconds": 8.056175708770752,
+          "groups": {
+            "setup": 0.71909499168396,
+            "compile": 3.756834030151367,
+            "IPC": 0.11247992515563965,
+            "file syscalls": 0.12303590774536133,
+            "repeated IPC and files": 2.181791305541992,
+            "processes": 1.1629395484924316
+          },
+          "dropped_clock_ticks": 0,
+          "lost_input": 0,
+          "commands": 12
+        },
+        "text": {
+          "seconds": 10.116060495376587,
+          "groups": {
+            "setup": 0.8060429096221924,
+            "compile": 2.4762439727783203,
+            "generate": 0.11998963356018066,
+            "sort": 0.8709297180175781,
+            "verify sort": 0.5060732364654541,
+            "compare": 0.7330005168914795,
+            "pipeline": 1.396637201309204,
+            "verify grep": 0.13907074928283691,
+            "translate": 0.11106657981872559,
+            "verify translation": 0.1298084259033203,
+            "count": 0.24492931365966797,
+            "split": 0.14989709854125977,
+            "join": 0.13968753814697266,
+            "copy": 0.08625602722167969,
+            "link": 0.08385825157165527,
+            "rename": 0.10184597969055176,
+            "edit": 0.27640366554260254,
+            "diff": 0.36055588722229004,
+            "block I/O": 0.1801159381866455,
+            "calculator": 0.32327985763549805,
+            "format": 0.44974422454833984,
+            "verify formatting": 0.14596962928771973,
+            "filesystem": 0.2846541404724121
+          },
+          "dropped_clock_ticks": 0,
+          "lost_input": 0,
+          "commands": 38
+        },
+        "read": {
+          "seconds": 44.65551710128784,
+          "groups": {
+            "setup": 0.512833833694458,
+            "repeated Unix utilities": 42.98128056526184,
+            "processes": 1.161402702331543
+          },
+          "dropped_clock_ticks": 3,
+          "lost_input": 0,
+          "commands": 6
+        }
+      },
+      "unix_before_seconds": 76.41551232337952,
+      "unix_after_seconds": 76.44329881668091,
+      "clock_drops_by_phase": {
+        "general": 0,
+        "compat": 28,
+        "perf": 18,
+        "cpu": 10,
+        "disk": 0,
+        "shell": 0,
+        "dhry": 28,
+        "correctness": 0
+      },
+      "fp_context_math_signals_passed": true,
+      "compatibility": {
+        "native_cc": true,
+        "native_f77_double": true,
+        "awk_sed_dc_nroff": true,
+        "children": 38,
+        "data_bytes_per_child": 48000,
+        "errors": 0,
+        "raw_usr_bytes_checked_by_bsd_sum": 2048
+      },
+      "whetstone": {
+        "seconds": [
+          7.695033550262451,
+          7.21881365776062,
+          7.2182457447052
+        ],
+        "median_seconds": 7.21881365776062,
+        "kwips": 415.5807508308288
+      },
+      "sieve": {
+        "seconds": [
+          10.227243900299072,
+          10.152400016784668,
+          10.154310703277588
+        ],
+        "median_seconds": 10.154310703277588,
+        "ten_pass_seconds": 1.0154310703277587
+      },
+      "scall": {
+        "seconds": [
+          4.353668928146362,
+          4.338123559951782,
+          4.3391273021698
+        ],
+        "median_seconds": 4.3391273021698
+      },
+      "pipes": {
+        "seconds": [
+          3.0448741912841797,
+          3.0817136764526367,
+          3.871846914291382
+        ],
+        "median_seconds": 3.0817136764526367
+      },
+      "loop": {
+        "seconds": [
+          3.606900215148926,
+          3.6044199466705322,
+          3.6041500568389893
+        ],
+        "median_seconds": 3.6044199466705322
+      },
+      "fcalle": {
+        "seconds": [
+          0.7194180488586426,
+          0.7011141777038574,
+          0.7014055252075195
+        ],
+        "median_seconds": 0.7014055252075195
+      },
+      "fcalla": {
+        "seconds": [
+          0.2523472309112549,
+          0.23431181907653809,
+          0.23456454277038574
+        ],
+        "median_seconds": 0.23456454277038574
+      },
+      "function_call_user_delta_seconds": 0.5,
+      "pipe_pattern_bytes_checked": 524288,
+      "dwrite": {
+        "seconds": [
+          0.8904712200164795,
+          0.8907256126403809,
+          0.8895876407623291
+        ],
+        "median_seconds": 0.8904712200164795
+      },
+      "dread": {
+        "seconds": [
+          1.447495460510254,
+          1.4506855010986328,
+          1.4473984241485596
+        ],
+        "median_seconds": 1.447495460510254
+      },
+      "shell": {
+        "seconds": [
+          1.262730360031128,
+          1.1195402145385742,
+          1.120523452758789
+        ],
+        "median_seconds": 1.120523452758789
+      },
+      "multi": {
+        "1": {
+          "seconds": 1.2673892974853516,
+          "passed": true
+        },
+        "2": {
+          "seconds": 2.3362808227539062,
+          "passed": true
+        },
+        "3": {
+          "seconds": 3.2417759895324707,
+          "passed": true
+        },
+        "4": {
+          "seconds": 4.386115074157715,
+          "passed": true
+        },
+        "5": {
+          "seconds": 5.562248706817627,
+          "passed": true
+        },
+        "6": {
+          "seconds": 6.638081312179565,
+          "passed": true
+        }
+      },
+      "dhry": {
+        "seconds": [
+          7.878504753112793,
+          7.379187345504761,
+          7.379932165145874
+        ],
+        "median_seconds": 7.379932165145874,
+        "iterations_per_host_second": 1355.0260051478856
+      },
+      "dhryr": {
+        "seconds": [
+          7.4199347496032715,
+          7.003518581390381,
+          7.003162622451782
+        ],
+        "median_seconds": 7.003518581390381,
+        "iterations_per_host_second": 1427.8537115003612
+      },
+      "independent_six_job_outputs_passed": true,
+      "persistence": {
+        "root_and_usr_files": 2,
+        "bytes_per_file": 4096,
+        "saved_rebooted_and_verified": true,
+        "clock_drops": {
+          "write": 10,
+          "read": 0
+        }
+      },
+      "multiuser": {
+        "passed": true,
+        "root_login": true,
+        "usr_auto_mounted": true
+      },
+      "program_sha256": "af85e03959c4fc1704a090e516869ebc6486934fc6e4555012385fe6de8309c2"
+    },
+    "picoplus2": {
+      "unix_before": {
+        "build": {
+          "seconds": 13.761936902999878,
+          "groups": {
+            "setup": 0.9442529678344727,
+            "compile": 6.102828502655029,
+            "assemble": 0.33472371101379395,
+            "archive": 0.30419087409973145,
+            "link": 1.179504156112671,
+            "execute": 0.3877558708190918,
+            "inspect": 2.0933828353881836,
+            "file": 0.3383946418762207,
+            "strip": 0.15123558044433594,
+            "repeated execution": 1.9256677627563477
+          },
+          "dropped_clock_ticks": 0,
+          "lost_input": 0,
+          "commands": 24
+        },
+        "ipc": {
+          "seconds": 8.095531225204468,
+          "groups": {
+            "setup": 0.7289066314697266,
+            "compile": 3.803083896636963,
+            "IPC": 0.10987544059753418,
+            "file syscalls": 0.12284493446350098,
+            "repeated IPC and files": 2.1700186729431152,
+            "processes": 1.160801649093628
+          },
+          "dropped_clock_ticks": 0,
+          "lost_input": 0,
+          "commands": 12
+        },
+        "text": {
+          "seconds": 10.460465431213379,
+          "groups": {
+            "setup": 0.8066906929016113,
+            "compile": 2.53826642036438,
+            "generate": 0.1221158504486084,
+            "sort": 1.1368982791900635,
+            "verify sort": 0.5040135383605957,
+            "compare": 0.7341856956481934,
+            "pipeline": 1.3948183059692383,
+            "verify grep": 0.13800692558288574,
+            "translate": 0.11009454727172852,
+            "verify translation": 0.12979841232299805,
+            "count": 0.24698758125305176,
+            "split": 0.15121746063232422,
+            "join": 0.14040660858154297,
+            "copy": 0.08812880516052246,
+            "link": 0.08455324172973633,
+            "rename": 0.10211610794067383,
+            "edit": 0.27824902534484863,
+            "diff": 0.3623783588409424,
+            "block I/O": 0.18000483512878418,
+            "calculator": 0.323012113571167,
+            "format": 0.4533541202545166,
+            "verify formatting": 0.1482236385345459,
+            "filesystem": 0.2869448661804199
+          },
+          "dropped_clock_ticks": 0,
+          "lost_input": 0,
+          "commands": 38
+        },
+        "read": {
+          "seconds": 44.52926421165466,
+          "groups": {
+            "setup": 0.5152690410614014,
+            "repeated Unix utilities": 42.85390257835388,
+            "processes": 1.1600925922393799
+          },
+          "dropped_clock_ticks": 4,
+          "lost_input": 0,
+          "commands": 6
+        }
+      },
+      "unix_after": {
+        "build": {
+          "seconds": 13.629311323165894,
+          "groups": {
+            "setup": 0.9334325790405273,
+            "compile": 5.979068756103516,
+            "assemble": 0.33193016052246094,
+            "archive": 0.3022196292877197,
+            "link": 1.1650681495666504,
+            "execute": 0.3882107734680176,
+            "inspect": 2.1035821437835693,
+            "file": 0.33464980125427246,
+            "strip": 0.1509253978729248,
+            "repeated execution": 1.9402239322662354
+          },
+          "dropped_clock_ticks": 0,
+          "lost_input": 0,
+          "commands": 24
+        },
+        "ipc": {
+          "seconds": 8.05852460861206,
+          "groups": {
+            "setup": 0.7211377620697021,
+            "compile": 3.753636598587036,
+            "IPC": 0.11318302154541016,
+            "file syscalls": 0.12376165390014648,
+            "repeated IPC and files": 2.184885263442993,
+            "processes": 1.1619203090667725
+          },
+          "dropped_clock_ticks": 0,
+          "lost_input": 0,
+          "commands": 12
+        },
+        "text": {
+          "seconds": 10.359711408615112,
+          "groups": {
+            "setup": 0.8038523197174072,
+            "compile": 2.476081371307373,
+            "generate": 0.12208795547485352,
+            "sort": 1.1164722442626953,
+            "verify sort": 0.5055081844329834,
+            "compare": 0.73052978515625,
+            "pipeline": 1.3972301483154297,
+            "verify grep": 0.13913369178771973,
+            "translate": 0.10985398292541504,
+            "verify translation": 0.12917137145996094,
+            "count": 0.24729132652282715,
+            "split": 0.15015530586242676,
+            "join": 0.1404125690460205,
+            "copy": 0.08740901947021484,
+            "link": 0.08356976509094238,
+            "rename": 0.1015779972076416,
+            "edit": 0.27661919593811035,
+            "diff": 0.3608541488647461,
+            "block I/O": 0.18037700653076172,
+            "calculator": 0.3230257034301758,
+            "format": 0.4475412368774414,
+            "verify formatting": 0.14621567726135254,
+            "filesystem": 0.2847414016723633
+          },
+          "dropped_clock_ticks": 0,
+          "lost_input": 0,
+          "commands": 38
+        },
+        "read": {
+          "seconds": 44.63332939147949,
+          "groups": {
+            "setup": 0.510474681854248,
+            "repeated Unix utilities": 42.961095571517944,
+            "processes": 1.1617591381072998
+          },
+          "dropped_clock_ticks": 4,
+          "lost_input": 0,
+          "commands": 6
+        }
+      },
+      "unix_before_seconds": 76.84719777107239,
+      "unix_after_seconds": 76.68087673187256,
+      "clock_drops_by_phase": {
+        "general": 0,
+        "compat": 24,
+        "perf": 18,
+        "cpu": 12,
+        "disk": 0,
+        "shell": 0,
+        "dhry": 27,
+        "correctness": 0
+      },
+      "fp_context_math_signals_passed": true,
+      "compatibility": {
+        "native_cc": true,
+        "native_f77_double": true,
+        "awk_sed_dc_nroff": true,
+        "children": 38,
+        "data_bytes_per_child": 48000,
+        "errors": 0,
+        "raw_usr_bytes_checked_by_bsd_sum": 2048
+      },
+      "whetstone": {
+        "seconds": [
+          7.67154598236084,
+          7.222253799438477,
+          7.221306562423706
+        ],
+        "median_seconds": 7.222253799438477,
+        "kwips": 415.3827992355028
+      },
+      "sieve": {
+        "seconds": [
+          10.224438905715942,
+          10.153943061828613,
+          10.154192209243774
+        ],
+        "median_seconds": 10.154192209243774,
+        "ten_pass_seconds": 1.0154192209243775
+      },
+      "scall": {
+        "seconds": [
+          4.356159925460815,
+          4.337718963623047,
+          4.33800482749939
+        ],
+        "median_seconds": 4.33800482749939
+      },
+      "pipes": {
+        "seconds": [
+          3.0463509559631348,
+          3.082737445831299,
+          3.0830936431884766
+        ],
+        "median_seconds": 3.082737445831299
+      },
+      "loop": {
+        "seconds": [
+          3.6064822673797607,
+          3.60286283493042,
+          3.602362871170044
+        ],
+        "median_seconds": 3.60286283493042
+      },
+      "fcalle": {
+        "seconds": [
+          0.7182168960571289,
+          0.7007603645324707,
+          0.7004809379577637
+        ],
+        "median_seconds": 0.7007603645324707
+      },
+      "fcalla": {
+        "seconds": [
+          0.25140905380249023,
+          0.2342379093170166,
+          0.23430776596069336
+        ],
+        "median_seconds": 0.23430776596069336
+      },
+      "function_call_user_delta_seconds": 0.5,
+      "pipe_pattern_bytes_checked": 524288,
+      "dwrite": {
+        "seconds": [
+          0.8932802677154541,
+          0.891369104385376,
+          0.8902349472045898
+        ],
+        "median_seconds": 0.891369104385376
+      },
+      "dread": {
+        "seconds": [
+          1.450204849243164,
+          1.4450252056121826,
+          1.449648141860962
+        ],
+        "median_seconds": 1.449648141860962
+      },
+      "shell": {
+        "seconds": [
+          1.5042264461517334,
+          1.115828037261963,
+          1.1150972843170166
+        ],
+        "median_seconds": 1.115828037261963
+      },
+      "multi": {
+        "1": {
+          "seconds": 1.262533187866211,
+          "passed": true
+        },
+        "2": {
+          "seconds": 2.2932400703430176,
+          "passed": true
+        },
+        "3": {
+          "seconds": 3.327632427215576,
+          "passed": true
+        },
+        "4": {
+          "seconds": 4.386105060577393,
+          "passed": true
+        },
+        "5": {
+          "seconds": 5.466712713241577,
+          "passed": true
+        },
+        "6": {
+          "seconds": 6.600130081176758,
+          "passed": true
+        }
+      },
+      "dhry": {
+        "seconds": [
+          7.624090194702148,
+          7.382286787033081,
+          7.3832151889801025
+        ],
+        "median_seconds": 7.3832151889801025,
+        "iterations_per_host_second": 1354.4234786662603
+      },
+      "dhryr": {
+        "seconds": [
+          7.412633419036865,
+          7.002686262130737,
+          7.002897500991821
+        ],
+        "median_seconds": 7.002897500991821,
+        "iterations_per_host_second": 1427.9803465042432
+      },
+      "independent_six_job_outputs_passed": true,
+      "persistence": {
+        "root_and_usr_files": 2,
+        "bytes_per_file": 32768,
+        "saved_rebooted_and_verified": true,
+        "clock_drops": {
+          "write": 30,
+          "read": 0
+        }
+      },
+      "multiuser": {
+        "passed": true,
+        "root_login": true,
+        "usr_auto_mounted": true
+      },
+      "program_sha256": "e23fe18563cf9a13a51b47ee4b881b4bc2b857bfe48365cfd62b4dab1b450873"
+    }
+  },
+  "source_sha256": {
+    "block_copy.pico2": "e4f2e1c836790b88e6ec03ae984988a4378bc7f43561c0c35bdb0ce8faaaf3ed",
+    "psram_pdp11.pico2": "3bcd21011cd56a2f53284c5c14441ba7d040ebf4c0412f95157d4d8ae612eddb",
+    "rk11.pico2": "604f9c9fe5040de657816631d9771d15dbc55b54d42ec2f9c675b45c06fe8ad9",
+    "rp11.pico2": "6c057a67c846fdeec69bfbaaedf8eef720bf3ac8bd3876e08fc19f6a8c4a5fcb",
+    "block_copy_check.pico2": "ac4b8954d86ffdcbfe94f12032d832def23db3729c1a20c54d58a8f64b739768",
+    "block_copy_perf.pico2": "e84afee500ba32dd2432f86e7a8076d2c34c6cc1dc65f6f88039745c9c40311c"
+  },
+  "native_sram_copy_unit": {
+    "physical_board": "RP2350 at 150 MHz",
+    "memory": "SRAM only; unit result excludes PSRAM latency and controller waits",
+    "rows": [
+      {
+        "direction": "READ",
+        "unibus_mapped": false,
+        "copies": 1024,
+        "sector_bytes": 512,
+        "word_path_microseconds": 138189,
+        "copy_path_microseconds": 3513,
+        "ratio": 39.33646456020495
+      },
+      {
+        "direction": "WRITE",
+        "unibus_mapped": false,
+        "copies": 1024,
+        "sector_bytes": 512,
+        "word_path_microseconds": 146930,
+        "copy_path_microseconds": 3520,
+        "ratio": 41.74147727272727
+      },
+      {
+        "direction": "READ",
+        "unibus_mapped": true,
+        "copies": 1024,
+        "sector_bytes": 512,
+        "word_path_microseconds": 155662,
+        "copy_path_microseconds": 3646,
+        "ratio": 42.69391113549095
+      },
+      {
+        "direction": "WRITE",
+        "unibus_mapped": true,
+        "copies": 1024,
+        "sector_bytes": 512,
+        "word_path_microseconds": 164400,
+        "copy_path_microseconds": 3652,
+        "ratio": 45.016429353778754
+      }
+    ]
+  },
+  "benchmark_source_sha256": {
+    "general/fpstate.c": "595a3a86d0f9c97601ae600352d5ec3f74dced3e8b7bcfb4b63ef720c4aaa149",
+    "general/fpstate_io.s": "e2859833a70079fce62479f874d6f723d41681d5d06f487ca9977b16f5742193",
+    "general/fp_math.c": "820d3634ea39ef73720712d5ba699d4d93b7c60662c160802247f196d7021b48",
+    "general/fp_exec.c": "7114b99ce11b338a49443a1986c309d2c9c5ca0ed232b01b60be82d4befdea7c",
+    "general/fp_execchain.c": "588cc2a6ccaef074196746f4f685dee4af7e74a255a23a082f53a58354af688f",
+    "general/fp_signal.c": "039a362f339b22dad1a091f9d8a03feaa6208679be3317630cf89a25b0b59763",
+    "compat/numbers": "ea7b8c2813027b538ae8a9e5ea1778367a63bef90cb1073af0830bfc749cb3c5",
+    "compat/note": "8be20db7544839831eae9b432316ac711de3b9fdd6e02afb8633dd1634b8bca8",
+    "compat/hello.c": "775168e939ad8ac223b69e80f4cf556b215bb0d99e42ed98a96544726249a846",
+    "compat/fhello.f": "fd1a41e6df5c2c48196f3493fb8dcc80e61f957e5aacd8c8a3ad7f9ec5329c54",
+    "compat/stress.c": "4ae3f041fe87f7953ecb9e0147b417b61407e9561132d9507462d3c5838a7a28",
+    "build/calc.c": "836a01c05e44f7135011d54e54039c26bb628e566d254e22f16c71cafb52b04d",
+    "build/main.c": "67c6bbdc36cacae3cdef530d47b6dccced20184c6f01f57ca9f8fc642e588ab2",
+    "build/runs": "00babd16a5ea73cc40a79645f6d0226bdc51b45d2d8374ed2c157a8453bbbfeb",
+    "ipc/app.c": "71d90084c9aff47c6558630a85656ca0340be8f5460247c6e0b160abeb250551",
+    "ipc/stress": "e14fcd63d07a0098f0f4025eaa98b463f240cb764cd6068ae39c4fbc0f6da49e",
+    "text/gen.c": "9978fd3723f7dbbc12f7ea78fd6eaf24c2459defda3c2f68e89b8aa12cb91699",
+    "text/edit": "b53c0dab273d6484aad7054d3cb81d207287500b371f6933a65c788b2ea972c3",
+    "read/readwork": "de829630871fb8df48acdb83d4443cb300fc2d4d6df767bfc34773f81f4222e2",
+    "perf/whet.c": "e35e038a626732d5fa171bc417470c5ed53bb84256f4eeb375118c1c3eb9340c",
+    "perf/sieve.c": "fdcad1bc8c6ed5aa9f7fc6be024df4e2aca3a61c6fc4ed4c20441d213c249e91",
+    "disk/dwrite.c": "5143c1984ad3285cd1a05bd495c5bd20d2ec683a9daa766a4e3f69c4486b03ca",
+    "disk/dread.c": "961e5e2f5f8bb0c288e59166b5c3b0f7ed7735bf69c3f63b1c825b9b2a890051",
+    "disk/check.c": "ff7e0cb183d8e33db048f741d018b68ee92c6e1dbb82a62d9797af3bc8f5b103",
+    "shell/words": "dae905cc6e381b15334103adacf8d06818da33a42e9d11174faf2d15e25e1992",
+    "shell/tst.sh": "212e183b573090d08f541df1b76193f1b4c804f51c471bfb08e2a207ec98a2e7",
+    "shell/m1.sh": "4e489b6f395be68c162ddfed5723a3b84e3c7958caeeabebe47827f4ea5e261a",
+    "shell/m2.sh": "b2ebaa7cbae69fd07d0c9943166e5be39020b2a0bfa397a7d1a3cd2b26127861",
+    "shell/m3.sh": "d9fbc93725100bbb1268c746ce9ea024e58ec836c44df4bd38d57d09a25897e1",
+    "shell/m4.sh": "dd19cc72093d082c4f9b56e80c7746097eea26ed17767e78312828cd8192353f",
+    "shell/m5.sh": "859fd06d5aa459c4ccd291a6822a434e2cea6a8867c3d8aa64597e2169a518d9",
+    "shell/m6.sh": "7baed89d5b775dfd4aa25ec41ba4f3d5860a3f206fa603c4c49299d25c0f0cc8",
+    "cpu/scall.c": "a11b68319bf35714596dd5c942c2d3c1b8b9110d27a447688a7e51b5ee1ca1a9",
+    "cpu/loop.c": "edf30702222769c613077076e901b8f22c36a53147b5e944c161d6331a6c851d",
+    "cpu/pipes.c": "e653ad740d98c035231dc0ffa695c415c2d1b351e6f6578c8ec2df8dabebd00c",
+    "cpu/pcheck.c": "79f6ecf3e9292481ffd4c13e761bf6ca3daa4f2c825de68f63d30d03c674af3e",
+    "cpu/fcalle.c": "55402b353e7b192e338a9807a1baa4720df3887545ff771a41955716fcfa2d90",
+    "cpu/fcalla.c": "0738005d1bea50af3361492e7623f952337b71e4c9ec08e358edb064921fb63f",
+    "dhry/dhry.c": "d2ddd0af8453d12d492d8e8d58b91f5e620a811d499e58831dc69b02ebc6b0e8",
+    "dhry/dhryr.c": "e33eea7a17629453e5cce074e0277b8e16b5bb4180b1068c7a7c0ff4dbf4c64d",
+    "correctness/words": "dae905cc6e381b15334103adacf8d06818da33a42e9d11174faf2d15e25e1992",
+    "correctness/check.sh": "dd990aa450ebc1cdf1b629d034e80ddc3716f57ae1a2ee4c723157148ab61f9b",
+    "correctness/checked.sh": "6f199e06777e6689200137141c34bd5ced949716a467729a45e0cb3abd4a5e36",
+    "correctness/checked6.sh": "c487aba21670cd1740f469e7705a5f688569d5af55be84871ca49c5aca9f9d68",
+    "persistence-feather/persist.c": "6dc6694298362b660439c043f18dd6e6bb1e109e90415519fb4605baf72d9bd3",
+    "persistence-picoplus2/persist.c": "1ad6cc075cf770398df98728ae1caada96d4801f1579e05e8c448263967282e5"
+  },
+  "compiler_sha256": "ea0c04dd97636624cbfd51d4d7fbc2d854ce8548f65ddbb139b2634c99f2c94c",
+  "memory_cost": {
+    "additional_sram_code_bytes": 584,
+    "feather_free_sram_bytes": 4204,
+    "picoplus2_free_sram_bytes": 4200,
+    "guest_memory_reduced": false
+  },
+  "rejected_trial": {
+    "buffers": 40,
+    "feather_full_unix_seconds": 76.827,
+    "reason": "No overall improvement; retain original 29 buffers"
+  },
+  "limitations": [
+    "Feather has a selected /usr filesystem and only 24 free blocks there; full /usr requires Pico Plus 2 W.",
+    "2040 KB V7 guest memory retained; signed stock kernel accounting/map limits prevent a safe >2 MB default.",
+    "PSRAM flash saves can coalesce line-clock ticks; host elapsed times include those pauses.",
+    "Different Unix releases and compilers prevent a universal CPU speed multiplier from these workloads."
+  ],
+  "restoration": {
+    "feather": {
+      "full_flash_bytes_checked": 8388608,
+      "accepted_program_exact": true,
+      "original_nonprogram_flash_restored": true,
+      "original_saved_store_restored": true
+    },
+    "picoplus2": {
+      "full_flash_bytes_checked": 16777216,
+      "accepted_program_exact": true,
+      "original_nonprogram_flash_restored": true,
+      "original_saved_store_restored": true
+    },
+    "rp2040": {
+      "full_flash_bytes_checked": 2097152,
+      "complete_original_flash_restored": true,
+      "final_rebuilt_program_unchanged": true
+    },
+    "rp2350": {
+      "full_flash_bytes_checked": 4194304,
+      "complete_original_flash_restored": true,
+      "final_rebuilt_program_unchanged": true
+    }
+  }
+}

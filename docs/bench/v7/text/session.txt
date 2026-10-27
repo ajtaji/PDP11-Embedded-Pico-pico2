@@ -1,0 +1,56 @@
+!boot
+!wait 1
+stty -lcase
+/etc/mount /dev/rk1 /usr
+!timeout 120
+mkdir /ut
+cd /ut
+!raw cat >gen.c
+!line
+!line main(){ int i; for(i=127;i>=0;i--) printf("%03d group%d\n",i,i%8); }
+!eof
+!wait 0.2
+cc -O gen.c
+mv a.out gen
+./gen > data
+sort data > ordered
+cat ordered
+sort -r data > reversed
+cmp data reversed
+cat data data | sort | uniq > unique
+cmp ordered unique
+grep group3 data | sort > matched
+cat matched
+tr '[a-z]' '[A-Z]' < matched > upper
+cat upper
+wc data
+split -32 data
+cat xaa xab xac xad > joined
+cmp data joined
+cp data copy
+ln copy hard
+mv copy renamed
+cmp renamed hard
+!raw cat >edit
+!line
+!line 1c
+!line 999 group9
+!line .
+!line w
+!line q
+!eof
+!wait 0.2
+ed hard < edit
+cmp renamed hard
+/bin/diff data renamed
+dd if=data of=blocks bs=512 count=2
+wc blocks
+echo '2 100 ^ p' | dc
+echo 'Unix workload formatting check.' > note
+nroff note > formatted
+grep 'Unix workload' formatted
+df /dev/rk0
+du /ut
+sync
+ls /
+!stats

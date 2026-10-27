@@ -316,20 +316,21 @@
       }
     }
   },
+  "source_hash_format": "UTF-8 with LF line endings",
   "source_sha256": {
-    "scall.c": "92552527fc04f9250fd4e79164d72d00af61a78f1526de5ff4e5549dfb605547",
-    "pipes.c": "c43f1e3f8df3df09e4a649bd648ee571adb56621fcc2fe7602d913d887877822",
-    "loop.c": "423fe99c8119fcabe65187fcaa8188f2f93a3e14dd831121e358df88d702130d",
-    "fcalle.c": "81f02059d47942fba04e3b34d41ed11151e127b6194c43b0b9ea560bce1c9cc9",
-    "fcalla.c": "deb881143cdc3063650e2561dd71a8ae94bd878a44935a54535b3654ff4fa2f6",
-    "dwrite.c": "e8c4a1b0075a60bd37c7c76e0028fc58d5f832eab1923d726dfac310660bec53",
-    "dread.c": "4dfff99e916850df0c87f1b0e5932c37da5734755bb132069c8d162fb8209180",
-    "check.c": "1135eea7a1b5e0f0b19b427933aa62fc4e0d87531045dc75a88df05a38312bf9",
-    "dhry.c": "226537c9c0910f2d1dc5c8f8cfa36f59f0c46f42e083bbb96fa5896bc11e76f3",
-    "dhryr.c": "b34a3399edcb817b06fe9477b9d77217a2bcc5964f6e7f62ffa06b91b87f3cf8",
-    "tst.sh": "4b1341107c6ec0d756e808af3ba4640fc235c6836ff2c3ae5e2bcda6e12bd248",
-    "pcheck.c": "0872724f3482c43cd3698fb75b00367acb242cbafc570ebd6bf11bb4740c1083",
-    "check.sh": "5f8838d54707f7447204c1a8cc4c11e11553a3375379e5e60e096353663c7a51"
+    "scall.c": "a11b68319bf35714596dd5c942c2d3c1b8b9110d27a447688a7e51b5ee1ca1a9",
+    "pipes.c": "e653ad740d98c035231dc0ffa695c415c2d1b351e6f6578c8ec2df8dabebd00c",
+    "loop.c": "42e9b87c26e0766ee5177e79ceddb23cdccb1fd4c40bb4d2009f7f63567c75e1",
+    "fcalle.c": "55402b353e7b192e338a9807a1baa4720df3887545ff771a41955716fcfa2d90",
+    "fcalla.c": "0738005d1bea50af3361492e7623f952337b71e4c9ec08e358edb064921fb63f",
+    "dwrite.c": "5143c1984ad3285cd1a05bd495c5bd20d2ec683a9daa766a4e3f69c4486b03ca",
+    "dread.c": "620efc62613fe2c237c633bec613be4cf35e7ff55924f5bdb329d9d677d8cb0c",
+    "check.c": "ff7e0cb183d8e33db048f741d018b68ee92c6e1dbb82a62d9797af3bc8f5b103",
+    "dhry.c": "d2ddd0af8453d12d492d8e8d58b91f5e620a811d499e58831dc69b02ebc6b0e8",
+    "dhryr.c": "e33eea7a17629453e5cce074e0277b8e16b5bb4180b1068c7a7c0ff4dbf4c64d",
+    "tst.sh": "212e183b573090d08f541df1b76193f1b4c804f51c471bfb08e2a207ec98a2e7",
+    "pcheck.c": "79f6ecf3e9292481ffd4c13e761bf6ca3daa4f2c825de68f63d30d03c674af3e",
+    "check.sh": "dd990aa450ebc1cdf1b629d034e80ddc3716f57ae1a2ee4c723157148ab61f9b"
   },
   "methodology": "Host elapsed time; median of three unless multi (one run each). Full volume/count unchanged. Dhrystone C1.1 algorithm port; whole-process host rate includes setup/output and no original empty-loop correction. Historical 1985 reference is earlier version and its own net-loop timing method; comparison is approximate. V6 long/unsigned/cast/library/shell compatibility changes documented. Independent pipe-byte and shell-result checks pass; resource failures have no accepted score. RP2040 uses the published pipe/FP MiniUnix pack, not the older preserved demo pack."
 }

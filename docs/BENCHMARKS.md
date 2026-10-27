@@ -1,6 +1,8 @@
 # Benchmarks
 
-Latest: [further assembly, memory savings and matched FP-kernel Unix rerun](bench/assembly-2026-10-26.md).
+Latest: [fresh historical benchmarks on both standard Picos](bench/historical-2026-10-27.md) and [PSRAM V7 workload, FP and capacity results](bench/psram-2026-10-27.md).
+
+Previous: [further CPU assembly and memory savings](bench/assembly-2026-10-26.md).
 
 Earlier: [direct RP2040 floating point enablement](bench/fp-2026-10-26.md).
 

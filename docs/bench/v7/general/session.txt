@@ -1,0 +1,226 @@
+!boot
+stty -lcase
+/etc/mount /dev/rk1 /usr
+!timeout 120
+!raw cat >fpstate.c
+!line
+!line /* FP11 state must survive fork and blocking IPC, including all six D
+!line  * accumulators and FPS modes/condition codes. Compile with fpstate_io.s. */
+!line int expected[25], actual[25], errors, modeMask;
+!line
+!line fill(seed, fps)
+!line {
+!line  int i;
+!line  expected[0] = fps | modeMask;
+!line  for(i=0;i<6;i++) {
+!line   expected[1+i*4] = 040200+i;
+!line   expected[2+i*4] = seed+i;
+!line   expected[3+i*4] = seed*7+i;
+!line   expected[4+i*4] = seed*13+i;
+!line  }
+!line  /* Preserve reserved/dirty-zero bit patterns without raising FIUV. */
+!line  expected[17] = 0100000;
+!line  expected[21] = 0;
+!line }
+!line
+!line check()
+!line {
+!line  int i;
+!line  readfp(actual);
+!line  for(i=0;i<25;i++) if(actual[i]!=expected[i]) errors++;
+!line }
+!line
+!line main(argc)
+!line {
+!line  int p[2], q[2], pid, i, st;
+!line  char c;
+!line  /* An argument also exercises the real FPS maintenance bit. */
+!line  modeMask = 0;
+!line  if(argc>1) modeMask = 020;
+!line  if(pipe(p)<0 || pipe(q)<0) { printf("FPSTATE PIPE FAILED\n"); exit(1); }
+!line  fill(123,04251);
+!line  loadfp(expected);
+!line  pid = fork();
+!line  if(pid<0) { printf("FPSTATE FORK FAILED\n"); exit(1); }
+!line  check();
+!line  if(pid==0) {
+!line   close(p[1]); close(q[0]);
+!line   fill(456,04146);
+!line   loadfp(expected);
+!line   for(i=0;i<40;i++) {
+!line    if(read(p[0],&c,1)!=1) errors++;
+!line    if(write(q[1],&c,1)!=1) errors++;
+!line    check();
+!line   }
+!line   close(p[0]); close(q[1]); exit(errors!=0);
+!line  }
+!line  close(p[0]); close(q[1]);
+!line  for(i=0;i<40;i++) {
+!line   c = i;
+!line   if(write(p[1],&c,1)!=1) errors++;
+!line   if(read(q[0],&c,1)!=1 || c!=i) errors++;
+!line   check();
+!line  }
+!line  close(p[1]); close(q[0]); wait(&st);
+!line  printf("FPSTATE %d %d\n", errors, st);
+!line  exit(errors || st);
+!line }
+!eof
+!raw cat >fpstate_io.s
+!line
+!line / User-mode FP11 state transfer for the process isolation check.
+!line .globl _loadfp, _readfp
+!line _loadfp:
+!line  mov 2(sp),r0
+!line  tst (r0)+
+!line  ldfps $200
+!line  movf (r0)+,fr0
+!line  movf (r0)+,fr1
+!line  movf (r0)+,fr2
+!line  movf (r0)+,fr3
+!line  movf (r0)+,fr0
+!line  movf fr0,fr4
+!line  movf (r0)+,fr0
+!line  movf fr0,fr5
+!line  mov 2(sp),r0
+!line  movf 2(r0),fr0
+!line  ldfps (r0)
+!line  rts pc
+!line _readfp:
+!line  mov 2(sp),r0
+!line  stfps (r0)+
+!line  ldfps $200
+!line  movf fr0,(r0)+
+!line  movf fr1,(r0)+
+!line  movf fr2,(r0)+
+!line  movf fr3,(r0)+
+!line  movf fr4,fr0
+!line  movf fr0,(r0)+
+!line  movf fr5,fr0
+!line  movf fr0,(r0)+
+!line  mov 2(sp),r0
+!line  movf 2(r0),fr0
+!line  ldfps (r0)
+!line  rts pc
+!eof
+!raw cat >fp_math.c
+!line
+!line /* General D-format arithmetic, precision, conversions and libm checks. */
+!line double sqrt(), sin(), cos(), atan(), exp(), log();
+!line double a[9], b[9], c[9];
+!line int errors;
+!line
+!line near(x,y)
+!line double x,y;
+!line {
+!line  double d;
+!line  d = x-y;
+!line  if(d<0) d = -d;
+!line  if(d>0.00000001) errors++;
+!line }
+!line
+!line main()
+!line {
+!line  int i,j,k,n;
+!line  double x,t,s;
+!line  near(sqrt(81.0),9.0);
+!line  near(exp(log(2.0)),2.0);
+!line  near(atan(1.0)*4.0,3.141592653589793);
+!line  x = 0.5; s = sin(x); t = cos(x);
+!line  near(s*s+t*t,1.0);
+!line  t = 1.0;
+!line  for(i=0;i<54;i++) t=t/2.0;
+!line  x = (1.0+t)-1.0;
+!line  if(x!=t) errors++;
+!line  x = 1.0;
+!line  for(i=0;i<30;i++) x=x*2.0;
+!line  for(i=0;i<30;i++) x=x/2.0;
+!line  if(x!=1.0) errors++;
+!line  if((n=1.125*16.0)!=18) errors++;
+!line  if((n= -32760.75)!= -32760) errors++;
+!line  for(i=0;i<9;i++) { a[i]=i+1; b[i]=0.0; }
+!line  b[0]=1.0; b[4]=1.0; b[8]=1.0;
+!line  for(i=0;i<3;i++) for(j=0;j<3;j++) {
+!line   x = 0.0;
+!line   for(k=0;k<3;k++) x=x+a[i*3+k]*b[k*3+j];
+!line   c[i*3+j]=x;
+!line  }
+!line  for(i=0;i<9;i++) if(c[i]!=a[i]) errors++;
+!line  printf("FP MATH %d\n", errors);
+!line  exit(errors);
+!line }
+!eof
+!raw cat >fp_exec.c
+!line
+!line /* A new executable starts with cleared FP accumulators and SETD's FPS. */
+!line int actual[25];
+!line main()
+!line {
+!line  int i,e;
+!line  readfp(actual);
+!line  e = actual[0]!=0200;
+!line  for(i=1;i<25;i++) if(actual[i]!=0) e++;
+!line  printf("FPEXEC %d\n", e);
+!line  exit(e!=0);
+!line }
+!eof
+!raw cat >fp_execchain.c
+!line
+!line /* Replace a process holding nondefault FPS and nonzero FP registers. */
+!line int state[25];
+!line main()
+!line {
+!line  int i;
+!line  state[0] = 0146;
+!line  for(i=0;i<6;i++) {
+!line   state[1+i*4]=040200+i;
+!line   state[2+i*4]=123+i;
+!line   state[3+i*4]=456+i;
+!line   state[4+i*4]=789+i;
+!line  }
+!line  loadfp(state);
+!line  execl("./fpexec","fpexec",0);
+!line  printf("FPEXEC LOAD FAILED\n");
+!line  exit(1);
+!line }
+!eof
+!raw cat >fp_signal.c
+!line
+!line /* Hardware-style FP divide by zero must deliver Unix signal 8. */
+!line double one, zero;
+!line caught()
+!line {
+!line  printf("FPE SIGNAL 8\n");
+!line  exit(0);
+!line }
+!line main()
+!line {
+!line  double x;
+!line  one = 1.0; zero = 0.0;
+!line  signal(8,caught);
+!line  x = one/zero;
+!line  printf("FPE SIGNAL MISSED\n");
+!line  exit(x!=0.0);
+!line }
+!eof
+as fpstate_io.s
+mv a.out fpio.o
+cc -O fpstate.c fpio.o
+mv a.out fpstate
+./fpstate
+./fpstate
+./fpstate
+./fpstate mm
+cc -O fp_math.c -lm
+mv a.out fpmath
+./fpmath
+cc -O fp_exec.c fpio.o
+mv a.out fpexec
+cc -O fp_execchain.c fpio.o
+mv a.out fpchain
+./fpchain
+./fpchain
+cc -O fp_signal.c
+mv a.out fpsignal
+./fpsignal
+!stats

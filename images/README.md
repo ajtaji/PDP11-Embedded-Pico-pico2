@@ -1,36 +1,38 @@
 # Ready-to-flash firmware and Unix images
 
-## 2026-10-26 builds
+## 2026-10-27 builds
 
-The new general assembly pass raises measured Pico W double-precision
-Whetstone throughput from **242.9 to 257.1 KWIPS** and frees **256 bytes of
-SRAM**. Pico 2 W frees **284 bytes**; its measured floating-point change is
-about 0.5%. The complete Unix suite is essentially unchanged: **48.45 s on
-Pico W**, **55.59 s on Pico 2 W**. [Matched fresh results and limits](../docs/bench/assembly-2026-10-26.md).
+All six firmware programs were rebuilt from runtime source `d2a8415`.
+The PSRAM variants add general aligned Thumb-2 sector transfers for RK11,
+RP11 and writable disk storage. Standard Pico W, Pico 2 W and both demo
+programs reproduce the preceding accepted program bytes exactly.
 
-All six firmware programs are rebuilt from runtime source `338b5a5`. They
-retain full guest memory, write overlays, standard panels, gamma-corrected
-16-pixel runtime TrueType fonts and their existing audio profiles. The
-[manifest](manifest-2026-10-26.json) records compiler, program, kernel and file
-hashes; [SHA256SUMS](SHA256SUMS) covers the supplied files.
+V7 PSRAM images include a native kernel that preserves full FPS and six
+D accumulators across fork and exec and masks exceptions during raw FP
+state copies. The distribution's 29 buffers and resource limits remain.
+[Kernel source edits, native rebuild and upgrade](../docs/v7/PSRAM-KERNEL.md).
+The V7 RK0 kernel and both pack-header nonces change deliberately; all other
+root regular-file contents and all RK1/RP03 distribution data are preserved.
+V6 and Mini-Unix disk payloads remain unchanged from the October 26 release.
 
-V6 system images now boot **rkfp**, with full floating-point process state
-and exec reset. Their RK0 packs and nonces change deliberately. Every old
-regular file and recovery kernel is retained; `/unix` names the new kernel.
-RK1 source disks and V7 disks/nonces are unchanged. The Mini-Unix pack is
-unchanged from the preceding accepted FP release. [V6 kernel details and
-native rebuild](../docs/v6/FP-KERNEL.md). Unix licensing remains in
-[Caldera-license.pdf](../Caldera-license.pdf).
+[Fresh historical comparisons](../docs/bench/historical-2026-10-27.md) and
+[PSRAM workload results and limits](../docs/bench/psram-2026-10-27.md) record
+actual physical-board measurements. The complete Unix workload shows little
+overall change. The faster transfer path costs 584 bytes of SRAM code.
+Panels, runtime 16-pixel gamma-corrected fonts and audio profiles remain.
+The [manifest](manifest-2026-10-27.json) records source, compiler, kernel and
+file hashes; [SHA256SUMS](SHA256SUMS) covers all 28 supplied files.
 
 ## Updating an existing installation
 
-Firmware-only files keep the installed Unix pack, kernel, output settings
-and saved changes. To obtain the **new V6 FP context support**, install the
-updated **V6 combined system image** for the board as well. Back up saved
-files first: a changed RK0 nonce prevents old saved blocks being applied to
-the new filesystem. V7 keeps its existing kernel and can use firmware-only
-updates. See the kernel guide for updating an existing UF2 while retaining
-its regular files.
+Firmware-only files preserve the installed guest kernel, Unix packs, output
+settings and saved changes. To obtain the **V7 FP context fixes**, install
+the matching new **V7 combined system image** or update the kernel in a
+backed-up filesystem. Back up saved files before replacing an OS image:
+changed pack nonces prevent old saved blocks from being replayed onto it.
+For earlier V6 installations, the FP-enabled `rkfp` kernel still requires
+the V6 system-image update described in [the V6 guide](../docs/v6/FP-KERNEL.md).
+
 Use **Compiler > Flash Prebuilt File...** in PureMetal Forge, or copy the file
 to the BOOTSEL drive.
 
@@ -42,8 +44,8 @@ kernel. The disk-pack file replaces the installed Mini-Unix pack.
 | --- | ---: | --- |
 | [picow-mini-unix/firmware.uf2](picow-mini-unix/firmware.uf2) | 394,240 | `0b896fd14938bd6c7f8d7bbd273575d5de07996cb61d255dcfcbc161af941a2d` |
 | [pico2w-v6/firmware.uf2](pico2w-v6/firmware.uf2) | 399,872 | `a7617b6fe9bbbd0db4917a63f9c62bfb650f17feaf82b34d7ed887480806f274` |
-| [picoplus2/firmware.uf2](picoplus2/firmware.uf2) | 457,728 | `040fc3775775755806f97ec62626e366c23c985c3b1fe5ffd66f165bdd5c3c35` |
-| [feather/firmware.uf2](feather/firmware.uf2) | 457,216 | `b0e033c65328e4a8a581db14474e40b37b064d7a48302b6d41c496ed30f834f0` |
+| [picoplus2/firmware.uf2](picoplus2/firmware.uf2) | 458,752 | `14987dbfa602d2e045f4c675cf6423ced91c749266d71529fe75a488d7440205` |
+| [feather/firmware.uf2](feather/firmware.uf2) | 458,240 | `d1703bee38c43268e42e422699ae1615fa76e5c217aacf2bfd3a33db8ff196c3` |
 
 - Pico W: `picow-mini-unix/firmware.uf2`, RP2040 at 200 MHz.
 - Pico 2 W: `pico2w-v6/firmware.uf2`, RP2350 at 150 MHz.
@@ -60,10 +62,10 @@ map for the IDE, with repository-relative source references.
 | --- | ---: | --- |
 | [pico2w-v6/combined.uf2](pico2w-v6/combined.uf2) | 3,423,744 | `dc57aca22f5c2e8ff971e1abdd0a0a07c7dd6c1dc5cf7b129ed0acac707b096e` |
 | [picow-mini-unix/minix.uf2](picow-mini-unix/minix.uf2) | 3,171,328 | `faa6b1f0987bfdb45f6f3d97b1fe0e4a826cbae9df39f5b1ae97b026bdc3e3d3` |
-| [picoplus2/combined.uf2](picoplus2/combined.uf2) | 9,559,040 | `3e7acbaa8c5b2e73dcb319b79382acdfbb5f4c65db1ad9a36d13706396af68e8` |
-| [picoplus2-v7/combined.uf2](picoplus2-v7/combined.uf2) | 22,944,768 | `f8ea0a0884b3a29b5c2aad2742be13ada6beb2f8605140713ea978a0c8a6c409` |
-| [feather/combined.uf2](feather/combined.uf2) | 9,558,528 | `07fd78b3aa10924c735ba2667c97dadde923d04cb9e9d0edce076bb1a9ebd65e` |
-| [feather-v7/combined.uf2](feather-v7/combined.uf2) | 9,558,528 | `7e3c88e62dbb082097680d4e9a664d68d50163b6ba4a487812dfd8abf385c5c9` |
+| [picoplus2/combined.uf2](picoplus2/combined.uf2) | 9,560,064 | `8e3da36d63b7436df6728b3e6bcc3cce2b657e882556b26055b452593ebcb0b9` |
+| [picoplus2-v7/combined.uf2](picoplus2-v7/combined.uf2) | 22,945,792 | `7be36e0912a4dbbc72fc66cc8cd35f71e4b416ae9ddeabdb7fee64de43ce8484` |
+| [feather/combined.uf2](feather/combined.uf2) | 9,559,552 | `0ee3c995c321a0de7f4f3c61653c4af5fdb41f7e197f9c71c10d1e5e3b092bf3` |
+| [feather-v7/combined.uf2](feather-v7/combined.uf2) | 9,559,552 | `2e9da21e22b1d87d8d42aa8e3da17f8b5ef4dd84f54efb9288c6fe4cf706372e` |
 
 **Pico W needs two separate flashes:** first its `firmware.uf2` above, then
 `minix.uf2`. On RP2040, combining the firmware and pack into one file can
@@ -135,7 +137,13 @@ silent settings, without repeating speaker playback.
 
 ## Hardware validation
 
-Detailed checks are in [VALIDATION-2026-10-26.md](VALIDATION-2026-10-26.md).
+Current checks are in [VALIDATION-2026-10-27.md](VALIDATION-2026-10-27.md).
+The standard and demo program bytes are unchanged after rebuilding; both
+PSRAM programs and the V7 kernel were exercised on their physical boards.
+
+### Earlier October 26 validation
+
+[Previous validation](VALIDATION-2026-10-26.md) follows for context.
 
 The new standard and demo programs were checked on Pico W and Pico 2 W.
 Full flash readbacks match their final program pages. Pico W preserves its

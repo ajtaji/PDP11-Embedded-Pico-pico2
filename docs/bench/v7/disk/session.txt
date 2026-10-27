@@ -1,0 +1,60 @@
+!boot
+!wait 1
+stty -lcase
+/etc/mount /dev/rk1 /usr
+!timeout 120
+mkdir /hb
+cd /hb
+!raw cat >dwrite.c
+!line
+!line main(){ char buffer[512]; char *filename; register int i; int f;
+!line filename="a_large_file";
+!line f=creat(filename,0640); if(f<0){printf("CREATE FAILED\n");exit(1);} close(f);
+!line f=open(filename,1); if(f<0){printf("OPEN FAILED\n");exit(1);}
+!line for(i=0;i<256;i++) if(write(f,buffer,512)<0){printf("WRITE FAILED %d\n",i);exit(1);}
+!line close(f);
+!line }
+!eof
+!wait 0.2
+cc -O dwrite.c
+mv a.out dwrite
+!raw cat >dread.c
+!line
+!line long lseek();
+!line main(){ char buffer[512]; char *filename; register int i; int f; long offset;
+!line filename="a_large_file"; f=open(filename,0);
+!line if(f<0){printf("OPEN FAILED\n");exit(1);}
+!line for(i=0;i<256;i++) {
+!line offset=(long)rand()*4;
+!line if(lseek(f,offset,0)<0){printf("SEEK FAILED %d\n",i);exit(1);}
+!line if(read(f,buffer,512)<0){printf("READ FAILED %d\n",i);exit(1);}
+!line }
+!line unlink(filename);
+!line }
+!eof
+!wait 0.2
+cc -O dread.c
+mv a.out dread
+!raw cat >check.c
+!line
+!line main(){ int f,n,b; char a[512];
+!line f=open("a_large_file",0); if(f<0){printf("FILECHECK OPEN FAILED\n");exit(1);}
+!line b=0; while((n=read(f,a,512))>0) {if(n!=512){printf("FILECHECK SHORT\n");exit(1);} b++;}
+!line close(f); printf("FILECHECK %d\n",b);
+!line }
+!eof
+!wait 0.2
+cc -O check.c
+mv a.out check
+time ./dwrite
+./check
+time ./dread
+time ./dwrite
+./check
+time ./dread
+time ./dwrite
+./check
+time ./dread
+sync
+ls /
+!stats
