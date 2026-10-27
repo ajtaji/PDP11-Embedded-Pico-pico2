@@ -1,4 +1,4 @@
-S|flash|4194304|image|218692
+S|flash|4194304|image|218452
 R|radio firmware|2097152|262144|reserved|flash_layout.pico2 line 53 (included)
 F|radio firmware|J11_18MHz_KDJ11_BF/pico2/flash_layout.pico2
 R|RK0|2359296|1835008|rk05|flash_layout.pico2 line 61 (included)

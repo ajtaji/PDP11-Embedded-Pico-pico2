@@ -1,6 +1,6 @@
 # Firmware validation, 2026-10-26
 
-The current text refresh uses runtime source `37c7690`. All six firmware programs were rebuilt with corrected text gamma and a 16-pixel readable default. Pico W/Pico 2 W normal and demo builds were checked on physical panels. PSRAM variants were compiled and repackaged with unchanged disk payloads; their physical checks below predate this text-only refresh.
+The current assembly and V6 FP-context refresh uses runtime source `338b5a5`. All six programs were rebuilt. The newest checks are recorded at the end; earlier text/CPU measurements below remain historical.
 [manifest-2026-10-26.json](manifest-2026-10-26.json) records every program/file
 hash, board profile and compiler hash. All ready builds start silent.
 
@@ -163,3 +163,47 @@ mode. Speaker playback was not repeated for this FP-only update.
   RP2350 demo: 218,692 bytes. No guest memory or overlay budgets changed.
 
 [Comparison, exports and reproduction](../docs/FONT-READABILITY.md).
+
+## Further assembly and V6 FP context refresh
+
+- RP2040 exact arithmetic: 22,528 checks pass; RP2350 shifts: 8,192 checks
+  pass. A deliberately wrong logical shift is rejected with 518 failures.
+  Both DEC FPA diagnostics pass zero errors on both processors.
+- Full native Unix build/assemble/archive/link, processes/pipes/files,
+  text/sort/edit and repeated reads pass on both standard boards. Three
+  long Whetstone runs and three Sieve100 runs have checked numerical outputs.
+  General precision/conversion/matrix/math-function tests pass; all six
+  accumulators/FPS survive fork and blocking pipes, exec resets the state,
+  and divide-by-zero signals 8. All final measured sessions have zero
+  dropped ticks and lost input.
+- Fresh matched results: Pico W Unix48.37->48.45 s, Whet242.9->257.1 KWIPS;
+  Pico2 W with the same FP-enabled kernel on both sides Unix55.57->55.59 s,
+  Whet489.3->491.8 KWIPS. Small Unix differences are not treated as a speedup.
+  [Samples and methodology](../docs/bench/assembly-2026-10-26.md).
+- Program/code-SRAM/free-SRAM bytes: Pico W196980/49016/504 versus
+  197620/49136/248; Pico2 W199768/92840/1628 versus199992/93004/1344.
+  Free counts exclude reserved stacks/windows. No guest, overlay, font or
+  audio budgets were reduced.
+- The stock FP-disabled V6 kernel also fails state checks with unchanged
+  public firmware. The new native-built FP-enabled m45 kernel fixes this
+  independently of the emulator optimization. It passes full state/math,
+  maintenance-bit, exec and signal tests on Pico2 W and Feather. Its 0407
+  data-first sysfix layout and swap metadata are verified by release tools.
+- V6 RK0 images deliberately gain `/rkfp` and sources, retaining every
+  existing regular file and recovery kernel. RK1 and V7 packs/nonces are
+  unchanged. New RK0 nonces prevent incompatible saved-store replay.
+  The Pico Plus2 kernel is identical and compiled/repackaged; its physical
+  checks were not repeated this turn. [Kernel guide](../docs/v6/FP-KERNEL.md).
+- Both final demos boot at16 pixels with advancing guest/panel counters,
+  zero panel errors and dropped ticks. Silent settings were used; live
+  speaker playback was not repeated. Pico W is left on the rebuilt demo,
+  Pico2 W on updated normal firmware and the new FP-enabled V6 kernel.
+- Pico W full2MB readback matches the new demo program and all original
+  bytes from0x3f000 onward, preserving settings/pack/radio. Pico2 W full4MB
+  readback matches its new normal program and accepted new RK0 pages, while
+  all bytes from0x4f000 to0x240000 match the original snapshot. Its original
+  root matches the image whose288 regular files were preserved by the tool.
+- Feather full8MB flash, including its original saved filesystem, was
+  restored exactly after kernel building/testing: SHA256
+  286063eaf84234d0833399fd3ec0fed119e10b155bd7f24ccb3d74f7fc006d24.
+  Pico Plus2 physical flash was untouched.
