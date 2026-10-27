@@ -1,3 +1,46 @@
+# UF2 BOOTSEL validation, latest 2026-10-27
+
+Packaging source: `1124d1c54c7b8e89657162c20c4b58006fc07683`. All six programs rebuilt with the canonical
+compiler; executable payloads match the previously measured release.
+All 28 supplied files pass the release checker and 11 UF2 safety tests pass.
+The published Feather/Plus2 firmware and V7 files exactly match the prepared
+physical test files. [Machine-readable proof](UF2-VALIDATION-2026-10-27.json).
+
+| Board | Actual Windows Explorer test | Full-flash verification |
+|---|---|---|
+| Feather RP2350 HSTX, 8 MB | Firmware-only and V7 combined dragged onto BOOTSEL; USB serial returned | All V7 data pages match; saved 1 MB store unchanged; final complete readback matches original data plus new firmware |
+| Pico Plus 2 W, 16 MB | V7 combined dragged onto BOOTSEL; USB serial returned | All V7 data pages match; saved 1 MB store unchanged; final complete readback matches original data plus new firmware |
+
+Boards entered BOOTSEL before each Explorer copy. Guests were halted on USB
+return before test workloads. Original disk packs were restored after the
+factory V7 transfer; only changed sectors were written, excluding the saved
+store entirely. Final readbacks preserve every original byte from output
+settings (`0x4F000`) to flash end, including radio, pack nonces and user data.
+Standard Pico W/Pico 2 W boards were not reflashed in this packaging pass.
+
+Each touched flash sector now contains all sixteen payload pages. Only
+missing pages inside touched sectors gain FF padding: no inter-region gaps
+are filled. Existing V6, V7 and Mini-Unix disk bytes, filesystem contents and
+pack nonces are preserved. The standard V6 and Mini-Unix pack tail sectors
+also receive their missing padding pages.
+
+RP2350 flash UF2s carry the official E10 Absolute-family prefix, with
+`RP2_IGNORE_BLOCK`, at `0x1004EF00`. The dedicated `0x4E000..0x4EFFF` sector
+is reserved in linker metadata and excluded from ordinary program pages.
+It is below settings and far from the saved Unix store. Both attached ROMs
+left that sector unchanged, consistent with ignoring the workaround tag.
+A physical A2-ROM board was not available for this test; the prefix's bytes
+and placement are checked against the official converter and safety mutants.
+
+Older PureMetal Forge prebuilt uploaders reject the prefix before writing.
+Use Explorer BOOTSEL or [the unchanged-copy helper](../docs/TOOLS.md#bootsel-uf2-copy).
+Do not remove the prefix for an A2 BOOTSEL transfer.
+
+References: [official converter](https://github.com/raspberrypi/picotool/blob/master/elf2uf2/elf2uf2.cpp),
+[RP2350 datasheet, E10](https://pip-assets.raspberrypi.com/categories/1214-rp2350/documents/RP-008373-DS-2-rp2350-datasheet.pdf?disposition=inline).
+
+---
+
 # CPU optimization validation, later 2026-10-27
 
 Runtime source: `eacaa8c94b0a5ba955370caaf7f8bce527c72864`.

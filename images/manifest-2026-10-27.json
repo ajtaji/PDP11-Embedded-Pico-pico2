@@ -1,7 +1,7 @@
 {
   "date": "2026-10-27",
-  "runtime_source": "eacaa8c94b0a5ba955370caaf7f8bce527c72864",
-  "pack_base_revision": "eacaa8c94b0a5ba955370caaf7f8bce527c72864",
+  "runtime_source": "1124d1c54c7b8e89657162c20c4b58006fc07683",
+  "pack_base_revision": "1124d1c54c7b8e89657162c20c4b58006fc07683",
   "compiler_sha256": "ea0c04dd97636624cbfd51d4d7fbc2d854ce8548f65ddbb139b2634c99f2c94c",
   "psram_profiles": {
     "picoplus2": "Pimoroni_Pico_Plus_2_W.board",
@@ -18,7 +18,7 @@
     "rp2040-demo"
   ],
   "unchanged_disk_payload_sha256": {
-    "images/pico2w-v6/combined.uf2": "563ab9d1c9d90924e05554205bd2549204d46bdcc6976638449758f41d65f452",
+    "images/pico2w-v6/combined.uf2": "c9e6fcdf6c2cb7c8dbc4ade74e0665f6ecd9a7bb6373a11b0ab8da428f6e0e31",
     "images/picoplus2/combined.uf2": "e7d49a502dcb2ef51b3226f0e0282f2955a976ad4ae42692ec3c9d6ccbd2fc30",
     "images/picoplus2-v7/combined.uf2": "05994169633b57f346f4dc4f1c090c877f240c51a26b9040b9de5fa2d75b451b",
     "images/feather/combined.uf2": "df927c99b4fcff493937d9efec75d9ad5ba5d655f9e874d08485012daa70a4df",
@@ -27,8 +27,8 @@
   "files": [
     {
       "path": "images/picow-mini-unix/firmware.uf2",
-      "bytes": 394240,
-      "sha256": "0b896fd14938bd6c7f8d7bbd273575d5de07996cb61d255dcfcbc161af941a2d"
+      "bytes": 401408,
+      "sha256": "5447f932960b395fa367a11e71e6925e2e0f007bbfe346328e1dbb5d4901728f"
     },
     {
       "path": "images/picow-mini-unix/firmware.uf2.regions",
@@ -37,58 +37,58 @@
     },
     {
       "path": "images/pico2w-v6/firmware.uf2",
-      "bytes": 398848,
-      "sha256": "0c8e9d0c29801e2de81df987f77a4152726915e2eed471db23fee3fa62611bd4"
+      "bytes": 401920,
+      "sha256": "9c4d4afb7201ef5053bc4307be0d09d63f4f797e993e2bd6bcf8f19d33ff6c95"
     },
     {
       "path": "images/pico2w-v6/firmware.uf2.regions",
-      "bytes": 400,
-      "sha256": "e9af05a6fa24728085a9cb508226e8c66f380c1b4ad297f8bdbb6dc037f32391"
+      "bytes": 545,
+      "sha256": "37787d9f16f7e98b49588eabcef61b25035bfbaac63720479c03677be62dc881"
     },
     {
       "path": "images/picoplus2/firmware.uf2",
-      "bytes": 458240,
-      "sha256": "9269338afa46e545f363570660ee1563d24232ba7b640c0663d03ea94b248443"
+      "bytes": 459264,
+      "sha256": "2508149b436f95776421a54a8feadc49c9b1658516fca0f5b0ebbd3bbbb8bf5a"
     },
     {
       "path": "images/picoplus2/firmware.uf2.regions",
-      "bytes": 640,
-      "sha256": "ff17d42443d122184f4dc749c418f5d83a10165cb4d7fbc1cf20c11ad0714a6b"
+      "bytes": 785,
+      "sha256": "7b5e1de0fc415a2ac9ae74aa507ccc1b03c5bfba06a9252a282810f611b416c5"
     },
     {
       "path": "images/feather/firmware.uf2",
-      "bytes": 457728,
-      "sha256": "77c83cc7b6da5952c32f27656bf6125231c3bb65ad3734974e524032553cfc36"
+      "bytes": 459264,
+      "sha256": "44a96a85b23fcc3d4ff1a219aad3436d8321610099025605c9d3335fa1aa48d2"
     },
     {
       "path": "images/feather/firmware.uf2.regions",
-      "bytes": 638,
-      "sha256": "5c6a96990139ac4dac91726ec62685d8fd7b53c607156f4b2b64f1361f3f391f"
+      "bytes": 783,
+      "sha256": "65959af663e01a2cc0786e612369a0422ffd4993e808f88330f2a308eddca866"
     },
     {
       "path": "images/pico2w-v6/combined.uf2",
-      "bytes": 3422720,
-      "sha256": "39ef61b78a09fa308f696b3a48d82cd2154cc14aedf27b4d7f716703923358be"
+      "bytes": 3432960,
+      "sha256": "3d31d2c59cd62c66bba47d90ae499c01709e07da540dab4ef5cef4f62e317397"
     },
     {
       "path": "images/picoplus2/combined.uf2",
-      "bytes": 9559552,
-      "sha256": "677efc00097aedee637e860bb239464d91cf4164a08ffec93c89ed28136c614f"
+      "bytes": 9560576,
+      "sha256": "fc3327d4872f3618fde9cf97aeae4902fc33f496f9d956a610911b89e7e2360d"
     },
     {
       "path": "images/picoplus2-v7/combined.uf2",
-      "bytes": 22945280,
-      "sha256": "e41325753dd733a00474709d4f54c7e4b718db65fc13b4ba3ee6dda051100355"
+      "bytes": 22946304,
+      "sha256": "53af2364b2be869af08a5ae274d0531c2497b60a3a7c1d087ee531cc8e1d00c4"
     },
     {
       "path": "images/feather/combined.uf2",
-      "bytes": 9559040,
-      "sha256": "1a45cc99b8fac917a645d315025c9eb7510b6321bb77b67381e32392ea8b2841"
+      "bytes": 9560576,
+      "sha256": "ed0738c069e1337f8262220a806f44f0cf04302cc66e2648550af9a74b4cb5ab"
     },
     {
       "path": "images/feather-v7/combined.uf2",
-      "bytes": 9559040,
-      "sha256": "5cc932170f58f2efdfe526346ddb04da6a8bdc61961f6581a0c867ea99d021b8"
+      "bytes": 9560576,
+      "sha256": "1bcabc0d8a2c45b82b59136ca950473c213480a25979346e13dcd9316f02a87b"
     },
     {
       "path": "images/output-settings/rp2040-none.uf2",
@@ -117,48 +117,48 @@
     },
     {
       "path": "images/output-settings/rp2350-none.uf2",
-      "bytes": 8192,
-      "sha256": "dd986daa5e98732009d6b15016ae362405ec70d7cc025d96760d0968a7c5e40d"
+      "bytes": 8704,
+      "sha256": "d1bb0d9b226f855570f44f7604816f15c513959eb159aeab54c4f33212fe7cba"
     },
     {
       "path": "images/output-settings/rp2350-lafvin.uf2",
-      "bytes": 8192,
-      "sha256": "00e52adc1acb60dc0a28ef99e368f054d19a2d4e315faf1be3013c38089785a9"
+      "bytes": 8704,
+      "sha256": "bad328a6d1d7d3c6817ddadf45537011c10b9f9220d3f5b6d878d1f4248da4f9"
     },
     {
       "path": "images/output-settings/rp2350-display-pack2.uf2",
-      "bytes": 8192,
-      "sha256": "dc939c6866290d862d6fec2cef866299a15b57b0cdc23e1d38b996dad61c8c0d"
+      "bytes": 8704,
+      "sha256": "a0fd2a6be94edb364be0c89bfdbc4dbd458f690c8a84220942b3de1643602f48"
     },
     {
       "path": "images/output-settings/rp2350-ili9341.uf2",
-      "bytes": 8192,
-      "sha256": "b3b29b0b5abba0f737d3d24366728b65a943ea6f95dfab38350c64e5bebdc6ef"
+      "bytes": 8704,
+      "sha256": "18671025c40e63ba2333febe1fecd32fcee077e2f6d932b68199cd772a287943"
     },
     {
       "path": "images/output-settings/rp2350-hx8357d.uf2",
-      "bytes": 8192,
-      "sha256": "55581f5d32b5c9276c7edcb8dd69512e8e624059595b4e5ba3391a75f975af09"
+      "bytes": 8704,
+      "sha256": "b7b4537c71c1f17ffc683d9bb3431417c4031f0e94abbd25000f7c39bae83b39"
     },
     {
       "path": "images/picow-mini-unix/minix.uf2",
-      "bytes": 3171328,
-      "sha256": "faa6b1f0987bfdb45f6f3d97b1fe0e4a826cbae9df39f5b1ae97b026bdc3e3d3"
+      "bytes": 3178496,
+      "sha256": "3d866848000a8346f9df8b6f2062144af64b7ed87316d3e6b3b7fa012ef4012e"
     },
     {
       "path": "images/pico2w-demo/firmware.uf2",
-      "bytes": 436224,
-      "sha256": "7ec9f244361decf10a991a6708d1791342229eb1a6c904cd2f7b81de6c302f5b"
+      "bytes": 442880,
+      "sha256": "ed57afa3a77e5eca8523e1cd42e2ff472a4ed5fb50179c2723953d78a39e3dfd"
     },
     {
       "path": "images/pico2w-demo/firmware.uf2.regions",
-      "bytes": 400,
-      "sha256": "aea53b49d9e59b37e05d6ae3fbee0d2b3e23856898d99f423e4a717b4f1d179d"
+      "bytes": 545,
+      "sha256": "9c2658b7fea71bdc487661d7db78d1ce87006c38629639c27d38d697719cf91b"
     },
     {
       "path": "images/picow-demo/firmware.uf2",
-      "bytes": 498688,
-      "sha256": "e9cf134ba33e81f119bff24bdcc0cca1ffefdff4331f2b99452b47f3282a665a"
+      "bytes": 499712,
+      "sha256": "3be1f48b132c20a221157a16f6412614551c3fb99d7b341da95f1b8e0fa61306"
     },
     {
       "path": "images/picow-demo/firmware.uf2.regions",
@@ -184,12 +184,12 @@
   },
   "demo_profiles": {
     "rp2350-demo": {
-      "runtime_source": "eacaa8c94b0a5ba955370caaf7f8bce527c72864",
+      "runtime_source": "1124d1c54c7b8e89657162c20c4b58006fc07683",
       "linked_audio": "silent",
       "default_audio": "silent"
     },
     "rp2040-demo": {
-      "runtime_source": "eacaa8c94b0a5ba955370caaf7f8bce527c72864",
+      "runtime_source": "1124d1c54c7b8e89657162c20c4b58006fc07683",
       "linked_audio": "bluetooth",
       "default_audio": "silent"
     }

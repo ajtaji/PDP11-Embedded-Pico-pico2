@@ -1,0 +1,48 @@
+{
+  "date": "2026-10-27",
+  "source": "1124d1c54c7b8e89657162c20c4b58006fc07683",
+  "compiler_sha256": "ea0c04dd97636624cbfd51d4d7fbc2d854ce8548f65ddbb139b2634c99f2c94c",
+  "release_files_checked": 28,
+  "codec_safety_tests": 11,
+  "programs_rebuilt": 6,
+  "executable_payloads_unchanged_from_measured_release": true,
+  "boards": [
+    {
+      "board": "feather",
+      "gui_drag_drop": true,
+      "all_main_pages_match": true,
+      "saved_unix_store_unchanged": true,
+      "store_sha256": "4cfbce663260ba2c5af9361b408a7f0142e54357b232ac7f8fe4bcec55fe3fa6",
+      "tested_uf2_sha256": "1bcabc0d8a2c45b82b59136ca950473c213480a25979346e13dcd9316f02a87b",
+      "restore_sectors": 14,
+      "restore_excludes_saved_store": true,
+      "final_flash_matches_target": true,
+      "all_original_data_from_settings_to_end_exact": true,
+      "flash_bytes": 8388608,
+      "e10_reserved_sector_unchanged_on_test_rom": true
+    },
+    {
+      "board": "picoplus2",
+      "gui_drag_drop": true,
+      "all_main_pages_match": true,
+      "saved_unix_store_unchanged": true,
+      "store_sha256": "065da4a8e620d891acb5aae2db2a470a426b9f93cbafb5688fe15338985f0f72",
+      "tested_uf2_sha256": "53af2364b2be869af08a5ae274d0531c2497b60a3a7c1d087ee531cc8e1d00c4",
+      "restore_sectors": 143,
+      "restore_excludes_saved_store": true,
+      "final_flash_matches_target": true,
+      "all_original_data_from_settings_to_end_exact": true,
+      "flash_bytes": 16777216,
+      "e10_reserved_sector_unchanged_on_test_rom": true
+    }
+  ],
+  "physical_a2_rom_test": false,
+  "e10_target": "0x1004ef00",
+  "reserved_sector": "0x1004e000..0x1004efff",
+  "padding": "FF pages in touched flash sectors only; untouched gaps absent",
+  "old_native_prebuilt_uploader": "rejects E10 prefix; use unchanged BOOTSEL copy",
+  "references": [
+    "https://github.com/raspberrypi/picotool/blob/master/elf2uf2/elf2uf2.cpp",
+    "https://pip-assets.raspberrypi.com/categories/1214-rp2350/documents/RP-008373-DS-2-rp2350-datasheet.pdf?disposition=inline"
+  ]
+}

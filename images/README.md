@@ -2,7 +2,9 @@
 
 ## 2026-10-27 builds
 
-All six programs were rebuilt from runtime source `eacaa8c`.
+All six programs were rebuilt from source `1124d1c`.
+Their executable bytes match the earlier measured `eacaa8c` release; this
+update adds UF2 sector padding, the safe E10 prefix and reserved metadata.
 The M33 variants cache data-space MMU row bases, extract call opcode fields
 directly and combine instruction-table indexing with its indirect jump.
 The RP2040 Unix and demo programs retain their accepted bytes.
@@ -31,8 +33,15 @@ changed pack nonces prevent old saved blocks from being replayed onto it.
 For earlier V6 installations, the FP-enabled `rkfp` kernel still requires
 the V6 system-image update described in [the V6 guide](../docs/v6/FP-KERNEL.md).
 
-Use **Compiler > Flash Prebuilt File...** in PureMetal Forge, or copy the file
-to the BOOTSEL drive.
+Copy the complete file to the BOOTSEL drive. Current RP2350 images include
+the RP2350-E10 workaround; older PureMetal Forge prebuilt uploaders reject
+its separate Absolute-family prefix. Use Explorer or the
+[unchanged-copy helper](../docs/TOOLS.md#bootsel-uf2-copy); do not strip it.
+
+Every touched flash sector contains all sixteen 256-byte payload pages.
+Gaps between program, settings, radio and Unix packs stay unwritten. The E10
+prefix targets the reserved `0x1004E000` sector, never the saved Unix store
+at the end of flash. Firmware-only updates retain existing packs and nonces.
 
 For RP2040 pipes and safe direct floating-point process state, also install the new `picow-mini-unix/minix.uf2`
 in a second upload. Updating firmware alone retains the installed guest
@@ -40,10 +49,10 @@ kernel. The disk-pack file replaces the installed Mini-Unix pack.
 
 | File | Bytes | SHA-256 |
 | --- | ---: | --- |
-| [picow-mini-unix/firmware.uf2](picow-mini-unix/firmware.uf2) | 394,240 | `0b896fd14938bd6c7f8d7bbd273575d5de07996cb61d255dcfcbc161af941a2d` |
-| [pico2w-v6/firmware.uf2](pico2w-v6/firmware.uf2) | 398,848 | `0c8e9d0c29801e2de81df987f77a4152726915e2eed471db23fee3fa62611bd4` |
-| [picoplus2/firmware.uf2](picoplus2/firmware.uf2) | 458,240 | `9269338afa46e545f363570660ee1563d24232ba7b640c0663d03ea94b248443` |
-| [feather/firmware.uf2](feather/firmware.uf2) | 457,728 | `77c83cc7b6da5952c32f27656bf6125231c3bb65ad3734974e524032553cfc36` |
+| [picow-mini-unix/firmware.uf2](picow-mini-unix/firmware.uf2) | 401,408 | `5447f932960b395fa367a11e71e6925e2e0f007bbfe346328e1dbb5d4901728f` |
+| [pico2w-v6/firmware.uf2](pico2w-v6/firmware.uf2) | 401,920 | `9c4d4afb7201ef5053bc4307be0d09d63f4f797e993e2bd6bcf8f19d33ff6c95` |
+| [picoplus2/firmware.uf2](picoplus2/firmware.uf2) | 459,264 | `2508149b436f95776421a54a8feadc49c9b1658516fca0f5b0ebbd3bbbb8bf5a` |
+| [feather/firmware.uf2](feather/firmware.uf2) | 459,264 | `44a96a85b23fcc3d4ff1a219aad3436d8321610099025605c9d3335fa1aa48d2` |
 
 - Pico W: `picow-mini-unix/firmware.uf2`, RP2040 at 200 MHz.
 - Pico 2 W: `pico2w-v6/firmware.uf2`, RP2350 at 150 MHz.
@@ -58,12 +67,12 @@ map for the IDE, with repository-relative source references.
 
 | File | Bytes | SHA-256 |
 | --- | ---: | --- |
-| [pico2w-v6/combined.uf2](pico2w-v6/combined.uf2) | 3,422,720 | `39ef61b78a09fa308f696b3a48d82cd2154cc14aedf27b4d7f716703923358be` |
-| [picow-mini-unix/minix.uf2](picow-mini-unix/minix.uf2) | 3,171,328 | `faa6b1f0987bfdb45f6f3d97b1fe0e4a826cbae9df39f5b1ae97b026bdc3e3d3` |
-| [picoplus2/combined.uf2](picoplus2/combined.uf2) | 9,559,552 | `677efc00097aedee637e860bb239464d91cf4164a08ffec93c89ed28136c614f` |
-| [picoplus2-v7/combined.uf2](picoplus2-v7/combined.uf2) | 22,945,280 | `e41325753dd733a00474709d4f54c7e4b718db65fc13b4ba3ee6dda051100355` |
-| [feather/combined.uf2](feather/combined.uf2) | 9,559,040 | `1a45cc99b8fac917a645d315025c9eb7510b6321bb77b67381e32392ea8b2841` |
-| [feather-v7/combined.uf2](feather-v7/combined.uf2) | 9,559,040 | `5cc932170f58f2efdfe526346ddb04da6a8bdc61961f6581a0c867ea99d021b8` |
+| [pico2w-v6/combined.uf2](pico2w-v6/combined.uf2) | 3,432,960 | `3d31d2c59cd62c66bba47d90ae499c01709e07da540dab4ef5cef4f62e317397` |
+| [picow-mini-unix/minix.uf2](picow-mini-unix/minix.uf2) | 3,178,496 | `3d866848000a8346f9df8b6f2062144af64b7ed87316d3e6b3b7fa012ef4012e` |
+| [picoplus2/combined.uf2](picoplus2/combined.uf2) | 9,560,576 | `fc3327d4872f3618fde9cf97aeae4902fc33f496f9d956a610911b89e7e2360d` |
+| [picoplus2-v7/combined.uf2](picoplus2-v7/combined.uf2) | 22,946,304 | `53af2364b2be869af08a5ae274d0531c2497b60a3a7c1d087ee531cc8e1d00c4` |
+| [feather/combined.uf2](feather/combined.uf2) | 9,560,576 | `ed0738c069e1337f8262220a806f44f0cf04302cc66e2648550af9a74b4cb5ab` |
+| [feather-v7/combined.uf2](feather-v7/combined.uf2) | 9,560,576 | `1bcabc0d8a2c45b82b59136ca950473c213480a25979346e13dcd9316f02a87b` |
 
 **Pico W needs two separate flashes:** first its `firmware.uf2` above, then
 `minix.uf2`. On RP2040, combining the firmware and pack into one file can
@@ -114,8 +123,8 @@ silent builds or PCM meter example.
 
 | File | Bytes | SHA-256 |
 | --- | ---: | --- |
-| [pico2w-demo/firmware.uf2](pico2w-demo/firmware.uf2) | 436,224 | `7ec9f244361decf10a991a6708d1791342229eb1a6c904cd2f7b81de6c302f5b` |
-| [picow-demo/firmware.uf2](picow-demo/firmware.uf2) | 498,688 | `e9cf134ba33e81f119bff24bdcc0cca1ffefdff4331f2b99452b47f3282a665a` |
+| [pico2w-demo/firmware.uf2](pico2w-demo/firmware.uf2) | 442,880 | `ed57afa3a77e5eca8523e1cd42e2ff472a4ed5fb50179c2723953d78a39e3dfd` |
+| [picow-demo/firmware.uf2](picow-demo/firmware.uf2) | 499,712 | `3be1f48b132c20a221157a16f6412614551c3fb99d7b341da95f1b8e0fa61306` |
 
 Flash the firmware matching the chip, then its [silent panel settings](output-settings/).
 The built-in demo starts automatically with a centered 320 x 200 picture.
