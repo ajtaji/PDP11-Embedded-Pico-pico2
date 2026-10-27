@@ -136,6 +136,8 @@ def main():
  minix=ROOT/'images/picow-mini-unix/minix.uf2'
  files.append({'path':minix.relative_to(ROOT).as_posix(),'bytes':minix.stat().st_size,'sha256':sha(minix.read_bytes())})
  manifest={'date':a.date,'runtime_source':source,'pack_base_revision':source,'compiler_sha256':a.compiler_sha256,'psram_profiles':{'picoplus2':'Pimoroni_Pico_Plus_2_W.board','feather':'Adafruit_Feather_RP2350_HSTX.board'},'audio':'silent','default_font':'Lato-derived Terminal Sans 16 px, sRGB text coverage','programs':list(programs)+['rp2350-demo'],'unchanged_disk_payload_sha256':disk_hashes,'files':files}
+ kernel=ROOT/'media/unix/rkfp-j11'
+ manifest['v6_fp_kernel']={'path':'media/unix/rkfp-j11','sha256':sha(kernel.read_bytes()),'boot':'rkfp','format':'V6 sysfix 0407 data-first','context':'FPS and six full D accumulators','sources':'docs/v6/FP-KERNEL.md'}
  (ROOT/('images/manifest-'+a.date+'.json')).write_text(json.dumps(manifest,indent=2)+'\n',encoding='utf-8',newline='\n')
  (ROOT/'images/SHA256SUMS').write_text(''.join(f["sha256"]+'  '+f['path'].removeprefix('images/')+'\n' for f in files),encoding='utf-8',newline='\n')
  print('Prepared',len(files),'files; all existing disk payloads unchanged.')

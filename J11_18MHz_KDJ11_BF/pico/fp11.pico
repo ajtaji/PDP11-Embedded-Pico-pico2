@@ -90,7 +90,7 @@
 #FP_LONG  = 4
 #FP_QUAD  = 8
 
-; Fps, Fec, Fea and the accumulators FrH/FrL are declared in cpu.pico2 (CpuReset clears them).
+; Fps, Fec, Fea and the accumulators FrH/FrL are declared in cpu.pico (CpuReset clears them).
 Global FpBackupPc.i
 Global FpChgReg.i, FpChgVal.i, FpChgOn.i
 Global FpQuit.i
@@ -113,19 +113,12 @@ Global FpAdr.i
 #P_ZERO = 13
 Global Dim PH.i(14)
 Global Dim PL.i(14)
-Global Dim FpMask.i(33)          ; FpMask(n) = the low n bits
 Global FpReady.i
 ; FpExec's and FpEa's working values (Globals: see FpCpuCc)
 Global FxAc.i, FxDs.i, FxQd.i, FxLenf.i, FxLeni.i, FxDst.i, FxNewv.i, FxEx.i, FxSign.i, FxI.i, FxC.i, FxN.i, FxZ.i, FxV.i
 Global FeR.i, FeAdr.i, FeSp.i
 
 Procedure FpInit()
-  Define i.i
-  FpMask(0) = 0
-  For i = 1 To 31
-    FpMask(i) = (1 << i) - 1
-  Next
-  FpMask(32) = -1
   ; simh's constants are { l, h } (fpac_t): fround_fac rounds F at bit 31 of l,
   ; fround_guard_fac at bit 2 of h and dround_guard_fac at bit 2 of l (guarded)
   PH(#P_RND) = 0 : PL(#P_RND) = 1 << 31
@@ -165,31 +158,7 @@ Procedure.i FpLt(a.i, b.i)                    ; F_LT: unsigned 64-bit a < b
   ProcedureReturn ULt(PL(a), PL(b))
 EndProcedure
 
-ProcedureRAM FpLsh(d.i, s.i, n.i)                ; F_LSH_V, 0 <= n < 64
-  Define h.i, l.i
-  If n = 0
-    h = PH(s) : l = PL(s)
-  ElseIf n >= 32
-    h = PL(s) << (n - 32) : l = 0
-  Else
-    h = (PH(s) << n) | ((PL(s) >> (32 - n)) & FpMask(n))
-    l = PL(s) << n
-  EndIf
-  PH(d) = h : PL(d) = l
-EndProcedure
-
-ProcedureRAM FpRsh(d.i, s.i, n.i)                ; F_RSH_V, 0 <= n < 64
-  Define h.i, l.i
-  If n = 0
-    h = PH(s) : l = PL(s)
-  ElseIf n >= 32
-    l = (PH(s) >> (n - 32)) & FpMask(64 - n) : h = 0
-  Else
-    l = ((PL(s) >> n) & FpMask(32 - n)) | (PH(s) << (32 - n))
-    h = (PH(s) >> n) & FpMask(32 - n)
-  EndIf
-  PH(d) = h : PL(d) = l
-EndProcedure
+XIncludeFile "../fp_shift.pmi"
 
 Macro FpLsh1(mLd)
  PH(mLd) = (PH(mLd) << 1) | ((PL(mLd) >> 31) & 1)
@@ -429,17 +398,13 @@ Procedure FpFracMulRef()
 EndProcedure
 
 ; ---- exact Thumb-1 fraction kernels ------------------------------------
-Global FmA.i, FmB.i, FmLo.i, FmHi.i
 
 ; Exact unsigned 32 x 32 -> 64, using the M0+'s four 16-bit partial
 ; products. No floating-point runtime, division, or 64-bit helper call.
-ProcedureRAM FpMul32()
+; Register kernel: r0*r1 -> r0:r2, preserving r4/r5 through the compiler's
+; callee-save frame. Fall through its epilogue after every inline ASM body.
+ProcedureRAM FpUmullRegs()
   ASM
-    push {r4, r5}
-    ldr r2, =global_fma
-    ldr r0, [r2]
-    ldr r2, =global_fmb
-    ldr r1, [r2]
     lsls r2, r0, #16
     lsrs r2, r2, #16
     lsrs r0, r0, #16
@@ -464,33 +429,80 @@ ProcedureRAM FpMul32()
     lsls r4, r4, #16
     lsrs r4, r4, #16
     orrs r2, r4
-    ldr r3, =global_fmhi
-    str r0, [r3]
-    ldr r3, =global_fmlo
-    str r2, [r3]
-    pop {r4, r5}
   EndASM
 EndProcedure
 
+; Standalone full-width product interface retained for native exact checks.
+
+
 ; Four full-width products accumulate all 128 product bits, including
 ; carries from the discarded low limbs. Return precisely bits 56..119.
-Procedure FpFracMulAsm()
-  Define al.i, ah.i, bl.i, bh.i, w1.i, w2.i, w3.i, t.i, c.i
-  al = PL(#P_FF) : ah = PH(#P_FF)
-  bl = PL(#P_SF) << 3
-  bh = (PH(#P_SF) << 3) | ((PL(#P_SF) >> 29) & 7)
-  FmA = al : FmB = bl : FpMul32() : w1 = FmHi
-  FmA = al : FmB = bh : FpMul32()
-  t = w1 + FmLo : c = ULt(t, w1) : w1 = t
-  w2 = FmHi + c : w3 = 0
-  FmA = ah : FmB = bl : FpMul32()
-  t = w1 + FmLo : c = ULt(t, w1) : w1 = t
-  t = w2 + FmHi : w3 = ULt(t, w2) : w2 = t
-  t = w2 + c : w3 = w3 + ULt(t, w2) : w2 = t
-  FmA = ah : FmB = bh : FpMul32()
-  t = w2 + FmLo : w3 = w3 + FmHi + ULt(t, w2) : w2 = t
-  PH(#P_FF) = (w3 << 8) | ((w2 >> 24) & $FF)
-  PL(#P_FF) = (w2 << 8) | ((w1 >> 24) & $FF)
+ProcedureRAM FpFracMulAsm()
+  ASM
+    sub sp, #32
+    ldr r3, =global_pl
+    ldr r0, [r3, #12]
+    str r0, [sp, #0]
+    ldr r1, [r3, #16]
+    lsrs r2, r1, #29
+    lsls r1, r1, #3
+    str r1, [sp, #8]
+    ldr r3, =global_ph
+    ldr r0, [r3, #12]
+    str r0, [sp, #4]
+    ldr r1, [r3, #16]
+    lsls r1, r1, #3
+    orrs r1, r2
+    str r1, [sp, #12]
+    ldr r0, [sp, #0]
+    ldr r1, [sp, #8]
+    bl fpumullregs
+    str r0, [sp, #16]
+    ldr r0, [sp, #0]
+    ldr r1, [sp, #12]
+    bl fpumullregs
+    ldr r3, [sp, #16]
+    adds r2, r2, r3
+    str r2, [sp, #16]
+    movs r3, #0
+    adcs r0, r3
+    str r0, [sp, #20]
+    ldr r0, [sp, #4]
+    ldr r1, [sp, #8]
+    bl fpumullregs
+    ldr r3, [sp, #16]
+    adds r2, r2, r3
+    str r2, [sp, #16]
+    movs r3, #0
+    adcs r0, r3
+    ldr r2, [sp, #20]
+    adds r0, r0, r2
+    str r0, [sp, #20]
+    movs r0, #0
+    adcs r0, r0
+    str r0, [sp, #24]
+    ldr r0, [sp, #4]
+    ldr r1, [sp, #12]
+    bl fpumullregs
+    ldr r3, [sp, #20]
+    adds r2, r2, r3
+    str r2, [sp, #20]
+    ldr r3, [sp, #24]
+    adcs r0, r3
+    lsls r0, r0, #8
+    mov r1, r2
+    lsrs r2, r2, #24
+    orrs r0, r2
+    lsls r1, r1, #8
+    ldr r3, [sp, #16]
+    lsrs r3, r3, #24
+    orrs r1, r3
+    ldr r3, =global_ph
+    str r0, [r3, #12]
+    ldr r3, =global_pl
+    str r1, [r3, #12]
+    add sp, #32
+  EndASM
 EndProcedure
 
 Procedure FpFracMul()

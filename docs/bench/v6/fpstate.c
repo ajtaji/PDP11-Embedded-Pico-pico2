@@ -1,11 +1,11 @@
 /* FP11 state must survive fork and blocking IPC, including all six D
  * accumulators and FPS modes/condition codes. Compile with fpstate_io.s. */
-int expected[25], actual[25], errors;
+int expected[25], actual[25], errors, modeMask;
 
 fill(seed, fps)
 {
  int i;
- expected[0] = fps;
+ expected[0] = fps | modeMask;
  for(i=0;i<6;i++) {
   expected[1+i*4] = 040200+i;
   expected[2+i*4] = seed+i;
@@ -24,10 +24,13 @@ check()
  for(i=0;i<25;i++) if(actual[i]!=expected[i]) errors++;
 }
 
-main()
+main(argc)
 {
  int p[2], q[2], pid, i, st;
  char c;
+ /* An argument also exercises the real FPS maintenance bit. */
+ modeMask = 0;
+ if(argc>1) modeMask = 020;
  if(pipe(p)<0 || pipe(q)<0) { printf("FPSTATE PIPE FAILED\n"); exit(1); }
  fill(123,04251);
  loadfp(expected);

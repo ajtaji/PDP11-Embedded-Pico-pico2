@@ -17,6 +17,21 @@ XIncludeFile "kw11.pico"
 XIncludeFile "rk11.pico"
 
 
+Global FmA.i, FmB.i, FmLo.i, FmHi.i
+ProcedureRAM FpMul32()
+  ASM
+    ldr r2, =global_fma
+    ldr r0, [r2]
+    ldr r2, =global_fmb
+    ldr r1, [r2]
+    bl fpumullregs
+    ldr r3, =global_fmhi
+    str r0, [r3]
+    ldr r3, =global_fmlo
+    str r2, [r3]
+  EndASM
+EndProcedure
+
 Global Failures.i, Checks.i
 Procedure Ch(c.i)
  UsbSerialWrite(c)

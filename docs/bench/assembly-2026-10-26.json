@@ -1,0 +1,131 @@
+{
+  "date": "2026-10-26",
+  "physical_boards": true,
+  "clocks_mhz": {
+    "2040": 200,
+    "2350": 150
+  },
+  "results": {
+    "2040": {
+      "baseline": {
+        "unix_phases": {
+          "build": 11.610909223556519,
+          "ipc": 7.742319583892822,
+          "text": 10.192747354507446,
+          "read": 18.82156801223755
+        },
+        "unix_seconds": 48.367544174194336,
+        "whet_seconds": [
+          12.348909378051758,
+          12.353224039077759,
+          12.355848550796509
+        ],
+        "whet_kwips": 242.8515819441066,
+        "sieve_seconds": [
+          8.404945850372314,
+          8.405342817306519,
+          8.40467643737793
+        ],
+        "sieve_10_seconds": 0.8404945850372314
+      },
+      "optimized": {
+        "unix_phases": {
+          "build": 11.58473515510559,
+          "ipc": 7.761803388595581,
+          "text": 10.2420175075531,
+          "read": 18.860101222991943
+        },
+        "unix_seconds": 48.448657274246216,
+        "whet_seconds": [
+          11.666822910308838,
+          11.669908046722412,
+          11.669658899307251
+        ],
+        "whet_kwips": 257.07692280346686,
+        "sieve_seconds": [
+          8.385344982147217,
+          8.457038402557373,
+          8.384405612945557
+        ],
+        "sieve_10_seconds": 0.8385344982147217
+      }
+    },
+    "2350": {
+      "baseline": {
+        "unix_phases": {
+          "build": 11.144964218139648,
+          "ipc": 6.703146934509277,
+          "text": 10.998499393463135,
+          "read": 26.72676992416382
+        },
+        "unix_seconds": 55.57338047027588,
+        "whet_seconds": [
+          6.120867967605591,
+          6.154857635498047,
+          6.131699562072754
+        ],
+        "whet_kwips": 489.26076198454234,
+        "sieve_seconds": [
+          9.997350215911865,
+          9.978510856628418,
+          9.983175277709961
+        ],
+        "sieve_10_seconds": 0.9983175277709961
+      },
+      "optimized": {
+        "unix_phases": {
+          "build": 11.086676597595215,
+          "ipc": 6.731571674346924,
+          "text": 11.031234979629517,
+          "read": 26.741252183914185
+        },
+        "unix_seconds": 55.59073543548584,
+        "whet_seconds": [
+          6.073856830596924,
+          6.115835666656494,
+          6.100169897079468
+        ],
+        "whet_kwips": 491.7895813748216,
+        "sieve_seconds": [
+          9.989020109176636,
+          9.970234632492065,
+          9.970315217971802
+        ],
+        "sieve_10_seconds": 0.9970315217971801
+      }
+    }
+  },
+  "memory": {
+    "2040": {
+      "before_flash": 197620,
+      "after_flash": 196980,
+      "before_code_sram": 49136,
+      "after_code_sram": 49016,
+      "before_free_sram": 248,
+      "after_free_sram": 504
+    },
+    "2350": {
+      "before_flash": 199992,
+      "after_flash": 199768,
+      "before_code_sram": 93004,
+      "after_code_sram": 92840,
+      "before_free_sram": 1344,
+      "after_free_sram": 1628
+    }
+  },
+  "methodology": "Host elapsed seconds; Unix excludes setup/source transfer. Three matched 3000-KWhetstone runs, X=9311/10000. Three Sieve100 runs, 1899 primes. RP2350 baseline and optimized use the SAME new FP-enabled kernel. Full Unix suite is one run per configuration.",
+  "kernel": {
+    "file": "media/unix/rkfp-j11",
+    "sha256": "d4329cfdcbc620ecb28a54f922af329f7761e7a39fd0fa565daef617dfa0cfc1",
+    "native_bytes": 28504,
+    "existing_files_preserved": 288,
+    "reason": "The legacy V6 _savfp routine was RTS PC. Unchanged public firmware also fails FPSTATE760. New stock m45 FPP-enabled kernel saves all six D accumulators/FPS, masks transfer exceptions, uses a reserved lazy-save marker, and resets state on exec."
+  },
+  "checks": {
+    "rp2040_exact_arithmetic": 22528,
+    "rp2350_exact_shifts": 8192,
+    "negative_shift_mutant_failures": 518,
+    "dec_fpa": "Both diagnostics pass zero errors on both chips",
+    "general": "Math, fork/blocking pipes, six accumulators/FPS, exec reset and signal8; V6 also maintenance-bit case"
+  }
+}

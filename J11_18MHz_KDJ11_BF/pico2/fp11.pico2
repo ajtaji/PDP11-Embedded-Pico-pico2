@@ -111,19 +111,12 @@ Global FpAdr.i                   ; ... and the address
 #P_ZERO = 13
 Global Dim PH.i(14)
 Global Dim PL.i(14)
-Global Dim FpMask.i(33)          ; FpMask(n) = the low n bits
 Global FpReady.i
 ; FpExec's and FpEa's working values (Globals: see FpCpuCc)
 Global FxAc.i, FxDs.i, FxQd.i, FxLenf.i, FxLeni.i, FxDst.i, FxNewv.i, FxEx.i, FxSign.i, FxI.i, FxC.i, FxN.i, FxZ.i, FxV.i
 Global FeR.i, FeAdr.i, FeSp.i
 
 Procedure FpInit()
-  Define i.i
-  FpMask(0) = 0
-  For i = 1 To 31
-    FpMask(i) = (1 << i) - 1
-  Next
-  FpMask(32) = -1
   ; simh's constants are { l, h } (fpac_t): fround_fac rounds F at bit 31 of l,
   ; fround_guard_fac at bit 2 of h and dround_guard_fac at bit 2 of l (guarded)
   PH(#P_RND) = 0 : PL(#P_RND) = 1 << 31
@@ -163,31 +156,7 @@ ProcedureRAM.i FpLt(a.i, b.i)                    ; F_LT: unsigned 64-bit a < b
   ProcedureReturn ULt(PL(a), PL(b))
 EndProcedure
 
-ProcedureRAM FpLsh(d.i, s.i, n.i)                ; F_LSH_V, 0 <= n < 64
-  Define h.i, l.i
-  If n = 0
-    h = PH(s) : l = PL(s)
-  ElseIf n >= 32
-    h = PL(s) << (n - 32) : l = 0
-  Else
-    h = (PH(s) << n) | ((PL(s) >> (32 - n)) & FpMask(n))
-    l = PL(s) << n
-  EndIf
-  PH(d) = h : PL(d) = l
-EndProcedure
-
-ProcedureRAM FpRsh(d.i, s.i, n.i)                ; F_RSH_V, 0 <= n < 64
-  Define h.i, l.i
-  If n = 0
-    h = PH(s) : l = PL(s)
-  ElseIf n >= 32
-    l = (PH(s) >> (n - 32)) & FpMask(64 - n) : h = 0
-  Else
-    l = ((PL(s) >> n) & FpMask(32 - n)) | (PH(s) << (32 - n))
-    h = (PH(s) >> n) & FpMask(32 - n)
-  EndIf
-  PH(d) = h : PL(d) = l
-EndProcedure
+XIncludeFile "../fp_shift.pmi"
 
 ProcedureRAM FpLsh1(d.i)
   PH(d) = (PH(d) << 1) | ((PL(d) >> 31) & 1)

@@ -542,3 +542,18 @@ Flash the fixture to a physical RP2040 and read its USB serial output.
 Success ends with `FP CHECK 22528 failures=0 PASS`. The ordinary firmware
 also passes DEC JFPAA1/JFPBA0; the Mini-Unix tests in `docs/bench/v6/` cover
 precision, library math, process state, executable startup and signal 8.
+
+
+## Shared native FP shifts and V6 system images
+
+`J11_18MHz_KDJ11_BF/fp_shift.pmi` implements logical 64-bit pair shifts on
+both chips. The Pico W arithmetic fixture still checks 22,528 cases;
+`pico2/fp_shift_check.pico2` checks 8,192 exact shift cases on RP2350,
+including every count and aliased destinations. Reference vectors are exact
+integer identities from `fp11_vectors.py`; execution runs on the board.
+
+`v6_fp_image.py` installs the native-built FP-enabled V6 kernel into an
+existing combined UF2 while preserving all old regular files and non-RK0
+pages. `psram_build.py` now uses that kernel for both normal and PSRAM V6
+boot, with the PSRAM-only swap patch. The old optional rk70unix file is a
+recovery kernel. [Kernel format, updating and reproduction](v6/FP-KERNEL.md).

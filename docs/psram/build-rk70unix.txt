@@ -1,3 +1,6 @@
+# Historical FP-disabled build. Superseded by docs/v6/FP-KERNEL.md and
+# media/unix/rkfp-j11, which enable full FP process state on every V6 profile.
+# Keep this transcript as provenance for the older /rk70unix recovery kernel.
 # The 22-bit kernel, built on the board from the distribution's own sources (tools/board_session.py).
 # The steps are those of the distribution's /usr/sys/run for an 11/45 or 11/70 kernel, with:
 #   - .fpp = 0 in conf/m45.s (the distribution's switch for a machine without floating point);

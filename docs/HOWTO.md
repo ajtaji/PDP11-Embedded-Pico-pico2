@@ -609,3 +609,13 @@ Compile ordinary Mini-Unix floating-point programs with `cc -f -O file.c`.
 Existing FP11 binaries also use the direct implementation. F and D formats,
 word/long conversions and the FPS rounding/exception modes are supported.
 See [the kernel guide](minix/j11-pipes.md) for reproducible sources and tests.
+
+
+## Current V6 FP-enabled kernel
+
+The current V6 system images boot `/rkfp`, with FPS and all six full-width
+floating accumulators preserved across process switches and reset on exec.
+The older `/rkunix` and, where supplied, `/rk70unix` are retained for recovery.
+Firmware-only updates keep the installed kernel; use the updated V6 system
+image to obtain this OS support. V7 is unchanged. See [kernel installation,
+sources and native rebuild](v6/FP-KERNEL.md) and [fresh assembly results](bench/assembly-2026-10-26.md).

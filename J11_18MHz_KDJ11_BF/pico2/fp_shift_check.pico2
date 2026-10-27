@@ -1,0 +1,73 @@
+; Native exact 64-bit logical shifts on RP2350, all counts and aliasing.
+#DISK_BACKEND = 0
+#DISK_FLASH_MODEL = 0
+#DISK_READ_ONLY = 0
+#DESK_PROBE = 0
+#PSRAM = 0
+#DEMO_DEV = 0                ; 1 = the demo display and tone generator (demo_dev.pico2): only tools/demo_build.py sets it
+#TERM_PANEL = 0              ; 1 = the console on the LAFVIN panel (term_panel.pico2): only tools/term_build.py sets it
+#PSRAM_CS_PIN = 8
+#FLASH_CHIP = $400000
+#SRAM_MEM_KB = 56                       ; the test compares all of memory with a shadow copy: 56 KB
+EnableExplicit
+XIncludeFile "RP2350/Lib/clocks.pico2"
+XIncludeFile "RP2350/Lib/timer.pico2"
+XIncludeFile "RP2350/Lib/uart.pico2"
+XIncludeFile "RP2350/Lib/usb_serial.pico2"
+XIncludeFile "RP2350/Lib/safety.pico2"
+XIncludeFile "cpu.pico2"
+XIncludeFile "fp11.pico2"
+XIncludeFile "instructions_mmu.pico2"
+XIncludeFile "instructions.pico2"
+XIncludeFile "disk.pico2"
+XIncludeFile "kw11.pico2"
+XIncludeFile "rk11.pico2"
+XIncludeFile "rp11.pico2"
+
+Global Failures.i, Checks.i
+Procedure Ch(c.i)
+ UsbSerialWrite(c)
+EndProcedure
+Procedure Say(*s.i)
+ Define p.i = *s
+ While PeekA(p) <> 0 : Ch(PeekA(p)) : p = p + 1 : Wend
+EndProcedure
+Procedure Num(n.i)
+ Define p.i = 1
+ If n < 0 : Ch(45) : n = -n : EndIf
+ While n / p >= 10 : p = p * 10 : Wend
+ While p > 0 : Ch(48 + (n / p) % 10) : p = p / 10 : Wend
+EndProcedure
+Procedure Check(a.i, b.i)
+ Checks = Checks + 1
+ If a <> b
+  Failures = Failures + 1
+  If Failures < 8 : Say("BAD ") : Num(Checks) : Say(" got ") : Num(a) : Say(" expected ") : Num(b) : Ch(10) : EndIf
+ EndIf
+EndProcedure
+Procedure Pump()
+ UsbSerialTask() : SafetyPet()
+EndProcedure
+Procedure Main()
+ Define i.i,ah.i,al.i,n.i,eh.i,el.i,rh.i,rl.i
+ SafetyBoot() : ClockInitKhz(150000) : UsbSerialInit() : SafetyOk()
+ While UsbSerialReady()=0 : Pump() : Wend
+ FpInit()
+ Restore shift_vectors
+ For i = 0 To 1023
+  Read.l ah : Read.l al : Read.l n : Read.l eh : Read.l el : Read.l rh : Read.l rl
+  PH(#P_FAC)=ah : PL(#P_FAC)=al
+  FpLsh(#P_FAC,#P_FAC,n) : Check(PH(#P_FAC),eh) : Check(PL(#P_FAC),el)
+  PH(#P_FAC)=ah : PL(#P_FAC)=al
+  FpRsh(#P_FAC,#P_FAC,n) : Check(PH(#P_FAC),rh) : Check(PL(#P_FAC),rl)
+  PH(#P_SRC)=ah : PL(#P_SRC)=al
+  FpLsh(#P_FAC,#P_SRC,n) : Check(PH(#P_FAC),eh) : Check(PL(#P_FAC),el)
+  FpRsh(#P_FAC,#P_SRC,n) : Check(PH(#P_FAC),rh) : Check(PL(#P_FAC),rl) : Pump()
+ Next
+ Say("FP CHECK ") : Num(Checks) : Say(" failures=") : Num(Failures)
+ If Failures = 0 : Say(" PASS") : Else : Say(" FAIL") : EndIf
+ Ch(10) : UsbSerialFlush()
+ Repeat : Pump() : ForEver
+EndProcedure
+XIncludeFile "../pico/fp_vectors.pmi"
+Main()

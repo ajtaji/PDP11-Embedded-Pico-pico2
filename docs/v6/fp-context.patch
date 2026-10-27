@@ -1,0 +1,21 @@
+--- a/m45.s
++++ b/m45.s
+@@ -215 +215 @@
+-	mov	$20,_u+4		/ FP maint mode
++	mov	$10000,_u+4		/ lazy save pending: reserved FPS bit
+@@ -229 +229 @@
+-	bit	$20,(r1)
++	bit	$10000,(r1)
+@@ -232 +232 @@
+-	ldfps	r0
++	ldfps	$200		/ D transfers, exceptions masked
+@@ -261 +261 @@
+-	bit	$20,(r1)
++	bit	$10000,(r1)
+@@ -263,0 +264 @@
++	ldfps	$200		/ preserve all six full D registers
+--- a/main.c
++++ b/main.c
+@@ -75 +75 @@
+-	printf("mem = %l\n", maxmem*5/16);
++	printf("mem = %l\n", ((maxmem>>4)&07777)*5+(maxmem&017)*5/16);

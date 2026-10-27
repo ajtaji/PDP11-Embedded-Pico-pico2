@@ -1,0 +1,84 @@
+; Exact logical 64-bit pair shifts, 0..63, shared by Thumb-1 and Thumb-2.
+; Load both source words before storing either destination, including aliasing.
+; ARM register shifts supply zero for a count of 32: no RAM mask table.
+; The compiler supplies the callee-save frame and return epilogue.
+Global FpShiftD.i, FpShiftS.i, FpShiftN.i
+
+ProcedureRAM FpLshAsm()
+  ASM
+    ldr r4, =global_ph
+    ldr r5, =global_pl
+    ldr r3, =global_fpshifts
+    ldr r3, [r3]
+    lsls r3, r3, #2
+    ldr r0, [r4, r3]
+    ldr r1, [r5, r3]
+    ldr r2, =global_fpshiftn
+    ldr r2, [r2]
+    cmp r2, #32
+    bhs __fpsl_high
+    movs r3, #32
+    subs r3, r3, r2
+    mov r6, r1
+    lsrs r6, r3
+    lsls r0, r2
+    orrs r0, r6
+    lsls r1, r2
+    b __fpsl_store
+__fpsl_high:
+    subs r2, r2, #32
+    mov r0, r1
+    lsls r0, r2
+    movs r1, #0
+__fpsl_store:
+    ldr r3, =global_fpshiftd
+    ldr r3, [r3]
+    lsls r3, r3, #2
+    str r0, [r4, r3]
+    str r1, [r5, r3]
+  EndASM
+EndProcedure
+
+ProcedureRAM FpRshAsm()
+  ASM
+    ldr r4, =global_ph
+    ldr r5, =global_pl
+    ldr r3, =global_fpshifts
+    ldr r3, [r3]
+    lsls r3, r3, #2
+    ldr r0, [r4, r3]
+    ldr r1, [r5, r3]
+    ldr r2, =global_fpshiftn
+    ldr r2, [r2]
+    cmp r2, #32
+    bhs __fpsr_high
+    movs r3, #32
+    subs r3, r3, r2
+    mov r6, r0
+    lsls r6, r3
+    lsrs r1, r2
+    orrs r1, r6
+    lsrs r0, r2
+    b __fpsr_store
+__fpsr_high:
+    subs r2, r2, #32
+    mov r1, r0
+    lsrs r1, r2
+    movs r0, #0
+__fpsr_store:
+    ldr r3, =global_fpshiftd
+    ldr r3, [r3]
+    lsls r3, r3, #2
+    str r0, [r4, r3]
+    str r1, [r5, r3]
+  EndASM
+EndProcedure
+
+Macro FpLsh(mD, mS, mN)
+  FpShiftD = mD : FpShiftS = mS : FpShiftN = mN
+  FpLshAsm()
+EndMacro
+Macro FpRsh(mD, mS, mN)
+  FpShiftD = mD : FpShiftS = mS : FpShiftN = mN
+  FpRshAsm()
+EndMacro

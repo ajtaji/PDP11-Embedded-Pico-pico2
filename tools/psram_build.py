@@ -29,9 +29,9 @@ WHAT IT DOES
        the unmapped run loop, CpuRun, runs from SRAM (a copy of
        instructions.pico2 with ProcedureRAM, removed afterwards too).
     2. Makes the V6 root pack as the Pico 2 W image does (the README's
-       v6fs.py lines: /dev/rk0, /dev/rrk0, /dev/swap, /unix -> /rkunix,
-       _nswap 112 for the fallback's swap RAM disk), plus /dev/rk1 and
-       /dev/rrk1 for the second drive.
+       v6fs.py lines: /dev/rk0, /dev/rrk0, /dev/swap), plus /dev/rk1 and
+       /dev/rrk1. Installs the native-built FP-enabled /rkfp kernel and
+       sources, links /unix to it, and keeps old kernels for recovery.
     3. Packs it with rk_image.py: RK0 v6root, RK1 v6src (media/unix), and
        the PSRAM kernel patch _nswap 872 - the whole swap area - applied to
        the PSRAM copy only, so the fallback still boots with 112.
@@ -44,6 +44,7 @@ OUTPUT (in --out, default build_<board>/ at the repository root)
     desk.bin        with --desk: the flat image for arm_run
 """
 import argparse, gzip, os, shutil, subprocess, sys
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -127,29 +128,28 @@ def main():
                  ["mknod", root, "/dev/rk1", "b", "0", "1"],
                  ["mknod", root, "/dev/rrk1", "c", "9", "1"],
                  ["mknod", root, "/dev/swap", "b", "0", "0"],
-                 ["rm", root, "/unix"],
                  ["patch", root, "/rkunix", "_nswap", "112"]):
         run(v6 + args + ["-o", root])
-    # the 22-bit kernel: built on a board from the distribution's sources (docs/psram/build-rk70unix.txt),
-    # read back over the console (tools/od2bin.py) and kept in media/unix with its checksum. /unix, the
-    # name list ps reads, is linked to it: it is the kernel these boards boot.
+    # Keep an older 22-bit kernel as a fallback when supplied. The current
+    # default is the native-built FP-enabled m45 kernel, on every V6 profile.
     k70 = os.path.join(REPO, "media", "unix", "rk70unix")
     if os.path.exists(k70):
         run(v6 + ["put", root, k70, "/rk70unix", "--mode", "777", "-o", root])
-        run(v6 + ["ln", root, "/rk70unix", "/unix", "-o", root])
-    else:
-        print("psram_build: media/unix/rk70unix is not there: the pack is built WITHOUT the 22-bit kernel")
-        run(v6 + ["ln", root, "/rkunix", "/unix", "-o", root])
+    fp_kernel = Path(REPO)/'media/unix/rkfp-j11'
+    if not fp_kernel.is_file():
+        sys.exit('psram_build: native FP-enabled V6 kernel media/unix/rkfp-j11 is required')
+    from v6_fp_image import patch_root
+    fp_image, _ = patch_root(Path(root).read_bytes(), fp_kernel.read_bytes(), Path(REPO)/'docs/v6')
+    Path(root).write_bytes(fp_image)
     run(v6 + ["check", root])
 
     # 3. the image
     cmd = [sys.executable, os.path.join(HERE, "rk_image.py"), "pack", root, "--chip", a.board,
            "--blocks", "4872", "--boot-block", "@/usr/mdec/rkuboot", "--swap", "4000,112",
-           "--name", "v6root", "--autoboot", "rkunix", "--psram-patch", "rkunix,_nswap,872",
+           "--name", "v6root", "--autoboot", "rkfp", "--psram-patch", "rkfp,_nswap,872",
            "--drive1", src, "--firmware", fw, "--combined", os.path.join(out, "combined.uf2"),
            "-o", os.path.join(out, "v6root.uf2")]
-    if os.path.exists(k70):
-        cmd += ["--autoboot-psram", "rk70unix"]
+    cmd += ["--autoboot-psram", "rkfp"]
     if a.desk:
         cmd += ["--desk", os.path.join(out, "desk.bin")]
     run(cmd)

@@ -22,9 +22,10 @@ both processors; Display Pack 2 ST7789, ILI9341 and HX8357D use the same
 firmware with a small [screen settings UF2](images/output-settings/).
 Only the LAFVIN glass has been checked in this update.
 
-The additional assembly pass reduces measured Unix work time by 1.6% on
-Pico W and 2.1% on Pico 2 W against the preceding firmware, with smaller
-program images. Coverage and limits: [BENCHMARKS](docs/BENCHMARKS.md#additional-assembly-pass-2026-10-26).
+The latest assembly pass increases measured Pico W floating-point throughput
+by 5.9% and frees 256 bytes of SRAM; Pico 2 W gains 284 bytes of SRAM.
+The complete Unix workload is essentially unchanged. Both retain full
+guest memory, overlays and panel/font features. [Fresh results and validation](docs/bench/assembly-2026-10-26.md).
 
 Lato-derived Terminal Sans at 16 pixels is the default, with gamma-corrected
 text edges ([14/16-pixel comparison](docs/FONT-READABILITY.md)). The Pico rasterizes
@@ -34,9 +35,11 @@ increase size, or **-** to decrease it. The guest keeps running. A monospace
 face is included for aligned columns. Oversized requests are refused and
 the previous font is restored.
 
-RP2040 installations need both the new **firmware.uf2** and **minix.uf2**
-to enable direct floating point with safe Unix process state. Other boards
-need only their matching firmware. Full combined images are for installing the firmware and Unix
+Firmware-only uploads preserve the installed Unix kernel. RP2040 needs the
+FP-enabled **minix.uf2** when upgrading from an older interpreter-only pack.
+V6 images now boot **rkfp**, with proper floating-point process state;
+existing V6 installations need the new system image or kernel update as well.
+See [V6 kernel installation and rebuild](docs/v6/FP-KERNEL.md). V7 kernels are unchanged. Full combined images are for installing the firmware and Unix
 packs together. [Downloads, hashes and validation](images/README.md) list both.
 All packaged builds use silent audio; the shared PCM interface supports an
 optional Bluetooth backend or a custom output module ([details](OUTPUTS.md)).
@@ -48,9 +51,9 @@ The graphics demo runs on [RP2040](images/picow-demo/firmware.uf2) and
 | | Pico 2 W (RP2350) | Pico W (RP2040) |
 |---|---|---|
 | Unix | Sixth Edition (V6) | Mini-Unix |
-| Kernel booted | `rkunix` | `rkmx` |
+| Kernel booted | `rkfp` (FP-enabled V6) | `rkmx` |
 | Memory management | on | off (Mini-Unix does not use it; the stats block says `MMU off (16-bit)`) |
-| PDP-11 memory | 152 KB (000000-457777) plus the I/O page; V6 says `mem = 556` (56 KB, 000000-157777, with memory management off) | 56 KB (000000-157777) plus the I/O page |
+| PDP-11 memory | 152 KB (000000-457777) plus the I/O page; current V6 kernel uses separate I/D and 22-bit mapping | 56 KB (000000-157777) plus the I/O page |
 | Speed, historical measurements on the boards (2026-10-20, with the hot paths in assembly) | V6 `time od /rkunix` in 10.4 s, timed from the host (13.9 s on 2026-10-04); the bench loop with memory management off ran at about 2,440,000 instructions per second on 2026-10-04 | Mini-Unix `time od /rkmx` in 4.6 s (5.9 s on 2026-10-04); the bench loop ran at about 2,550,000 instructions per second on 2026-10-04 |
 | Console ready after port open (historical serial measurements) | `#` after 3.4 s | `#` after 3.2 s |
 | RAM for writes | 112-block swap RAM disk plus 248 blocks for file-system writes in the standard panel build | 63 KB compressed/deduplicated overlay, 255 unique records shared by swap and file writes |

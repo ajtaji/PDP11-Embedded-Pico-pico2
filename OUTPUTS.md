@@ -95,7 +95,7 @@ py -3 tools/output_build.py --target rp2350 --compiler PATH/TO/PureMetalForge.ex
 ```
 
 Build without a hardware lease; use the normal lease/uploader for flashing.
-The 2026-10-26 [ready images](images/README.md) include these features. Firmware-only downloads update an existing installation without downloading the disk packs again.
+The 2026-10-26 [ready images](images/README.md) include these features. Firmware-only downloads retain existing disk packs and kernels. The current V6 FP-context fix also requires the [updated V6 kernel/system image](docs/v6/FP-KERNEL.md).
 The existing `tools/term_build.py` filename wrapper remains supported for
 RP2350. `tools/demo_build.py --target rp2040|rp2350` builds the optional graphics/sound demo.
 

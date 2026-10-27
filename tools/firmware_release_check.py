@@ -1,5 +1,6 @@
 """Verify prepared release hashes, UF2 records, settings and unchanged packs."""
 from pathlib import Path
+import os,tempfile
 import hashlib,json,re,subprocess,struct
 from firmware_release import ROOT,FAMILY,PACKS,read_uf2,decode_bytes,payload_hash
 from output_config import decode,TARGETS
@@ -39,4 +40,25 @@ for folder,fw in [('pico2w-v6','pico2w-v6'),('picoplus2','picoplus2'),('picoplus
  _,code=read_uf2(ROOT/'images'/fw/'firmware.uf2')
  assert {a:p for a,p in pages.items() if a<PACKS}==code
 assert (ROOT/'images/picow-mini-unix/minix.uf2').read_bytes()==subprocess.check_output(['git','show',manifest['pack_base_revision']+':images/picow-mini-unix/minix.uf2'],cwd=ROOT)
-print('RELEASE PASS:',len(seen),'files; hashes, UF2 families/records, settings, program payloads and all original disk bytes/nonces verified')
+if 'v6_fp_kernel' in manifest:
+ import v6fs
+ from v6_fp_image import unpack_root,normalize_kernel
+ kernel=(ROOT/manifest['v6_fp_kernel']['path']).read_bytes()
+ assert hashlib.sha256(kernel).hexdigest()==manifest['v6_fp_kernel']['sha256']
+ for folder in ['pico2w-v6','picoplus2','feather']:
+  _,pages=read_uf2(ROOT/'images'/folder/'combined.uf2')
+  header,image=unpack_root(pages)
+  assert header[80:96].split(b'\0')[0]==b'rkfp'
+  fd,name=tempfile.mkstemp(suffix='.rk');os.close(fd)
+  try:
+   Path(name).write_bytes(image);fs=v6fs.Fs(name)
+   assert fs.read(fs.lookup('/rkfp'))==kernel==normalize_kernel(kernel)
+   assert fs.lookup('/unix')==fs.lookup('/rkfp')
+   for host,guest in [('m45fp.s','/usr/sys/conf/m45fp.s'),('mainfp.c','/usr/sys/ken/mainfp.c')]:
+    assert fs.read(fs.lookup(guest))==(ROOT/'docs/v6'/host).read_text().encode('ascii')
+   if folder!='pico2w-v6':
+    assert header[128:144].split(b'\0')[0]==b'rkfp'
+    where,_,old=v6fs.locate(fs,'/rkfp','_nswap')
+    assert old==112 and struct.unpack_from('<5I',header,96)==(1,where//512,where%512,112,872)
+  finally:Path(name).unlink()
+print('RELEASE PASS:',len(seen),'files; hashes, UF2 families/records, settings, program payloads, accepted pack bytes/nonces and V6 FP kernels verified')
