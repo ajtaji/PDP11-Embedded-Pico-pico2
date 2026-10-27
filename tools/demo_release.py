@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 from firmware_release import ROOT, FAMILY, read_uf2, write_uf2, metadata, sha
 from output_config import decode, TARGETS
+from uf2_codec import E10_SECTOR
 
 
 def main():
@@ -25,7 +26,7 @@ def main():
     family, pages = read_uf2(build/'demo_firmware.uf2')
     assert family == FAMILY[args.target]
     assert sorted(pages) == list(range(0x10000000, max(pages)+256, 256))
-    assert max(pages)+256 <= 0x10000000 + TARGETS[args.target][0]
+    assert max(pages)+256 <= (E10_SECTOR if args.target == 'rp2350' else 0x10000000 + TARGETS[args.target][0])
     settings = (build/'output_settings.bin').read_bytes()
     assert decode(settings)['audio'] == 'silent', 'public build must start silent'
     assert settings[8:14] == bytes(6), 'public settings must not contain a peer'

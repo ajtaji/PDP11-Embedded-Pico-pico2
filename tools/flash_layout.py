@@ -22,7 +22,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 SOURCE = os.path.join(HERE, "..", "J11_18MHz_KDJ11_BF", "pico2", "flash_layout.pico2")
 XIP = 0x10000000
-WANTED = ("FL_RADIO_LO", "FL_RADIO_HI", "FL_PACKS", "FL_RK0", "FL_RK1", "FL_STORE_SIZE")
+WANTED = ("FL_E10", "FL_E10_SIZE", "FL_RADIO_LO", "FL_RADIO_HI", "FL_PACKS", "FL_RK0", "FL_RK1", "FL_STORE_SIZE")
 
 
 def _read():
@@ -47,6 +47,9 @@ def _read():
 
 
 _v = _read()
+E10 = _v["FL_E10"]
+E10_SIZE = _v["FL_E10_SIZE"]
+assert E10_SIZE == 4096 and E10 + E10_SIZE == 0x4f000
 RADIO_LO = _v["FL_RADIO_LO"]
 RADIO_HI = _v["FL_RADIO_HI"]
 PACKS = _v["FL_PACKS"]
@@ -79,7 +82,8 @@ def check_region(off, n, what):
 
 if __name__ == "__main__":
     print("flash_layout: from %s" % os.path.normpath(SOURCE))
-    print("  program              0x%08X - 0x%08X" % (XIP, XIP + RADIO_LO - 1))
+    print("  program              0x%08X - 0x%08X" % (XIP, XIP + E10 - 1))
+    print("  E10 workaround       0x%08X - 0x%08X" % (XIP + E10, XIP + E10 + E10_SIZE - 1))
     print("  never used (radio)   0x%08X - 0x%08X" % (XIP + RADIO_LO, XIP + RADIO_HI - 1))
     print("  RK0                  0x%08X" % (XIP + RK0))
     print("  RK1                  0x%08X" % (XIP + RK1))

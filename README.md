@@ -101,7 +101,7 @@ The graphics demo runs on [RP2040](images/picow-demo/firmware.uf2) and
 2. Copy the UF2 file onto it. The board writes it and restarts by itself.
    - **Pico 2 W:** one file, `combined.uf2` (firmware and disk pack together).
    - **Pico W:** two files in two separate BOOTSEL sessions, firmware first, then `minix.uf2`. On the RP2040 a single combined file leaves the disk area unwritten (the start-up line then says `RK0: no pack`).
-   - **With the PureMetal Forge IDE** instead of the button: choose the board in the **Board** menu and use **Compiler > Flash Prebuilt File...** with the same file(s); to change the firmware, open `diag.pico2` (or `diag.pico`) and **Compile + Upload**: the pack on the board is kept. See [docs/HOWTO.md, section 11](docs/HOWTO.md#11-flash-and-build-from-the-puremetal-forge-ide).
+   - **Current RP2350 prebuilt images:** copy the complete file to BOOTSEL. Older IDE uploaders reject the standard E10 prefix; use Explorer or [the BOOTSEL copy helper](docs/TOOLS.md#bootsel-uf2-copy). To rebuild firmware in the IDE, open `diag.pico2` (or `diag.pico`) and **Compile + Upload**; the installed pack is kept.
 3. With the default panel enabled, Unix boots and displays its console without a serial terminal open. Open USB serial at 115200 8N1 for keyboard input or a second view (a COM port on Windows, `/dev/ttyACM0` or similar on Linux). With the `none` panel setting, the firmware waits up to 30 s for the serial port. The baud rate does not matter: it is USB.
 4. The board boots Unix by itself. At `#` you are root; there is no login. Type in lower case (both systems print in capitals).
 

@@ -4,6 +4,7 @@ import os,tempfile,argparse
 import hashlib,json,re,subprocess,struct
 from firmware_release import ROOT,FAMILY,PACKS,read_uf2,decode_bytes,payload_hash
 from output_config import decode,TARGETS
+from uf2_codec import check_bootrom,E10_SECTOR
 ap=argparse.ArgumentParser(description=__doc__)
 ap.add_argument('--manifest',type=Path,default=ROOT/'images/manifest-2026-10-27.json')
 manifest=json.loads(ap.parse_args().manifest.read_text())
@@ -15,12 +16,12 @@ for entry in manifest['files']:
  data=path.read_bytes()
  assert len(data)==entry['bytes'] and hashlib.sha256(data).hexdigest()==entry['sha256'],entry['path']
  if path.suffix=='.uf2':
-  family,pages=read_uf2(path)
+  family,pages=check_bootrom(data)
   assert family in FAMILY.values()
   if path.name=='firmware.uf2':
    target='rp2040' if path.parent.name in ('picow-mini-unix','picow-demo') else 'rp2350'
    assert family==FAMILY[target] and min(pages)==0x10000000
-   assert max(pages)+256<=0x10000000+TARGETS[target][0]
+   assert max(pages)+256<=(E10_SECTOR if target=='rp2350' else 0x10000000+TARGETS[target][0])
   if 'output-settings' in entry['path']:
    target='rp2040' if path.name.startswith('rp2040') else 'rp2350'
    assert family==FAMILY[target] and sorted(pages)==list(range(0x10000000+TARGETS[target][0],0x10000000+TARGETS[target][0]+4096,256))
@@ -29,14 +30,18 @@ for entry in manifest['files']:
    assert path.stem==target+'-'+decoded['panel']
  if path.suffix=='.regions':
   assert b'\r' not in data
+  if path.parent.name not in ('picow-mini-unix','picow-demo'):
+   assert 'R|UF2 E10 workaround|319488|4096|reserved|' in data.decode()
   for line in data.decode().splitlines():
    if line.startswith('F|'):assert not re.match(r'[A-Za-z]:|/',line.split('|')[2])
-   if line.startswith('S|'):assert int(line.split('|')[4])<0x4f000
+   if line.startswith('S|'):assert int(line.split('|')[4])<0x4e000
 for folder,fw in [('pico2w-v6','pico2w-v6'),('picoplus2','picoplus2'),('picoplus2-v7','picoplus2'),('feather','feather'),('feather-v7','feather')]:
  rel='images/'+folder+'/combined.uf2';family,pages=read_uf2(ROOT/rel)
  old=subprocess.check_output(['git','show',manifest['pack_base_revision']+':'+rel],cwd=ROOT)
  old_family,old_pages=decode_bytes(old)
  packs={a:p for a,p in pages.items() if a>=PACKS}
+ flash_size=0x800000 if folder.startswith('feather') else (0x1000000 if folder.startswith('picoplus2') else 0x400000)
+ assert max(packs)+256<=0x10000000+flash_size-(0x100000 if folder!='pico2w-v6' else 0),rel
  assert old_family==family and packs=={a:p for a,p in old_pages.items() if a>=PACKS},rel
  assert payload_hash(packs)==manifest['unchanged_disk_payload_sha256'][rel]
  _,code=read_uf2(ROOT/'images'/fw/'firmware.uf2')

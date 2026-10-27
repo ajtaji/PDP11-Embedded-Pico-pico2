@@ -563,3 +563,39 @@ existing combined UF2 while preserving all old regular files and non-RK0
 pages. `psram_build.py` now uses that kernel for both normal and PSRAM V6
 boot, with the PSRAM-only swap patch. The old optional rk70unix file is a
 recovery kernel. [Kernel format, updating and reproduction](v6/FP-KERNEL.md).
+
+## BOOTSEL UF2 copy
+
+Enter BOOTSEL first (hold the button while plugging in USB, or send
+`ResetPicoToBootSel1254` to the running firmware's serial port). Confirm the
+`RP2350` or `RPI-RP2` drive appears, then drag the matching UF2 onto it in
+Explorer. A command-line equivalent copies the validated file unchanged:
+
+```text
+py -3 tools/bootsel_upload.py images/picoplus2-v7/combined.uf2 --drive I:/
+```
+
+Use the actual mounted drive letter. The helper checks `INFO_UF2.TXT`, the
+chip family, complete touched flash sectors and the safe RP2350 E10 prefix
+before copying. Older PureMetal Forge prebuilt uploaders reject the prefix's
+separate Absolute-family transfer. Do not strip it for BOOTSEL uploads.
+
+`uf2_codec.py` supplies the shared parser/writer for release, pack and output
+settings tools. It pads only touched 4 KB flash sectors, leaving region gaps
+unwritten. RP2350 flash files begin with the official A2 E10 initialization
+transfer: Absolute family, index 0/count 2, 256 bytes of EF and the
+`RP2_IGNORE_BLOCK` extension. Its target `0x1004EF00` lies in the dedicated
+`0x1004E000..0x1004EFFF` reserved sector. A2 may erase that sector; newer ROMs
+ignore the tagged transfer. The linker metadata reserves it against program
+growth. The last flash sector belongs to saved Unix data and is never used
+for the workaround. RAM-only files receive neither flash padding nor E10.
+
+```text
+py -3 tools/uf2_codec_check.py
+py -3 tools/firmware_release_check.py
+```
+
+These checks reject unsafe end-of-flash E10 placement, reserved-sector
+collisions, wrong families, broken counts, duplicate addresses, missing
+sector pages and damaged workaround tags. The release gate also verifies
+unchanged Unix pack payloads/nonces and the reserved-region metadata.

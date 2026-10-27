@@ -6,8 +6,8 @@
 ;  from the start of the flash; add $10000000 for the address.
 ;
 ;  THE RULE, for every RP2350 board the project builds for:
-;      $000000 - $1FFFFF   the program (the PDP-11 firmware, or the pack
-;                          installer). Today's firmware is about 140 KB.
+;      $000000 - $04DFFF program; $04E000 - $04EFFF E10 reserved
+;      $04F000 output settings; $050000 - $1FFFFF unused gap
 ;      $200000 - $23FFFF   NEVER USED BY THE PDP-11. On a board with a
 ;                          radio this is where the radio chip's firmware
 ;                          is kept (the compiler's RP2350/Lib/cyw43.pico2
@@ -38,6 +38,11 @@
 ;  Constants, and the regions below (FlashRegion: the IDE's Board Storage panel reads them;
 ;  they emit nothing): this file may be included by any program for an RP2350 board.
 ; ======================================================================
+; The A2 BOOTSEL E10 write is confined to this otherwise unused sector.
+; Never put it at flash end: the PSRAM saved-change store occupies that space.
+#FL_E10 = $04E000
+#FL_E10_SIZE = $001000
+FlashRegion "UF2 E10 workaround", #FL_E10, #FL_E10_SIZE, "reserved"
 #FL_RADIO_LO = $200000       ; the radio firmware's region: first byte
 #FL_RADIO_HI = $240000       ; ... and the first byte after it
 #FL_PACKS    = $240000       ; no pack region starts below this

@@ -159,6 +159,13 @@ Unplug at any time. On these boards the emulator never writes the flash (the PSR
 
 ## 6. Re-flash without the BOOTSEL button
 
+Current RP2350 prebuilt UF2s include the E10 workaround and complete touched
+4 KB sectors. Copy the whole file to BOOTSEL. Older IDE prebuilt uploaders
+reject this standard prefix; use Explorer or the
+[BOOTSEL helper](TOOLS.md#bootsel-uf2-copy). The workaround uses a reserved
+sector below output settings, away from the saved Unix store. Do not remove
+the prefix or fill the gaps between the image's flash regions.
+
 A board already running this firmware enters BOOTSEL when it receives this text on its serial port:
 
 ```
@@ -367,6 +374,11 @@ python tools/board_session.py --hub-port 9 --script docs/psram/proof.txt --out t
 **V6 notes for these boards.** `stty -lcase` first if you type C: in upper-case mode `\n` in a string arrives as `N`. `#` and `@` are V6's erase and kill characters. Everything written is lost at power-off unless it is saved: firmware built from the source of 2026-10-22 on - `images/picoplus2/combined.uf2` and `images/feather/combined.uf2` have it - saves both packs' changes into the flash by itself, or at once with `sync`, then Ctrl-] and `w` (section 12, Saving).
 
 ## 11. Flash and build from the PureMetal Forge IDE
+
+For the current RP2350 **prebuilt** images, use the BOOTSEL copy procedure
+in section 6: older IDE uploaders reject their E10 prefix. The historical
+IDE prebuilt workflow below applies to images/uploaders without that
+limitation. Building and uploading source remains available.
 
 Everything for the **Pico 2 W** and the **Pico W** can be done in the PureMetal Forge IDE (the OpenGL IDE or the Standard one; the menus are the same), with no command line and no BOOTSEL button once the board runs a PureMetal program. The IDE's upload resets the board, copies the file and waits for it to come back, as for any PureMetal program.
 

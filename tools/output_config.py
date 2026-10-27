@@ -43,13 +43,10 @@ def record(panel, audio, peer=None, font="readable"):
 
 def uf2(data, target):
     offset, family = TARGETS[target]
-    result = bytearray()
-    for block in range(16):
-        header = struct.pack('<8I', 0x0a324655, 0x9e5d5157, 0x2000,
-                             0x10000000 + offset + block * 256, 256, block, 16, family)
-        payload = data[block*256:(block+1)*256]
-        result += header + payload + bytes(220) + struct.pack('<I', 0x0ab16f30)
-    return bytes(result)
+    if len(data)!=4096:
+        raise ValueError('output settings require exactly one sector')
+    from uf2_codec import encode
+    return encode({0x10000000+offset+i:data[i:i+256] for i in range(0,4096,256)}, family)
 
 
 def decode(data):

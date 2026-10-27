@@ -406,13 +406,8 @@ def uf2(parts, chip):
         for i in range(0, len(data), 256):
             chunk = data[i:i + 256]
             pages[off + i] = chunk + bytes(256 - len(chunk))
-    addrs = sorted(pages)
-    out = bytearray()
-    for k, a in enumerate(addrs):
-        out += struct.pack("<IIIIIIII", UF2_MAGIC0, UF2_MAGIC1, UF2_FLAG_FAMILY, XIP + a, 256, k,
-                           len(addrs), FAMILY[chip])
-        out += pages[a] + bytes(476 - 256) + struct.pack("<I", UF2_END)
-    return bytes(out)
+    from uf2_codec import encode
+    return encode({XIP+a:b for a,b in pages.items()}, FAMILY[chip])
 
 
 def main():

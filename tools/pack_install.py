@@ -108,12 +108,9 @@ def regions_of(path, flash):
     if len(raw) % 512 or not raw:
         fail("%s is %d bytes, not a whole number of 512-byte UF2 blocks. Give the combined.uf2 "
              "that tools/psram_build.py or tools/rk_image.py --combined wrote." % (path, len(raw)))
-    pages = {}
-    for i in range(0, len(raw), 512):
-        m0, m1, _flags, addr, n, _k, _total, _fam = struct.unpack_from("<IIIIIIII", raw, i)
-        if m0 != 0x0A324655 or m1 != 0x9E5D5157 or n != 256 or addr % 256:
-            fail("%s: block %d is not a 256-byte UF2 page. Check the file." % (path, i // 512))
-        pages[addr - XIP] = raw[i + 32:i + 32 + 256]
+    from uf2_codec import decode
+    _,absolute_pages=decode(raw)
+    pages={a-XIP:b for a,b in absolute_pages.items()}
     for off in sorted(pages):
         if flash_layout.touches_radio(off, 256):
             fail("%s: %s Nothing was sent." % (path, flash_layout.check_region(off, 256, "the image's data")))

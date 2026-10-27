@@ -17,29 +17,8 @@ PACKS=FLASH+0x240000
 
 def sha(data):return hashlib.sha256(data).hexdigest()
 
-def read_uf2(path):
- data=Path(path).read_bytes()
- if not data or len(data)%512:raise ValueError('invalid UF2 length: '+str(path))
- pages={};family=None;total=len(data)//512;indices=set()
- for offset in range(0,len(data),512):
-  h=struct.unpack_from('<8I',data,offset)
-  if h[:3]!=(0x0a324655,0x9e5d5157,0x2000) or h[4]!=256 or h[6]!=total or h[5]>=total or h[5] in indices:
-   raise ValueError('invalid UF2 header: '+str(path))
-  if struct.unpack_from('<I',data,offset+508)[0]!=0x0ab16f30 or h[3]%256:
-   raise ValueError('invalid UF2 block: '+str(path))
-  if family is not None and family!=h[7]:raise ValueError('mixed UF2 families')
-  family=h[7];indices.add(h[5])
-  if h[3] in pages:raise ValueError('duplicate UF2 address')
-  pages[h[3]]=data[offset+32:offset+288]
- return family,pages
-
-def write_uf2(pages,family):
- result=bytearray();count=len(pages)
- for i,(address,payload) in enumerate(sorted(pages.items())):
-  if address%256 or len(payload)!=256:raise ValueError('invalid page')
-  result+=struct.pack('<8I',0x0a324655,0x9e5d5157,0x2000,address,256,i,count,family)
-  result+=payload+bytes(220)+struct.pack('<I',0x0ab16f30)
- return bytes(result)
+from uf2_codec import read as read_uf2, decode as decode_bytes, pad_pages, E10_SECTOR
+from uf2_codec import encode as write_uf2
 
 def binary_pages(data,base=FLASH):
  return {base+i:data[i:i+256].ljust(256,b'\0') for i in range(0,len(data),256)}
@@ -48,9 +27,10 @@ def payload_hash(pages):
  return sha(b''.join(struct.pack('<I',a)+p for a,p in sorted(pages.items())))
 
 def replace_program(old_path,new_program,family):
+ new_program=pad_pages(new_program)
  old_family,old=read_uf2(old_path)
  if old_family!=family:raise ValueError('wrong chip family')
- if any(a>=FLASH+0x4f000 or a<FLASH for a in new_program):raise ValueError('program reaches settings sector')
+ if any(a>=E10_SECTOR or a<FLASH for a in new_program):raise ValueError('program reaches reserved E10 sector')
  if any(FLASH+0x200000<=a<PACKS for a in old):raise ValueError('combined image contains radio bytes')
  packs={a:p for a,p in old.items() if a>=PACKS}
  if not packs:raise ValueError('combined image has no disk data')
@@ -69,17 +49,6 @@ def replace_program(old_path,new_program,family):
  if {a:p for a,p in check.items() if a>=PACKS}!=packs:raise ValueError('disk bytes changed')
  if {a:p for a,p in check.items() if a<PACKS}!=new_program:raise ValueError('firmware bytes changed')
  return result,payload_hash(packs)
-
-def decode_bytes(data):
- # Same schema validation as read_uf2, without writing a temporary file.
- pages={};family=None;count=len(data)//512
- for i in range(count):
-  h=struct.unpack_from('<8I',data,i*512)
-  assert h[:3]==(0x0a324655,0x9e5d5157,0x2000) and h[4:7]==(256,i,count)
-  assert struct.unpack_from('<I',data,i*512+508)[0]==0x0ab16f30
-  if family is not None:assert h[7]==family
-  family=h[7];assert h[3] not in pages;pages[h[3]]=data[i*512+32:i*512+288]
- return family,pages
 
 def metadata(source,destination):
  # Publish flash-region protections, with source paths relative to this repo.

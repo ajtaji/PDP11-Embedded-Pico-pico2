@@ -13,7 +13,7 @@ saved changes (pico2/store.pico2) belongs to the packs by that nonce, so a board
 flashed with NEW.uf2 keeps what Unix saved, where a new rk_image.py run would
 start the store empty.
 
-It refuses a firmware that reaches the radio's region, an image with blocks of
+It refuses firmware that reaches the reserved E10 workaround sector, an image with blocks of
 more than one UF2 family, and writes nothing unless the packs come out
 byte-identical (checked after writing, by reading NEW.uf2 back).
 """
@@ -30,22 +30,9 @@ XIP = FL.XIP
 
 
 def read_uf2(path):
-    """{flash offset: 256 bytes}, and the one family the blocks carry."""
-    d = open(path, "rb").read()
-    if len(d) % 512:
-        sys.exit("uf2_firmware: %s is not whole 512-byte UF2 blocks" % path)
-    pages, fams = {}, set()
-    for i in range(0, len(d), 512):
-        m0, m1, flags, addr, size, bno, nb, fam = struct.unpack_from("<8I", d, i)
-        if m0 != rk_image.UF2_MAGIC0 or m1 != rk_image.UF2_MAGIC1:
-            sys.exit("uf2_firmware: %s block %d is not a UF2 block" % (path, i // 512))
-        if size != 256:
-            sys.exit("uf2_firmware: %s block %d carries %d bytes; this tool expects 256" % (path, i // 512, size))
-        fams.add(fam)
-        pages[addr - XIP] = d[i + 32:i + 32 + 256]
-    if len(fams) != 1:
-        sys.exit("uf2_firmware: %s has blocks of %d UF2 families; expected one" % (path, len(fams)))
-    return pages, fams.pop()
+    from uf2_codec import read
+    family,pages=read(path)
+    return {a-XIP:b for a,b in pages.items()},family
 
 
 def main():
@@ -60,9 +47,9 @@ def main():
     if not chip:
         sys.exit("uf2_firmware: %s's UF2 family 0x%08X is not one rk_image.py writes" % (a.image, fam))
     fw = open(a.firmware, "rb").read()
-    if len(fw) > FL.RADIO_LO:
-        sys.exit("uf2_firmware: %s is %d bytes and would reach the radio's region at 0x%08X"
-                 % (a.firmware, len(fw), XIP + FL.RADIO_LO))
+    if len(fw) > FL.E10:
+        sys.exit("uf2_firmware: %s is %d bytes and would reach the reserved E10 sector at 0x%08X"
+                 % (a.firmware, len(fw), XIP + FL.E10))
     packs = {o: p for o, p in pages.items() if o >= FL.RADIO_LO}
     old_fw = sum(1 for o in pages if o < FL.RADIO_LO)
     parts = {0: fw}
