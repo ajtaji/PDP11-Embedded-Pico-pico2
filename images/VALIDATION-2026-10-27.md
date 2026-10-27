@@ -1,4 +1,37 @@
-# Firmware validation, 2026-10-27
+# CPU optimization validation, later 2026-10-27
+
+Runtime source: `eacaa8c94b0a5ba955370caaf7f8bce527c72864`.
+All six programs were rebuilt with the manifest's canonical compiler.
+The manifest checker verifies all 28 release files, settings and preserved
+V6/V7/Mini-Unix disk bytes and nonces. The RP2040 Unix and demo program
+payloads are byte-identical to the previous release.
+
+Both PSRAM boards run the complete original V7 Unix suite and corrected V2
+suite against previous and new firmware, with identical factory disks and
+29-buffer FP-fixed kernel per board. V2 traverses the real `/usr` tree;
+the original `/usr/bin` path is absent in the V7 distribution. Sources,
+exact checks and final fresh results are in the [CPU profile report](../docs/bench/psram-profile-2026-10-27.md).
+
+Native default randomized integer/MMU assembly comparisons pass, including
+80,000 byte cases and 32,000 MMU cases. Guest FP state, fork, exec, math and
+signal tests, native C/F77, process memory stress, historical programs and
+independent byte/count/final-state checks are recorded in the new data.
+The native-PC profiles have zero rejected frames; their CPU category includes
+memory-load stalls and does not separately quantify PSRAM/cache latency.
+Instrumented timings are excluded from performance comparisons.
+
+Standard RP2350 firmware and its demo were rebuilt; their physical timing,
+display and speaker tests were not repeated in this CPU pass. Earlier
+standard-board figures below belong to their recorded earlier runtime.
+Fresh full-flash readbacks verify both original images with only accepted
+program pages overlaid: all 8 MB on Feather and 16 MB on Pico Plus 2 W,
+zero mismatches. The entire original saved-change store was restored;
+Unix disks, settings and radio bytes remain exact. Standard boards were
+untouched during this CPU pass. Proof fields are in the new report data.
+
+---
+
+# Earlier firmware validation, 2026-10-27
 
 Runtime source: `d2a84159b8c116bdbdd961b1da770c703fa462a2`.
 All six programs were rebuilt using the compiler recorded in

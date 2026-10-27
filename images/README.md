@@ -2,23 +2,21 @@
 
 ## 2026-10-27 builds
 
-All six firmware programs were rebuilt from runtime source `d2a8415`.
-The PSRAM variants add general aligned Thumb-2 sector transfers for RK11,
-RP11 and writable disk storage. Standard Pico W, Pico 2 W and both demo
-programs reproduce the preceding accepted program bytes exactly.
+All six programs were rebuilt from runtime source `eacaa8c`.
+The M33 variants cache data-space MMU row bases, extract call opcode fields
+directly and combine instruction-table indexing with its indirect jump.
+The RP2040 Unix and demo programs retain their accepted bytes.
 
-V7 PSRAM images include a native kernel that preserves full FPS and six
-D accumulators across fork and exec and masks exceptions during raw FP
-state copies. The distribution's 29 buffers and resource limits remain.
-[Kernel source edits, native rebuild and upgrade](../docs/v7/PSRAM-KERNEL.md).
-The V7 RK0 kernel and both pack-header nonces change deliberately; all other
-root regular-file contents and all RK1/RP03 distribution data are preserved.
-V6 and Mini-Unix disk payloads remain unchanged from the October 26 release.
+V7 images retain the earlier October 27 FP-fixed kernel, its 29 buffers,
+2040 KB guest memory and 872 swap blocks. This CPU update preserves all
+existing disk payloads and pack nonces, including V6 and Mini-Unix.
+[Kernel source and upgrade](../docs/v7/PSRAM-KERNEL.md).
 
-[Fresh historical comparisons](../docs/bench/historical-2026-10-27.md) and
-[PSRAM workload results and limits](../docs/bench/psram-2026-10-27.md) record
-actual physical-board measurements. The complete Unix workload shows little
-overall change. The faster transfer path costs 584 bytes of SRAM code.
+[CPU profile and fresh PSRAM results](../docs/bench/psram-profile-2026-10-27.md)
+show the corrected full Unix workload improving about 4.2% on Feather and
+3.9% on Pico Plus 2 W, with 404 bytes more free SRAM. V2 traverses each
+board's installed `/usr`; the Plus 2 contains more files. Historical and
+original-workload comparisons retain their own dates and runtime versions.
 Panels, runtime 16-pixel gamma-corrected fonts and audio profiles remain.
 The [manifest](manifest-2026-10-27.json) records source, compiler, kernel and
 file hashes; [SHA256SUMS](SHA256SUMS) covers all 28 supplied files.
@@ -43,9 +41,9 @@ kernel. The disk-pack file replaces the installed Mini-Unix pack.
 | File | Bytes | SHA-256 |
 | --- | ---: | --- |
 | [picow-mini-unix/firmware.uf2](picow-mini-unix/firmware.uf2) | 394,240 | `0b896fd14938bd6c7f8d7bbd273575d5de07996cb61d255dcfcbc161af941a2d` |
-| [pico2w-v6/firmware.uf2](pico2w-v6/firmware.uf2) | 399,872 | `a7617b6fe9bbbd0db4917a63f9c62bfb650f17feaf82b34d7ed887480806f274` |
-| [picoplus2/firmware.uf2](picoplus2/firmware.uf2) | 458,752 | `14987dbfa602d2e045f4c675cf6423ced91c749266d71529fe75a488d7440205` |
-| [feather/firmware.uf2](feather/firmware.uf2) | 458,240 | `d1703bee38c43268e42e422699ae1615fa76e5c217aacf2bfd3a33db8ff196c3` |
+| [pico2w-v6/firmware.uf2](pico2w-v6/firmware.uf2) | 398,848 | `0c8e9d0c29801e2de81df987f77a4152726915e2eed471db23fee3fa62611bd4` |
+| [picoplus2/firmware.uf2](picoplus2/firmware.uf2) | 458,240 | `9269338afa46e545f363570660ee1563d24232ba7b640c0663d03ea94b248443` |
+| [feather/firmware.uf2](feather/firmware.uf2) | 457,728 | `77c83cc7b6da5952c32f27656bf6125231c3bb65ad3734974e524032553cfc36` |
 
 - Pico W: `picow-mini-unix/firmware.uf2`, RP2040 at 200 MHz.
 - Pico 2 W: `pico2w-v6/firmware.uf2`, RP2350 at 150 MHz.
@@ -60,12 +58,12 @@ map for the IDE, with repository-relative source references.
 
 | File | Bytes | SHA-256 |
 | --- | ---: | --- |
-| [pico2w-v6/combined.uf2](pico2w-v6/combined.uf2) | 3,423,744 | `dc57aca22f5c2e8ff971e1abdd0a0a07c7dd6c1dc5cf7b129ed0acac707b096e` |
+| [pico2w-v6/combined.uf2](pico2w-v6/combined.uf2) | 3,422,720 | `39ef61b78a09fa308f696b3a48d82cd2154cc14aedf27b4d7f716703923358be` |
 | [picow-mini-unix/minix.uf2](picow-mini-unix/minix.uf2) | 3,171,328 | `faa6b1f0987bfdb45f6f3d97b1fe0e4a826cbae9df39f5b1ae97b026bdc3e3d3` |
-| [picoplus2/combined.uf2](picoplus2/combined.uf2) | 9,560,064 | `8e3da36d63b7436df6728b3e6bcc3cce2b657e882556b26055b452593ebcb0b9` |
-| [picoplus2-v7/combined.uf2](picoplus2-v7/combined.uf2) | 22,945,792 | `7be36e0912a4dbbc72fc66cc8cd35f71e4b416ae9ddeabdb7fee64de43ce8484` |
-| [feather/combined.uf2](feather/combined.uf2) | 9,559,552 | `0ee3c995c321a0de7f4f3c61653c4af5fdb41f7e197f9c71c10d1e5e3b092bf3` |
-| [feather-v7/combined.uf2](feather-v7/combined.uf2) | 9,559,552 | `2e9da21e22b1d87d8d42aa8e3da17f8b5ef4dd84f54efb9288c6fe4cf706372e` |
+| [picoplus2/combined.uf2](picoplus2/combined.uf2) | 9,559,552 | `677efc00097aedee637e860bb239464d91cf4164a08ffec93c89ed28136c614f` |
+| [picoplus2-v7/combined.uf2](picoplus2-v7/combined.uf2) | 22,945,280 | `e41325753dd733a00474709d4f54c7e4b718db65fc13b4ba3ee6dda051100355` |
+| [feather/combined.uf2](feather/combined.uf2) | 9,559,040 | `1a45cc99b8fac917a645d315025c9eb7510b6321bb77b67381e32392ea8b2841` |
+| [feather-v7/combined.uf2](feather-v7/combined.uf2) | 9,559,040 | `5cc932170f58f2efdfe526346ddb04da6a8bdc61961f6581a0c867ea99d021b8` |
 
 **Pico W needs two separate flashes:** first its `firmware.uf2` above, then
 `minix.uf2`. On RP2040, combining the firmware and pack into one file can
@@ -116,7 +114,7 @@ silent builds or PCM meter example.
 
 | File | Bytes | SHA-256 |
 | --- | ---: | --- |
-| [pico2w-demo/firmware.uf2](pico2w-demo/firmware.uf2) | 437,248 | `2c79c370d8e67f1203bdba45c9d2ffee32fe6df8f71ba9a628ae447c8b6b7703` |
+| [pico2w-demo/firmware.uf2](pico2w-demo/firmware.uf2) | 436,224 | `7ec9f244361decf10a991a6708d1791342229eb1a6c904cd2f7b81de6c302f5b` |
 | [picow-demo/firmware.uf2](picow-demo/firmware.uf2) | 498,688 | `e9cf134ba33e81f119bff24bdcc0cca1ffefdff4331f2b99452b47f3282a665a` |
 
 Flash the firmware matching the chip, then its [silent panel settings](output-settings/).

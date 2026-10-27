@@ -22,14 +22,15 @@ both processors; Display Pack 2 ST7789, ILI9341 and HX8357D use the same
 firmware with a small [screen settings UF2](images/output-settings/).
 Only the LAFVIN glass has been checked in this update.
 
-The latest PSRAM update adds aligned assembly sector transfers and a V7
-kernel with correct floating-point state across fork and exec. Both PSRAM
-boards pass the complete V7 Unix workload and floating-point checks.
-[Fresh historical benchmark comparisons](docs/bench/historical-2026-10-27.md)
-and [PSRAM results and limits](docs/bench/psram-2026-10-27.md) distinguish
-measured results from historical references. Whole-workload timing is
-essentially unchanged. Standard Pico programs and both demos rebuild to
-the same accepted bytes as the preceding release.
+The latest PSRAM update caches MMU row bases and tightens Thumb-2 calls
+and instruction dispatch. The corrected full Unix workload improves about
+4.2% on Feather and 3.9% on Pico Plus 2 W, with 404 bytes more free SRAM.
+The V2 workload walks the installed `/usr` tree; the Plus 2 holds more files.
+[CPU profile, fresh results and limits](docs/bench/psram-profile-2026-10-27.md)
+include the original workload comparison and exact validation data.
+[Earlier historical comparisons](docs/bench/historical-2026-10-27.md)
+retain their measured runtime and dates. Both RP2040 programs rebuild to
+identical accepted bytes. All six firmware programs are rebuilt.
 
 Lato-derived Terminal Sans at 16 pixels is the default, with gamma-corrected
 text edges ([14/16-pixel comparison](docs/FONT-READABILITY.md)). The Pico rasterizes

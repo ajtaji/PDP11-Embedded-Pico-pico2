@@ -1,6 +1,6 @@
 # Benchmarks
 
-Latest: [fresh historical benchmarks on both standard Picos](bench/historical-2026-10-27.md) and [PSRAM V7 workload, FP and capacity results](bench/psram-2026-10-27.md).
+Latest: [PSRAM CPU profiling and the corrected full V7 workload](bench/psram-profile-2026-10-27.md). Earlier: [fresh historical benchmarks on both standard Picos](bench/historical-2026-10-27.md) and [PSRAM V7 workload, FP and capacity results](bench/psram-2026-10-27.md).
 
 Previous: [further CPU assembly and memory savings](bench/assembly-2026-10-26.md).
 
