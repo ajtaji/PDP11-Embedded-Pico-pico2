@@ -79,10 +79,8 @@ Macro NextSyncedM()
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
   EndASM
 EndMacro
 CompilerElse
@@ -128,10 +126,8 @@ Macro NextNativeM()
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
   EndASM
 EndMacro
 CompilerElse
@@ -173,10 +169,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm1_e:
     b __ul_cpurunm_runendm
 __tm1_s:
@@ -387,11 +381,9 @@ __eaw_m7a:
     mov r12, r3
     lsls r3, r0, #31
     bne __eaw_m7x
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #0]
     cmp r0, r3
     blt __eaw_m7x
@@ -447,11 +439,9 @@ __pushm:
     blt __pushm_slow
     lsls r2, r1, #31
     bne __pushm_slow
-    ldr r3, [r5, #72]
-    add.w r3, r3, r1, lsr #13
-    lsls r3, r3, #5
-    ldr r2, =global_mapf
-    adds r3, r3, r2
+    lsrs r3, r1, #13
+    ldr r2, [r5, #140]
+    add.w r3, r2, r3, lsl #5
     ldr r2, [r3, #8]
     cmp r1, r2
     blt __pushm_slow
@@ -468,11 +458,9 @@ __popm:
     ldr r1, [r5, #24]
     lsls r0, r1, #31
     bne __popm_slow
-    ldr r3, [r5, #72]
-    add.w r3, r3, r1, lsr #13
-    lsls r3, r3, #5
-    ldr r0, =global_mapf
-    adds r3, r3, r0
+    lsrs r3, r1, #13
+    ldr r0, [r5, #140]
+    add.w r3, r0, r3, lsl #5
     ldr r0, [r3, #0]
     cmp r1, r0
     blt __popm_slow
@@ -716,11 +704,9 @@ __ix_clrm_base:
     uxth r0, r0
     lsrs r1, r0, #1
     bcs __ix_clrm_slow
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #8]
     cmp r0, r3
     blt __ix_clrm_slow
@@ -758,10 +744,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm2_e:
     b __ul_cpurunm_runendm
 __tm2_s:
@@ -805,11 +789,9 @@ __ix_tstm_base:
     uxth r0, r0
     lsrs r1, r0, #1
     bcs __ix_tstm_slow
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #0]
     cmp r0, r3
     blt __ix_tstm_slow
@@ -845,10 +827,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm3_e:
     b __ul_cpurunm_runendm
 __tm3_s:
@@ -892,11 +872,9 @@ __ix_incm_base:
     uxth r0, r0
     lsrs r1, r0, #1
     bcs __ix_incm_slow
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #8]
     cmp r0, r3
     blt __ix_incm_slow
@@ -937,10 +915,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm4_e:
     b __ul_cpurunm_runendm
 __tm4_s:
@@ -984,11 +960,9 @@ __ix_decm_base:
     uxth r0, r0
     lsrs r1, r0, #1
     bcs __ix_decm_slow
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #8]
     cmp r0, r3
     blt __ix_decm_slow
@@ -1029,10 +1003,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm5_e:
     b __ul_cpurunm_runendm
 __tm5_s:
@@ -1074,11 +1046,9 @@ __ix_clrbm_pc:
 __ix_clrbm_base:
     adds r0, r0, r2
     uxth r0, r0
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #8]
     cmp r0, r3
     blt __ix_clrbm_slow
@@ -1116,10 +1086,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm6_e:
     b __ul_cpurunm_runendm
 __tm6_s:
@@ -1161,11 +1129,9 @@ __ix_tstbm_pc:
 __ix_tstbm_base:
     adds r0, r0, r2
     uxth r0, r0
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #0]
     cmp r0, r3
     blt __ix_tstbm_slow
@@ -1202,10 +1168,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm7_e:
     b __ul_cpurunm_runendm
 __tm7_s:
@@ -1250,11 +1214,9 @@ __imx_movb_pc:
 __imx_movb_base:
     adds r0, r0, r3
     uxth r0, r0
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #8]
     cmp r0, r3
     blt __imx_movb_slow
@@ -1287,10 +1249,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm8_e:
     b __ul_cpurunm_runendm
 __tm8_s:
@@ -1337,11 +1297,9 @@ __imx_mov_base:
     uxth r0, r0
     lsls r3, r0, #31
     bne __imx_mov_slow
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #8]
     cmp r0, r3
     blt __imx_mov_slow
@@ -1373,10 +1331,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm9_e:
     b __ul_cpurunm_runendm
 __tm9_s:
@@ -1423,11 +1379,9 @@ __imx_cmp_base:
     uxth r0, r0
     lsls r3, r0, #31
     bne __imx_cmp_slow
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #0]
     cmp r0, r3
     blt __imx_cmp_slow
@@ -1465,10 +1419,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm10_e:
     b __ul_cpurunm_runendm
 __tm10_s:
@@ -1515,11 +1467,9 @@ __imx_add_base:
     uxth r0, r0
     lsls r3, r0, #31
     bne __imx_add_slow
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #8]
     cmp r0, r3
     blt __imx_add_slow
@@ -1558,10 +1508,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm11_e:
     b __ul_cpurunm_runendm
 __tm11_s:
@@ -1608,11 +1556,9 @@ __imx_sub_base:
     uxth r0, r0
     lsls r3, r0, #31
     bne __imx_sub_slow
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #8]
     cmp r0, r3
     blt __imx_sub_slow
@@ -1651,10 +1597,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm12_e:
     b __ul_cpurunm_runendm
 __tm12_s:
@@ -1701,11 +1645,9 @@ __imx_bit_base:
     uxth r0, r0
     lsls r3, r0, #31
     bne __imx_bit_slow
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #0]
     cmp r0, r3
     blt __imx_bit_slow
@@ -1739,10 +1681,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm13_e:
     b __ul_cpurunm_runendm
 __tm13_s:
@@ -1789,11 +1729,9 @@ __imx_bic_base:
     uxth r0, r0
     lsls r3, r0, #31
     bne __imx_bic_slow
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #8]
     cmp r0, r3
     blt __imx_bic_slow
@@ -1829,10 +1767,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm14_e:
     b __ul_cpurunm_runendm
 __tm14_s:
@@ -1879,11 +1815,9 @@ __imx_bis_base:
     uxth r0, r0
     lsls r3, r0, #31
     bne __imx_bis_slow
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #8]
     cmp r0, r3
     blt __imx_bis_slow
@@ -1919,10 +1853,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm15_e:
     b __ul_cpurunm_runendm
 __tm15_s:
@@ -1996,10 +1928,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm16_e:
     b __ul_cpurunm_runendm
 __tm16_s:
@@ -2055,10 +1985,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm17_e:
     b __ul_cpurunm_runendm
 __tm17_s:
@@ -2119,10 +2047,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm18_e:
     b __ul_cpurunm_runendm
 __tm18_s:
@@ -2178,10 +2104,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm19_e:
     b __ul_cpurunm_runendm
 __tm19_s:
@@ -2246,10 +2170,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm20_e:
     b __ul_cpurunm_runendm
 __tm20_s:
@@ -2307,10 +2229,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm21_e:
     b __ul_cpurunm_runendm
 __tm21_s:
@@ -2378,10 +2298,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm22_e:
     b __ul_cpurunm_runendm
 __tm22_s:
@@ -2439,10 +2357,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm23_e:
     b __ul_cpurunm_runendm
 __tm23_s:
@@ -2505,10 +2421,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm24_e:
     b __ul_cpurunm_runendm
 __tm24_s:
@@ -2564,10 +2478,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm25_e:
     b __ul_cpurunm_runendm
 __tm25_s:
@@ -2628,10 +2540,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm26_e:
     b __ul_cpurunm_runendm
 __tm26_s:
@@ -2687,10 +2597,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm27_e:
     b __ul_cpurunm_runendm
 __tm27_s:
@@ -2760,10 +2668,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm28_e:
     b __ul_cpurunm_runendm
 __tm28_s:
@@ -2822,10 +2728,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm29_e:
     b __ul_cpurunm_runendm
 __tm29_s:
@@ -2884,10 +2788,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm30_e:
     b __ul_cpurunm_runendm
 __tm30_s:
@@ -2955,10 +2857,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm31_e:
     b __ul_cpurunm_runendm
 __tm31_s:
@@ -3017,10 +2917,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm32_e:
     b __ul_cpurunm_runendm
 __tm32_s:
@@ -3079,10 +2977,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm33_e:
     b __ul_cpurunm_runendm
 __tm33_s:
@@ -3159,10 +3055,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm34_e:
     b __ul_cpurunm_runendm
 __tm34_s:
@@ -3223,10 +3117,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm35_e:
     b __ul_cpurunm_runendm
 __tm35_s:
@@ -3303,10 +3195,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm36_e:
     b __ul_cpurunm_runendm
 __tm36_s:
@@ -3367,10 +3257,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm37_e:
     b __ul_cpurunm_runendm
 __tm37_s:
@@ -3434,10 +3322,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm38_e:
     b __ul_cpurunm_runendm
 __tm38_s:
@@ -3493,10 +3379,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm39_e:
     b __ul_cpurunm_runendm
 __tm39_s:
@@ -3555,10 +3439,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm40_e:
     b __ul_cpurunm_runendm
 __tm40_s:
@@ -3614,10 +3496,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm41_e:
     b __ul_cpurunm_runendm
 __tm41_s:
@@ -3677,10 +3557,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm42_e:
     b __ul_cpurunm_runendm
 __tm42_s:
@@ -3739,10 +3617,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm43_e:
     b __ul_cpurunm_runendm
 __tm43_s:
@@ -3818,10 +3694,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm44_e:
     b __ul_cpurunm_runendm
 __tm44_s:
@@ -3883,10 +3757,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm45_e:
     b __ul_cpurunm_runendm
 __tm45_s:
@@ -3948,10 +3820,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm46_e:
     b __ul_cpurunm_runendm
 __tm46_s:
@@ -4027,10 +3897,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm47_e:
     b __ul_cpurunm_runendm
 __tm47_s:
@@ -4092,10 +3960,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm48_e:
     b __ul_cpurunm_runendm
 __tm48_s:
@@ -4157,10 +4023,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm49_e:
     b __ul_cpurunm_runendm
 __tm49_s:
@@ -4226,10 +4090,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm50_e:
     b __ul_cpurunm_runendm
 __tm50_s:
@@ -4294,10 +4156,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm51_e:
     b __ul_cpurunm_runendm
 __tm51_s:
@@ -4363,10 +4223,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm52_e:
     b __ul_cpurunm_runendm
 __tm52_s:
@@ -4431,10 +4289,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm53_e:
     b __ul_cpurunm_runendm
 __tm53_s:
@@ -4503,10 +4359,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm54_e:
     b __ul_cpurunm_runendm
 __tm54_s:
@@ -4571,10 +4425,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm55_e:
     b __ul_cpurunm_runendm
 __tm55_s:
@@ -4631,10 +4483,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm56_e:
     b __ul_cpurunm_runendm
 __tm56_s:
@@ -4689,10 +4539,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm57_e:
     b __ul_cpurunm_runendm
 __tm57_s:
@@ -4750,10 +4598,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm58_e:
     b __ul_cpurunm_runendm
 __tm58_s:
@@ -4809,10 +4655,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm59_e:
     b __ul_cpurunm_runendm
 __tm59_s:
@@ -4877,10 +4721,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm60_e:
     b __ul_cpurunm_runendm
 __tm60_s:
@@ -4940,10 +4782,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm61_e:
     b __ul_cpurunm_runendm
 __tm61_s:
@@ -5004,10 +4844,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm62_e:
     b __ul_cpurunm_runendm
 __tm62_s:
@@ -5067,10 +4905,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm63_e:
     b __ul_cpurunm_runendm
 __tm63_s:
@@ -5131,10 +4967,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm64_e:
     b __ul_cpurunm_runendm
 __tm64_s:
@@ -5194,10 +5028,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm65_e:
     b __ul_cpurunm_runendm
 __tm65_s:
@@ -5258,10 +5090,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm66_e:
     b __ul_cpurunm_runendm
 __tm66_s:
@@ -5321,10 +5151,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm67_e:
     b __ul_cpurunm_runendm
 __tm67_s:
@@ -5385,10 +5213,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm68_e:
     b __ul_cpurunm_runendm
 __tm68_s:
@@ -5457,10 +5283,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm69_e:
     b __ul_cpurunm_runendm
 __tm69_s:
@@ -5519,10 +5343,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm70_e:
     b __ul_cpurunm_runendm
 __tm70_s:
@@ -5579,10 +5401,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm71_e:
     b __ul_cpurunm_runendm
 __tm71_s:
@@ -5640,10 +5460,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm72_e:
     b __ul_cpurunm_runendm
 __tm72_s:
@@ -5709,10 +5527,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm73_e:
     b __ul_cpurunm_runendm
 __tm73_s:
@@ -5773,10 +5589,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm74_e:
     b __ul_cpurunm_runendm
 __tm74_s:
@@ -5838,10 +5652,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm75_e:
     b __ul_cpurunm_runendm
 __tm75_s:
@@ -5901,10 +5713,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm76_e:
     b __ul_cpurunm_runendm
 __tm76_s:
@@ -5962,10 +5772,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm77_e:
     b __ul_cpurunm_runendm
 __tm77_s:
@@ -5996,10 +5804,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm78_e:
     b __ul_cpurunm_runendm
 __tm78_s:
@@ -6039,10 +5845,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm79_e:
     b __ul_cpurunm_runendm
 __tm79_s:
@@ -6075,10 +5879,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm80_e:
     b __ul_cpurunm_runendm
 __tm80_s:
@@ -6118,10 +5920,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm81_e:
     b __ul_cpurunm_runendm
 __tm81_s:
@@ -6154,10 +5954,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm82_e:
     b __ul_cpurunm_runendm
 __tm82_s:
@@ -6200,10 +5998,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm83_e:
     b __ul_cpurunm_runendm
 __tm83_s:
@@ -6236,10 +6032,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm84_e:
     b __ul_cpurunm_runendm
 __tm84_s:
@@ -6282,10 +6076,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm85_e:
     b __ul_cpurunm_runendm
 __tm85_s:
@@ -6318,10 +6110,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm86_e:
     b __ul_cpurunm_runendm
 __tm86_s:
@@ -6366,10 +6156,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm87_e:
     b __ul_cpurunm_runendm
 __tm87_s:
@@ -6404,10 +6192,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm88_e:
     b __ul_cpurunm_runendm
 __tm88_s:
@@ -6452,10 +6238,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm89_e:
     b __ul_cpurunm_runendm
 __tm89_s:
@@ -6490,10 +6274,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm90_e:
     b __ul_cpurunm_runendm
 __tm90_s:
@@ -6533,10 +6315,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm91_e:
     b __ul_cpurunm_runendm
 __tm91_s:
@@ -6569,10 +6349,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm92_e:
     b __ul_cpurunm_runendm
 __tm92_s:
@@ -6612,10 +6390,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm93_e:
     b __ul_cpurunm_runendm
 __tm93_s:
@@ -6648,10 +6424,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm94_e:
     b __ul_cpurunm_runendm
 __tm94_s:
@@ -6694,10 +6468,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm95_e:
     b __ul_cpurunm_runendm
 __tm95_s:
@@ -6732,10 +6504,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm96_e:
     b __ul_cpurunm_runendm
 __tm96_s:
@@ -6778,10 +6548,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm97_e:
     b __ul_cpurunm_runendm
 __tm97_s:
@@ -6816,10 +6584,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm98_e:
     b __ul_cpurunm_runendm
 __tm98_s:
@@ -6860,10 +6626,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm99_e:
     b __ul_cpurunm_runendm
 __tm99_s:
@@ -6896,10 +6660,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm100_e:
     b __ul_cpurunm_runendm
 __tm100_s:
@@ -6940,10 +6702,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm101_e:
     b __ul_cpurunm_runendm
 __tm101_s:
@@ -6976,10 +6736,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm102_e:
     b __ul_cpurunm_runendm
 __tm102_s:
@@ -7020,10 +6778,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm103_e:
     b __ul_cpurunm_runendm
 __tm103_s:
@@ -7056,10 +6812,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm104_e:
     b __ul_cpurunm_runendm
 __tm104_s:
@@ -7100,10 +6854,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm105_e:
     b __ul_cpurunm_runendm
 __tm105_s:
@@ -7136,10 +6888,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm106_e:
     b __ul_cpurunm_runendm
 __tm106_s:
@@ -7194,10 +6944,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm107_e:
     b __ul_cpurunm_runendm
 __tm107_s:
@@ -7220,11 +6968,9 @@ CompilerIf #ASM_OPS = 1
     bls __call_jsrm_slow
     lsrs r3, r0, #1
     bcs __call_jsrm_slow
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #8]
     cmp r0, r3
     blt __call_jsrm_slow
@@ -7235,9 +6981,7 @@ CompilerIf #ASM_OPS = 1
     adds r3, r3, r0
     mov r12, r3
     mov.w r2, r5
-    mov r0, r8
-    movs r1, #63
-    ands r0, r1
+    and.w r0, r8, #63
     cmp r0, #31
     beq __call_jsrm_fetch
     movs r1, #56
@@ -7259,9 +7003,7 @@ __call_jsrm_fetch:
     ldrh r3, [r1, r0]
     adds r0, #2
     uxth r0, r0
-    mov r1, r8
-    lsls r1, r1, #26
-    lsrs r1, r1, #29
+    ubfx r1, r8, #3, #3
     cmp r1, #3
     beq __call_jsrm_commit
     b __call_jsrm_base
@@ -7269,9 +7011,8 @@ __call_jsrm_indirect:
     movs r3, #0
     mov r0, r9
 __call_jsrm_base:
-    mov r1, r8
-    lsls r1, r1, #29
-    lsrs r1, r1, #27
+    ubfx r1, r8, #0, #3
+    lsls r1, r1, #2
     cmp r1, #28
     beq __call_jsrm_pc
     ldr r1, [r2, r1]
@@ -7284,9 +7025,7 @@ __call_jsrm_target:
 __call_jsrm_commit:
     str r0, [r2, #28]
     str r3, [r5, #84]
-    mov r1, r8
-    lsls r1, r1, #23
-    lsrs r1, r1, #29
+    ubfx r1, r8, #6, #3
     lsls r1, r1, #2
     ldr r3, [r2, r1]
     ldr r0, [r2, #24]
@@ -7320,10 +7059,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm108_e:
     b __ul_cpurunm_runendm
 __tm108_s:
@@ -7380,10 +7117,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm109_e:
     b __ul_cpurunm_runendm
 __tm109_s:
@@ -7438,10 +7173,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm110_e:
     b __ul_cpurunm_runendm
 __tm110_s:
@@ -7460,11 +7193,9 @@ CompilerIf #ASM_OPS = 1
     ldr r0, [r5, #24]
     lsrs r3, r0, #1
     bcs __call_rtsm_slow
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #0]
     cmp r0, r3
     blt __call_rtsm_slow
@@ -7475,9 +7206,8 @@ CompilerIf #ASM_OPS = 1
     adds r3, r3, r0
     mov r12, r3
     mov.w r2, r5
-    mov r1, r8
-    lsls r1, r1, #29
-    lsrs r1, r1, #27
+    ubfx r1, r8, #0, #3
+    lsls r1, r1, #2
     ldr r3, [r2, r1]
     str r3, [r2, #28]
     ldrh.w r3, [r12]
@@ -7507,10 +7237,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm111_e:
     b __ul_cpurunm_runendm
 __tm111_s:
@@ -7558,10 +7286,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm112_e:
     b __ul_cpurunm_runendm
 __tm112_s:
@@ -7602,10 +7328,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm113_e:
     b __ul_cpurunm_runendm
 __tm113_s:
@@ -7648,10 +7372,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm114_e:
     b __ul_cpurunm_runendm
 __tm114_s:
@@ -7701,10 +7423,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm115_e:
     b __ul_cpurunm_runendm
 __tm115_s:
@@ -7739,10 +7459,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm116_e:
     b __ul_cpurunm_runendm
 __tm116_s:
@@ -7780,10 +7498,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm117_e:
     b __ul_cpurunm_runendm
 __tm117_s:
@@ -7857,10 +7573,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm118_e:
     b __ul_cpurunm_runendm
 __tm118_s:
@@ -7968,10 +7682,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm119_e:
     b __ul_cpurunm_runendm
 __tm119_s:
@@ -8045,10 +7757,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm120_e:
     b __ul_cpurunm_runendm
 __tm120_s:
@@ -8127,10 +7837,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm121_e:
     b __ul_cpurunm_runendm
 __tm121_s:
@@ -8208,10 +7916,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm122_e:
     b __ul_cpurunm_runendm
 __tm122_s:
@@ -8270,10 +7976,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm123_e:
     b __ul_cpurunm_runendm
 __tm123_s:
@@ -8316,10 +8020,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm124_e:
     b __ul_cpurunm_runendm
 __tm124_s:
@@ -8359,10 +8061,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm125_e:
     b __ul_cpurunm_runendm
 __tm125_s:
@@ -8411,10 +8111,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm126_e:
     b __ul_cpurunm_runendm
 __tm126_s:
@@ -8460,10 +8158,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm127_e:
     b __ul_cpurunm_runendm
 __tm127_s:
@@ -8503,10 +8199,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm128_e:
     b __ul_cpurunm_runendm
 __tm128_s:
@@ -8546,10 +8240,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm129_e:
     b __ul_cpurunm_runendm
 __tm129_s:
@@ -8582,10 +8274,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm130_e:
     b __ul_cpurunm_runendm
 __tm130_s:
@@ -8628,10 +8318,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm131_e:
     b __ul_cpurunm_runendm
 __tm131_s:
@@ -8664,10 +8352,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm132_e:
     b __ul_cpurunm_runendm
 __tm132_s:
@@ -8701,10 +8387,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm133_e:
     b __ul_cpurunm_runendm
 __tm133_s:
@@ -8772,10 +8456,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm134_e:
     b __ul_cpurunm_runendm
 __tm134_s:
@@ -8786,7 +8468,7 @@ CompilerElse
 CompilerEndIf
 
 CompilerIf #FP11 = 1
-InstructionFPM:                ; 17xxxx: the FPJ11 (pico2/fp11.pico2, FpExec; #FP11 is 0 on the Pico)
+InstructionFPM:                ; 17xxxx: the FPJ11 (fp11.pico, FpExec)
   PcOutM()
   FpExec()
 CompilerIf #ASM_TAILS = 1
@@ -8810,10 +8492,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm135_e:
     b __ul_cpurunm_runendm
 __tm135_s:
@@ -8854,10 +8534,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm136_e:
     b __ul_cpurunm_runendm
 __tm136_s:
@@ -8941,10 +8619,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm137_e:
     b __ul_cpurunm_runendm
 __tm137_s:
@@ -8981,10 +8657,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm138_e:
     b __ul_cpurunm_runendm
 __tm138_s:
@@ -9033,10 +8707,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm139_e:
     b __ul_cpurunm_runendm
 __tm139_s:
@@ -9074,10 +8746,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm140_e:
     b __ul_cpurunm_runendm
 __tm140_s:
@@ -9112,10 +8782,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm141_e:
     b __ul_cpurunm_runendm
 __tm141_s:
@@ -9152,10 +8820,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm142_e:
     b __ul_cpurunm_runendm
 __tm142_s:
@@ -9192,10 +8858,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm143_e:
     b __ul_cpurunm_runendm
 __tm143_s:
@@ -9246,10 +8910,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm144_e:
     b __ul_cpurunm_runendm
 __tm144_s:
@@ -9289,10 +8951,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm145_e:
     b __ul_cpurunm_runendm
 __tm145_s:
@@ -9329,10 +8989,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm146_e:
     b __ul_cpurunm_runendm
 __tm146_s:
@@ -9371,10 +9029,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm147_e:
     b __ul_cpurunm_runendm
 __tm147_s:
@@ -9409,10 +9065,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm148_e:
     b __ul_cpurunm_runendm
 __tm148_s:
@@ -9449,10 +9103,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm149_e:
     b __ul_cpurunm_runendm
 __tm149_s:
@@ -9489,10 +9141,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm150_e:
     b __ul_cpurunm_runendm
 __tm150_s:
@@ -9543,10 +9193,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm151_e:
     b __ul_cpurunm_runendm
 __tm151_s:
@@ -9586,10 +9234,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm152_e:
     b __ul_cpurunm_runendm
 __tm152_s:
@@ -9631,10 +9277,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm153_e:
     b __ul_cpurunm_runendm
 __tm153_s:
@@ -9671,10 +9315,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm154_e:
     b __ul_cpurunm_runendm
 __tm154_s:
@@ -9712,10 +9354,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm155_e:
     b __ul_cpurunm_runendm
 __tm155_s:
@@ -9763,10 +9403,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm156_e:
     b __ul_cpurunm_runendm
 __tm156_s:
@@ -9807,10 +9445,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm157_e:
     b __ul_cpurunm_runendm
 __tm157_s:
@@ -9858,10 +9494,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm158_e:
     b __ul_cpurunm_runendm
 __tm158_s:
@@ -9902,10 +9536,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm159_e:
     b __ul_cpurunm_runendm
 __tm159_s:
@@ -9949,10 +9581,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm160_e:
     b __ul_cpurunm_runendm
 __tm160_s:
@@ -9992,10 +9622,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm161_e:
     b __ul_cpurunm_runendm
 __tm161_s:
@@ -10031,10 +9659,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm162_e:
     b __ul_cpurunm_runendm
 __tm162_s:
@@ -10073,10 +9699,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm163_e:
     b __ul_cpurunm_runendm
 __tm163_s:
@@ -10115,10 +9739,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm164_e:
     b __ul_cpurunm_runendm
 __tm164_s:
@@ -10157,10 +9779,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm165_e:
     b __ul_cpurunm_runendm
 __tm165_s:
@@ -10199,10 +9819,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm166_e:
     b __ul_cpurunm_runendm
 __tm166_s:
@@ -10241,10 +9859,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm167_e:
     b __ul_cpurunm_runendm
 __tm167_s:
@@ -10281,10 +9897,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm168_e:
     b __ul_cpurunm_runendm
 __tm168_s:
@@ -10325,10 +9939,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm169_e:
     b __ul_cpurunm_runendm
 __tm169_s:
@@ -10369,10 +9981,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm170_e:
     b __ul_cpurunm_runendm
 __tm170_s:
@@ -10408,10 +10018,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm171_e:
     b __ul_cpurunm_runendm
 __tm171_s:
@@ -10483,10 +10091,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm172_e:
     b __ul_cpurunm_runendm
 __tm172_s:
@@ -10525,10 +10131,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm173_e:
     b __ul_cpurunm_runendm
 __tm173_s:
@@ -10597,10 +10201,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm174_e:
     b __ul_cpurunm_runendm
 __tm174_s:
@@ -10640,10 +10242,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm175_e:
     b __ul_cpurunm_runendm
 __tm175_s:
@@ -10706,10 +10306,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm176_e:
     b __ul_cpurunm_runendm
 __tm176_s:
@@ -10747,10 +10345,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm177_e:
     b __ul_cpurunm_runendm
 __tm177_s:
@@ -10790,10 +10386,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm178_e:
     b __ul_cpurunm_runendm
 __tm178_s:
@@ -10833,10 +10427,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm179_e:
     b __ul_cpurunm_runendm
 __tm179_s:
@@ -10907,10 +10499,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm180_e:
     b __ul_cpurunm_runendm
 __tm180_s:
@@ -10952,10 +10542,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm181_e:
     b __ul_cpurunm_runendm
 __tm181_s:
@@ -11026,10 +10614,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm182_e:
     b __ul_cpurunm_runendm
 __tm182_s:
@@ -11071,10 +10657,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm183_e:
     b __ul_cpurunm_runendm
 __tm183_s:
@@ -11113,10 +10697,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm184_e:
     b __ul_cpurunm_runendm
 __tm184_s:
@@ -11157,10 +10739,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm185_e:
     b __ul_cpurunm_runendm
 __tm185_s:
@@ -11198,10 +10778,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm186_e:
     b __ul_cpurunm_runendm
 __tm186_s:
@@ -11265,10 +10843,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm187_e:
     b __ul_cpurunm_runendm
 __tm187_s:
@@ -11318,10 +10894,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm188_e:
     b __ul_cpurunm_runendm
 __tm188_s:
@@ -11369,10 +10943,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm189_e:
     b __ul_cpurunm_runendm
 __tm189_s:
@@ -11422,10 +10994,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm190_e:
     b __ul_cpurunm_runendm
 __tm190_s:
@@ -11475,10 +11045,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm191_e:
     b __ul_cpurunm_runendm
 __tm191_s:
@@ -11529,10 +11097,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm192_e:
     b __ul_cpurunm_runendm
 __tm192_s:
@@ -11583,10 +11149,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm193_e:
     b __ul_cpurunm_runendm
 __tm193_s:
@@ -11634,10 +11198,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm194_e:
     b __ul_cpurunm_runendm
 __tm194_s:
@@ -11687,10 +11249,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm195_e:
     b __ul_cpurunm_runendm
 __tm195_s:
@@ -11738,10 +11298,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm196_e:
     b __ul_cpurunm_runendm
 __tm196_s:
@@ -11791,10 +11349,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm197_e:
     b __ul_cpurunm_runendm
 __tm197_s:
@@ -11844,10 +11400,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm198_e:
     b __ul_cpurunm_runendm
 __tm198_s:
@@ -11959,11 +11513,9 @@ CompilerIf #ASM_MOV = 1
     cmp.w r0, #0x100
     blt __ul_cpurunm_instructionmov_01_m04refm
 __mv04_d1:
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #8]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m04refm
@@ -12035,10 +11587,8 @@ __mv04_r9:
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
   EndASM
 CompilerEndIf
 InstructionMOV_01_M04RefM:         ; the plain version: the fast path's slow path and its reference
@@ -12075,10 +11625,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm199_e:
     b __ul_cpurunm_runendm
 __tm199_s:
@@ -12106,11 +11654,9 @@ CompilerIf #ASM_MOV = 1
     cmp.w r0, #0x100
     blt __ul_cpurunm_instructionmov_01_m40refm
 __mv40_s1:
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #0]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m40refm
@@ -12172,10 +11718,8 @@ __mv40_r9:
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
   EndASM
 CompilerEndIf
 InstructionMOV_01_M40RefM:         ; the plain version: the fast path's slow path and its reference
@@ -12212,10 +11756,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm200_e:
     b __ul_cpurunm_runendm
 __tm200_s:
@@ -12258,11 +11800,9 @@ __mv60_s1:
 __mv60_s2:
     adds r0, r3, r1
     uxth r0, r0
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #0]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m60refm
@@ -12298,10 +11838,8 @@ __mv60_s2:
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
   EndASM
 CompilerEndIf
 InstructionMOV_01_M60RefM:         ; the plain version: the fast path's slow path and its reference
@@ -12336,10 +11874,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm201_e:
     b __ul_cpurunm_runendm
 __tm201_s:
@@ -12382,11 +11918,9 @@ __mv64_s1:
 __mv64_s2:
     adds r0, r3, r1
     uxth r0, r0
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #0]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m64refm
@@ -12410,11 +11944,9 @@ __mv64_s2:
     cmp.w r0, #0x100
     blt __ul_cpurunm_instructionmov_01_m64refm
 __mv64_d1:
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #8]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m64refm
@@ -12472,10 +12004,8 @@ __mv64_r9:
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
   EndASM
 CompilerEndIf
 InstructionMOV_01_M64RefM:         ; the plain version: the fast path's slow path and its reference
@@ -12517,10 +12047,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm202_e:
     b __ul_cpurunm_runendm
 __tm202_s:
@@ -12539,11 +12067,9 @@ CompilerIf #ASM_MOV = 1
     mov.w r3, r5
     lsls r0, r2, #2
     ldr r0, [r3, r0]
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #0]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m20refm
@@ -12607,10 +12133,8 @@ __mv20_r9:
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
   EndASM
 CompilerEndIf
 InstructionMOV_01_M20RefM:         ; the plain version: the fast path's slow path and its reference
@@ -12644,10 +12168,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm203_e:
     b __ul_cpurunm_runendm
 __tm203_s:
@@ -12690,11 +12212,9 @@ __mv61_s1:
 __mv61_s2:
     adds r0, r3, r1
     uxth r0, r0
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #0]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m61refm
@@ -12711,11 +12231,9 @@ __mv61_s2:
     mov.w r3, r5
     lsls r0, r2, #2
     ldr r0, [r3, r0]
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #8]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m61refm
@@ -12744,10 +12262,8 @@ __mv61_s2:
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
   EndASM
 CompilerEndIf
 InstructionMOV_01_M61RefM:         ; the plain version: the fast path's slow path and its reference
@@ -12784,10 +12300,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm204_e:
     b __ul_cpurunm_runendm
 __tm204_s:
@@ -12830,11 +12344,9 @@ __mv06_d1:
 __mv06_d2:
     adds r0, r3, r1
     uxth r0, r0
-    ldr r2, [r5, #72]
-    add.w r2, r2, r0, lsr #13
-    lsls r2, r2, #5
-    ldr r3, =global_mapf
-    adds r2, r2, r3
+    lsrs r2, r0, #13
+    ldr r3, [r5, #140]
+    add.w r2, r3, r2, lsl #5
     ldr r3, [r2, #8]
     cmp r0, r3
     blt __ul_cpurunm_instructionmov_01_m06refm
@@ -12874,10 +12386,8 @@ __mv06_a9:
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
   EndASM
 CompilerEndIf
 InstructionMOV_01_M06RefM:         ; the plain version: the fast path's slow path and its reference
@@ -12912,10 +12422,8 @@ CompilerIf #ASM_TAILS = 1
     mov r8, r2
     adds.w r9, r9, #2
     lsrs r2, r2, #3
-    lsls r2, r2, #2
     ldr r1, =global_optablem
-    ldr r1, [r1, r2]
-    bx r1
+    ldr.w pc, [r1, r2, lsl #2]
 __tm205_e:
     b __ul_cpurunm_runendm
 __tm205_s:
@@ -13023,7 +12531,7 @@ BuildTableM:
   OpsM($1C00, 512, ?InstructionSUB_16M)
 
   CompilerIf #FP11 = 1
-  OpsM($1E00, 512, ?InstructionFPM)        ; 17xxxx: the FPJ11 (pico2/fp11.pico2; #FP11 is 0 on the Pico)
+  OpsM($1E00, 512, ?InstructionFPM)        ; 17xxxx: the FPJ11 (fp11.pico)
   CompilerEndIf
   ; ---- register fast paths: overlay the general entries (Op >> 3 keeps
   ; the source register in bits 5-3 and both modes; R7 as the source stays

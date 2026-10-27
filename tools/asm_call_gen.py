@@ -196,6 +196,23 @@ def mapped_prefix(call):
     else:
         body = body.replace('    ldr r3, =global_mem\n    ldrh r3, [r3, r0]\n',
                             '    ldrh.w r3, [r12]\n')
+    # The mapped loop runs only on Cortex-M33. Extract opcode fields directly;
+    # retain the Thumb-1 shared bodies and every exceptional-address guard.
+    body = body.replace('    mov r0, r8\n    movs r1, #63\n    ands r0, r1\n',
+                        '    and.w r0, r8, #63\n')
+    for left, right in [(26, 29), (29, 27), (23, 29)]:
+        old_field = (f'    mov r1, r8\n    lsls r1, r1, #{left}\n'
+                     f'    lsrs r1, r1, #{right}\n')
+        shift = right - left
+        width = 32 - right
+        # The 29/27 idiom extracts bits 0..2 and scales the byte offset by 4.
+        if (left, right) == (29, 27):
+            new_field = '    ubfx r1, r8, #0, #3\n    lsls r1, r1, #2\n'
+        else:
+            new_field = f'    ubfx r1, r8, #{shift}, #{width}\n'
+        expected = 1 if call or (left, right) == (29, 27) else 0
+        assert body.count(old_field) == expected, (call, left, right)
+        body = body.replace(old_field, new_field)
     body = body.replace(tag, tag + 'm')
     uses = 'Op, PC' if call else 'Op'
     return ('  ASM Uses ' + uses + '\n' + body + '  EndASM\n  NextSyncedM()\n'

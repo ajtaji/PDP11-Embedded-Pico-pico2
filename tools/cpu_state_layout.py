@@ -1,10 +1,10 @@
 """The board's compact CPU state and the desktop's typed host-pointer view.
 R0-R7, the alternate bank, hot scalar state and four fetch words occupy one
-140-byte block. Assembly offsets are constants and cannot depend on unrelated
+144-byte block. Assembly offsets are constants and cannot depend on unrelated
 linker placement. Desktop generation restores the separate 64-bit fetch view.
 """
 import re
-HOT=['CurD','CurI','EaBase','Ea','Src','Dst','TrapVector','FlagC','FlagV','Mmr0','Mmr1','MmuPcRec','Tmp','Adr','EaSpec','EaStep','EaReg']
+HOT=['CurD','CurI','EaBase','Ea','Src','Dst','TrapVector','FlagC','FlagV','Mmr0','Mmr1','MmuPcRec','Tmp','Adr','EaSpec','EaStep','EaReg','CurMapD']
 SLOTS={n:18+i for i,n in enumerate(HOT)}
 OFFSETS={'regalt':32,'fw':56,**{n.lower():4*i for n,i in SLOTS.items()}}
 
@@ -115,7 +115,7 @@ def pack_cpu(text):
  text='\n'.join(lines)+'\n'
  consts='; Compact CPU state: two register banks, hot scalar words, fetch window.\n#CPU_ALT = 8\n'
  consts+=''.join('#CPU_'+n.upper()+' = '+str(i)+'\n' for n,i in SLOTS.items())
- consts+='#CPU_FW = 14\n#CPU_WORDS = 35\n'
+ consts+='#CPU_FW = 14\n#CPU_WORDS = 36\n'
  text=text.replace('Global Dim Reg.i(8)',consts+'Global Dim Reg.i(#CPU_WORDS)',1)
  return forward(text)
 

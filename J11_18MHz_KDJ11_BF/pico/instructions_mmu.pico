@@ -1647,7 +1647,7 @@ InstructionCC_00024M:          ; 00024x-00027x   entries $0014-$0017
   NextNativeM()
 
 CompilerIf #FP11 = 1
-InstructionFPM:                ; 17xxxx: the FPJ11 (pico2/fp11.pico2, FpExec; #FP11 is 0 on the Pico)
+InstructionFPM:                ; 17xxxx: the FPJ11 (fp11.pico, FpExec)
   PcOutM()
   FpExec()
   NextSyncedM()
@@ -2588,7 +2588,7 @@ BuildTableM:
   OpsM($1C00, 512, ?InstructionSUB_16M)
 
   CompilerIf #FP11 = 1
-  OpsM($1E00, 512, ?InstructionFPM)        ; 17xxxx: the FPJ11 (pico2/fp11.pico2; #FP11 is 0 on the Pico)
+  OpsM($1E00, 512, ?InstructionFPM)        ; 17xxxx: the FPJ11 (fp11.pico)
   CompilerEndIf
   ; ---- register fast paths: overlay the general entries (Op >> 3 keeps
   ; the source register in bits 5-3 and both modes; R7 as the source stays

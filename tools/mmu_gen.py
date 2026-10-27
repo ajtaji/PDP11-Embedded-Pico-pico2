@@ -2334,6 +2334,30 @@ def reference_tables(text):
     return text
 
 
+
+def cache_data_map(text):
+    from cpu_state_layout import OFFSETS
+    # Current data-space row base is derived once per mode/recompute change.
+    # Preserve the entire logical shift, including any high invalid address
+    # bits, so rejected accesses still take their existing reference path.
+    pattern=(r"    ldr (r[0-3]), \[r5, #72\]\n"
+             r"    add\.w \1, \1, (r[0-3]), lsr #13\n"
+             r"    lsls \1, \1, #5\n"
+             r"    ldr (r[0-3]), =global_mapf\n"
+             r"    adds \1, \1, \3\n")
+    def repl(m):
+        row,addr,tmp=m.groups()
+        following=text[m.end():].split('\n',1)[0]
+        if not following.startswith('    ldr '+tmp+', '):
+            fail('cache_data_map: temporary pointer still live: '+following)
+        return ('    lsrs '+row+', '+addr+', #13\n'
+                '    ldr '+tmp+', [r5, #'+str(OFFSETS['curmapd'])+']\n'
+                '    add.w '+row+', '+tmp+', '+row+', lsl #5\n')
+    text,n=re.subn(pattern,repl,text)
+    if n<15:fail('cache_data_map: only '+str(n)+' windows matched')
+    return text
+
+
 def main():
     body = generate()
     bad = []
@@ -2357,6 +2381,16 @@ def main():
             from cpu_state_layout import forward as compact_cpu
             text = compact_cpu(text, native_base=True)
             text = span_loads(text)
+            text = cache_data_map(text)
+            # Fuse table indexing and the indirect branch on Cortex-M33 only.
+            # Keep fetch-window, pending-trap and run-budget checks intact.
+            old_dispatch = ('    lsrs r2, r2, #3\n    lsls r2, r2, #2\n'
+                            '    ldr r1, =global_optablem\n'
+                            '    ldr r1, [r1, r2]\n    bx r1\n')
+            new_dispatch = ('    lsrs r2, r2, #3\n    ldr r1, =global_optablem\n'
+                            '    ldr.w pc, [r1, r2, lsl #2]\n')
+            assert text.count(old_dispatch) >= 100, 'mapped dispatch layout changed'
+            text = text.replace(old_dispatch, new_dispatch)
             text = reference_tables(text)
         else:                                # the Pico: its SRAM holds CpuRun (Mini-Unix); CpuRunM stays in flash
             text = text.replace("\nProcedureRAM.i CpuRunM(n.i)", "\nProcedure.i CpuRunM(n.i)", 1)

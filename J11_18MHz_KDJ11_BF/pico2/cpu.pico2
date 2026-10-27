@@ -241,7 +241,8 @@ CompilerEndIf
 #CPU_EASTEP = 33
 #CPU_EAREG = 34
 #CPU_FW = 14
-#CPU_WORDS = 35
+#CPU_CURMAPD = 35
+#CPU_WORDS = 36
 Global Dim Reg.i(#CPU_WORDS)         ; R0-R7, R6 = SP, R7 = PC. 16-bit values.
 Global GBase.i ; @Reg(0), held in r5 (ReserveRegister below): the mapped loop's assembly reaches
                             ; the globals it touches on every instruction from it (tools/mmu_gen.py, base_rel)
@@ -555,6 +556,7 @@ ProcedureRAM PswBanks(v.i)
   EndIf
   Reg(#CPU_CURI) = ((v >> 14) & 3) << 4            ; the memory management unit's entry bases
   Reg(#CPU_CURD) = Reg(#CPU_CURI) + 8
+  Reg(#CPU_CURMAPD) = @MapF(Reg(#CPU_CURD) << 3)
   PrvBase = ((v >> 12) & 3) << 4
   If (v ! PswHigh) & $C000             ; a new mode: its own fetch window, as it left it (or
     t = Reg(#CPU_CURI) >> 2                        ; empty: FwSave, below). The register set and the
@@ -786,6 +788,7 @@ ProcedureRAM MmuRecompute()
   MmuCharge(#MAP_COST_ALL)
   Reg(#CPU_CURI) = ((PswHigh >> 14) & 3) << 4
   Reg(#CPU_CURD) = Reg(#CPU_CURI) + 8
+  Reg(#CPU_CURMAPD) = @MapF(Reg(#CPU_CURD) << 3)
   PrvBase = ((PswHigh >> 12) & 3) << 4
   Reg(#CPU_FW + (0)) = #MAP_NONE                    ; the fetch window is found again, every mode's
   Reg(#CPU_FW + (1)) = 0

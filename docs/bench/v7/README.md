@@ -15,6 +15,15 @@ Source entry, flashing and boot time are excluded from command totals.
 work, with V7-compatible C syntax, native seek and V7 output expectations.
 V7 sort puts capital `Now` first; the older V6 sort folds case.
 
+The later CPU optimization uses suite V2: build, ipc and text remain exact;
+[read-full/session.txt](read-full/session.txt) lists `/usr/lib` and walks the
+installed `/usr` tree. The original read script names `/usr/bin`, absent
+from this V7 distribution, so its three `du` warnings remain documented in
+V1 comparisons. V2 adds real filesystem work and must be compared with V2.
+Feather has the selected `/usr`; Pico Plus 2 W has the full distribution,
+so their V2 directory workloads differ in size. Firmware before/after
+comparisons on each board use identical disks and input commands.
+
 C uses native `cc -O`. Whetstone and the math check link `-lm`; Fortran
 uses native `f77 -o fhello fhello.f`. The general FP phase assembles its
 helper before linking the C tests. Follow the recorded commands for each

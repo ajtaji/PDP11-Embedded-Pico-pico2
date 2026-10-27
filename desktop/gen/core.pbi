@@ -127,6 +127,7 @@ Declare.l RkIo(what.l)
 Declare DkServe()
 Declare.l RkMemRead(pa.l)
 Declare.l RkMemWrite(pa.l, v.l)
+Declare.i RkDmaSpan(ma.i)
 Declare.l RkCsRead()
 Declare.l RkDsRead()
 Declare RkAsk()
@@ -136,7 +137,7 @@ Declare RkIntTaken()
 Declare RkSetDa(blk.l)
 Declare RkGo()
 Declare RkFinish()
-Declare.l RkSector()
+Declare.i RkSector()
 Declare RkStep()
 Declare RkPoll()
 Declare.l RkRead(a.l)
@@ -150,14 +151,14 @@ Declare RpAsk()
 Declare RpDone()
 Declare RpReset()
 Declare RpGo()
-Declare.l RpSector()
+Declare.i RpSector()
 Declare RpFinish()
 Declare RpPoll()
 Declare.l RpRead(a.l)
 Declare RpWrite(a.l, v.l)
 Declare RpInit()
 Declare RpBanner()
-Declare.l RpStoreRead(b.l)
+Declare.i RpStoreRead(b.i)
 Declare.i RpStoreWrite(b.i)
 Declare.i RpOvPut(b.i, src.i)
 Declare.i RpDirtyCount()
@@ -406,6 +407,7 @@ Global Adr.l
 Global EaSpec.l
 Global EaStep.l
 Global EaReg.l
+Global CurMapD.i
 Global Dim RegAlt.l(6)
 Global Dim Fw.i(4)
 Global Dim Reg.l(8)         ; R0-R7, R6 = SP, R7 = PC. 16-bit values.
@@ -713,6 +715,7 @@ Procedure PswBanks(v.i)
   EndIf
   CurI = ((v >> 14) & 3) << 4            ; the memory management unit's entry bases
   CurD = CurI + 8
+  CurMapD = @MapF(CurD << 3)
   PrvBase = ((v >> 12) & 3) << 4
   If (v ! PswHigh) & $C000             ; a new mode: its own fetch window, as it left it (or
     t = CurI >> 2                        ; empty: FwSave, below). The register set and the
@@ -944,6 +947,7 @@ Procedure MmuRecompute()
   MmuCharge(#MAP_COST_ALL)
   CurI = ((PswHigh >> 14) & 3) << 4
   CurD = CurI + 8
+  CurMapD = @MapF(CurD << 3)
   PrvBase = ((PswHigh >> 12) & 3) << 4
   Fw(0) = #MAP_NONE                    ; the fetch window is found again, every mode's
   Fw(1) = 0
@@ -2519,19 +2523,12 @@ Global FpAdr.l                   ; ... and the address
 #P_ZERO = 13
 Global Dim PH.l(14)
 Global Dim PL.l(14)
-Global Dim FpMask.l(33)          ; FpMask(n) = the low n bits
 Global FpReady.l
 ; FpExec's and FpEa's working values (Globals: see FpCpuCc)
 Global FxAc.l, FxDs.l, FxQd.l, FxLenf.l, FxLeni.l, FxDst.l, FxNewv.l, FxEx.l, FxSign.l, FxI.l, FxC.l, FxN.l, FxZ.l, FxV.l
 Global FeR.l, FeAdr.l, FeSp.l
 
 Procedure FpInit()
-  Define i.l
-  FpMask(0) = 0
-  For i = 1 To 31
-    FpMask(i) = (1 << i) - 1
-  Next
-  FpMask(32) = -1
   ; simh's constants are { l, h } (fpac_t): fround_fac rounds F at bit 31 of l,
   ; fround_guard_fac at bit 2 of h and dround_guard_fac at bit 2 of l (guarded)
   PH(#P_RND) = 0 : PL(#P_RND) = 1 << 31
@@ -2571,30 +2568,26 @@ Procedure.l FpLt(a.l, b.l)                    ; F_LT: unsigned 64-bit a < b
   ProcedureReturn ULt(PL(a), PL(b))
 EndProcedure
 
-Procedure FpLsh(d.l, s.l, n.l)                ; F_LSH_V, 0 <= n < 64
-  Define h.l, l.l
-  If n = 0
-    h = PH(s) : l = PL(s)
-  ElseIf n >= 32
-    h = PL(s) << (n - 32) : l = 0
-  Else
-    h = (PH(s) << n) | ((PL(s) >> (32 - n)) & FpMask(n))
-    l = PL(s) << n
-  EndIf
-  PH(d) = h : PL(d) = l
-EndProcedure
 
-Procedure FpRsh(d.l, s.l, n.l)                ; F_RSH_V, 0 <= n < 64
-  Define h.l, l.l
+Procedure FpLsh(d.l, s.l, n.l)
+  Protected h.q = PH(s) & $FFFFFFFF, l.q = PL(s) & $FFFFFFFF
   If n = 0
-    h = PH(s) : l = PL(s)
-  ElseIf n >= 32
-    l = (PH(s) >> (n - 32)) & FpMask(64 - n) : h = 0
+    PH(d) = h : PL(d) = l
+  ElseIf n < 32
+    PH(d) = (h << n) | (l >> (32 - n)) : PL(d) = l << n
   Else
-    l = ((PL(s) >> n) & FpMask(32 - n)) | (PH(s) << (32 - n))
-    h = (PH(s) >> n) & FpMask(32 - n)
+    PH(d) = l << (n - 32) : PL(d) = 0
   EndIf
-  PH(d) = h : PL(d) = l
+EndProcedure
+Procedure FpRsh(d.l, s.l, n.l)
+  Protected h.q = PH(s) & $FFFFFFFF, l.q = PL(s) & $FFFFFFFF
+  If n = 0
+    PH(d) = h : PL(d) = l
+  ElseIf n < 32
+    PL(d) = (l >> n) | (h << (32 - n)) : PH(d) = h >> n
+  Else
+    PL(d) = h >> (n - 32) : PH(d) = 0
+  EndIf
 EndProcedure
 
 Procedure FpLsh1(d.l)
@@ -6251,7 +6244,7 @@ CompilerElse
 CompilerEndIf
 
 CompilerIf #FP11 = 1
-InstructionFPM:                ; 17xxxx: the FPJ11 (pico2/fp11.pico2, FpExec; #FP11 is 0 on the Pico)
+InstructionFPM:                ; 17xxxx: the FPJ11 (fp11.pico, FpExec)
   PcOutM()
   FpExec()
 CompilerIf #ASM_TAILS = 1
@@ -7662,7 +7655,7 @@ BuildTableM:
   OpsM($1C00, 512, ?InstructionSUB_16M)
 
   CompilerIf #FP11 = 1
-  OpsM($1E00, 512, ?InstructionFPM)        ; 17xxxx: the FPJ11 (pico2/fp11.pico2; #FP11 is 0 on the Pico)
+  OpsM($1E00, 512, ?InstructionFPM)        ; 17xxxx: the FPJ11 (fp11.pico)
   CompilerEndIf
   ; ---- register fast paths: overlay the general entries (Op >> 3 keeps
   ; the source register in bits 5-3 and both modes; R7 as the source stays
@@ -12969,6 +12962,9 @@ EndProcedure
 
 XIncludeFile "../machine_disk.pbi"      ; the desktop's disk storage (disk.pico2's place)
 XIncludeFile "../machine_demo.pbi"      ; the demo display and tone generator (desktop only)
+Procedure BlockCopy512(*src, *dst)
+  CopyMemory(*src, *dst, 512)
+EndProcedure
 ; ======== kw11.pico2 (J11_18MHz_KDJ11_BF/pico2) ========
 ; ======================================================================
 ;  kw11.pico2 - the KW11-L line clock at 177546, vector 100, BR6, for the
@@ -13255,6 +13251,7 @@ Global RkBadBlock.l = -1        ; the last block the storage refused (-1 none)
 ; ---- the bus: physical memory for the controller's DMA ------------------
 ; Return -1 for nonexistent memory (see THE BUS above).
 
+
 ; ---- THE STORAGE, ON CORE 1 ---------------------------------------------
 ; The controller, its registers and the copy to and from memory stay on
 ; core 0; the storage itself (DiskRead / DiskWrite: the flash through XIP,
@@ -13330,6 +13327,27 @@ Procedure.l RkMemWrite(pa.l, v.l)
       ProcedureReturn 1
     EndIf
   CompilerEndIf
+  ProcedureReturn 0
+EndProcedure
+
+; Full, aligned sector in one contiguous DMA memory window. A miss leaves
+; all state untouched so partial/NXM/IBA/map-boundary cases keep the word path.
+Procedure.i RkDmaSpan(ma.i)
+  Define pa.i
+  If (ma & 3) <> 0 Or ma + 512 > #UB_IOPAGE Or (ma & $1FFF) > $1E00
+    ProcedureReturn 0
+  EndIf
+  pa = UbPhys(ma)
+  If (pa & 3) <> 0 Or UbPhys(ma + 510) <> pa + 510
+    ProcedureReturn 0
+  EndIf
+  If pa < #RAM_BYTES
+    If pa + 512 <= #RAM_BYTES : ProcedureReturn @Mem(0) + pa : EndIf
+  Else
+    CompilerIf #DESK_MEM = 1
+      If PsramOk And pa + 512 <= MemTop : ProcedureReturn PsMem + pa : EndIf
+    CompilerEndIf
+  EndIf
   ProcedureReturn 0
 EndProcedure
 
@@ -13499,13 +13517,16 @@ EndProcedure
 
 ; One sector. Returns 1 when it was done, 0 when the storage is not ready
 ; yet (nothing has moved, the sector is tried again at the next look).
-Procedure.l RkSector()
-  Define n.l
-  Define i.l
-  Define w.l
-  Define r.l
-  Define ma.l
-  Define stepv.l
+Procedure.i RkSector()
+  Define n.i
+  Define i.i
+  Define w.i
+  Define r.i
+  Define ma.i
+  Define stepv.i
+  CompilerIf #DESK_MEM = 1
+  Define host.i
+  CompilerEndIf
   n = RkXLeft
   If n > 256
     n = 256
@@ -13520,6 +13541,14 @@ Procedure.l RkSector()
       If DkReqSeq <> DkDoneSeq Or RpIoPosted   ; DkBuf is still core 1's (an abandoned request), or the RP11's
         ProcedureReturn 0
       EndIf
+      CompilerIf #DESK_MEM = 1
+      host = 0
+      If n = 256 And stepv = 2 : host = RkDmaSpan(ma) : EndIf
+      If host
+        BlockCopy512(host, @DkBuf(0))
+        RkDb = DkBuf(255)
+        ma = (ma + 512) & $3FFFF
+      Else
       For i = 0 To n - 1
         w = RkMemRead(ma)
         If w < 0
@@ -13532,6 +13561,21 @@ Procedure.l RkSector()
         RkDb = w
         ma = (ma + stepv) & $3FFFF
       Next
+      EndIf
+      CompilerElse
+      For i = 0 To n - 1
+        w = RkMemRead(ma)
+        If w < 0
+          RkEr = RkEr | #RKER_NXM
+          n = i                          ; the words before it still go
+          RkXStop = 1
+          Break
+        EndIf
+        DkBuf(i) = w
+        RkDb = w
+        ma = (ma + stepv) & $3FFFF
+      Next
+      CompilerEndIf
       If n = 0                           ; nothing to write: the sector is not touched (simh)
         ProcedureReturn 1
       EndIf
@@ -13573,6 +13617,14 @@ Procedure.l RkSector()
       RkReads = RkReads + 1
     EndIf
     If RkXFunc = 2                       ; READ: into memory
+      CompilerIf #DESK_MEM = 1
+      host = 0
+      If n = 256 And stepv = 2 : host = RkDmaSpan(ma) : EndIf
+      If host
+        BlockCopy512(@DkBuf(0), host)
+        RkDb = DkBuf(255)
+        ma = (ma + 512) & $3FFFF
+      Else
       For i = 0 To n - 1
         RkDb = DkBuf(i)
         If RkMemWrite(ma, RkDb) = 0
@@ -13583,6 +13635,19 @@ Procedure.l RkSector()
         EndIf
         ma = (ma + stepv) & $3FFFF
       Next
+      EndIf
+      CompilerElse
+      For i = 0 To n - 1
+        RkDb = DkBuf(i)
+        If RkMemWrite(ma, RkDb) = 0
+          RkEr = RkEr | #RKER_NXM
+          n = i
+          RkXStop = 1
+          Break
+        EndIf
+        ma = (ma + stepv) & $3FFFF
+      Next
+      CompilerEndIf
     ElseIf RkXFunc = 3                   ; WRITE CHECK: compare
       For i = 0 To n - 1
         w = RkMemRead(ma)
@@ -14001,8 +14066,11 @@ EndProcedure
 
 ; ---- the transfer -------------------------------------------------------
 ; One sector: 1 done, 0 the channel is busy or core 1 has not answered.
-Procedure.l RpSector()
-  Define n.l, i.l, w.l, r.l, ma.l
+Procedure.i RpSector()
+  Define n.i, i.i, w.i, r.i, ma.i
+  CompilerIf #PSRAM = 1
+  Define host.i
+  CompilerEndIf
   n = RpXLeft
   If n > 256
     n = 256
@@ -14014,6 +14082,13 @@ Procedure.l RpSector()
     EndIf
     DkReqOp = 2
     If RpXFunc = 1 Or RpXFunc = 5        ; WRITE: memory into the buffer, zeros after
+      CompilerIf #PSRAM = 1
+      host = 0
+      If n = 256 : host = RkDmaSpan(ma) : EndIf
+      If host
+        BlockCopy512(host, @DkBuf(0))
+        ma = (ma + 512) & $3FFFF
+      Else
       For i = 0 To n - 1
         w = RkMemRead(ma)
         If w < 0
@@ -14025,6 +14100,20 @@ Procedure.l RpSector()
         DkBuf(i) = w
         ma = (ma + 2) & $3FFFF
       Next
+      EndIf
+      CompilerElse
+      For i = 0 To n - 1
+        w = RkMemRead(ma)
+        If w < 0
+          n = i
+          RpEr = RpEr | #RPER_NXB
+          RpXStop = 1
+          Break
+        EndIf
+        DkBuf(i) = w
+        ma = (ma + 2) & $3FFFF
+      Next
+      CompilerEndIf
       If n = 0
         ProcedureReturn 1
       EndIf
@@ -14054,6 +14143,13 @@ Procedure.l RpSector()
     ProcedureReturn 1
   EndIf
   If RpXFunc = 2 Or RpXFunc = 7          ; READ: into memory
+    CompilerIf #PSRAM = 1
+    host = 0
+    If n = 256 : host = RkDmaSpan(ma) : EndIf
+    If host
+      BlockCopy512(@DkBuf(0), host)
+      ma = (ma + 512) & $3FFFF
+    Else
     For i = 0 To n - 1
       If RkMemWrite(ma, DkBuf(i)) = 0
         n = i
@@ -14063,6 +14159,18 @@ Procedure.l RpSector()
       EndIf
       ma = (ma + 2) & $3FFFF
     Next
+    EndIf
+    CompilerElse
+    For i = 0 To n - 1
+      If RkMemWrite(ma, DkBuf(i)) = 0
+        n = i
+        RpEr = RpEr | #RPER_NXB
+        RpXStop = 1
+        Break
+      EndIf
+      ma = (ma + 2) & $3FFFF
+    Next
+    CompilerEndIf
     RpReads = RpReads + 1
   ElseIf RpXFunc = 3                     ; WRITE CHECK
     For i = 0 To n - 1
@@ -14219,8 +14327,8 @@ EndProcedure
 
 ; ---- the storage, on core 1 (PsDiskRead / PsDiskWrite, drive 8) ----------
 ; b counts from the pack's first block.
-Procedure.l RpStoreRead(b.l)
-  Define i.l, w.l, s.l, a.l
+Procedure.i RpStoreRead(b.i)
+  Define i.i, w.i, s.i, a.i
   s = 0
   If b >= 0 And b < RpBlocks
     s = PeekU(#PS_WIN + #PS_RK1 + b * 2)
@@ -14237,11 +14345,7 @@ Procedure.l RpStoreRead(b.l)
     Next
     ProcedureReturn 1
   EndIf
-  For i = 0 To 127
-    w = PeekL(a + i * 4)
-    DkBuf(i * 2) = w & $FFFF
-    DkBuf(i * 2 + 1) = (w >> 16) & $FFFF
-  Next
+  BlockCopy512(a, @DkBuf(0))
   ProcedureReturn 1
 EndProcedure
 
@@ -14271,9 +14375,7 @@ Procedure.i RpStoreWrite(b.i)
     PokeU(#PS_WIN + #PS_RK1 + b * 2, s)
   EndIf
   a = #PS_WIN + #PS_RK1 + #RP_OV_MAP + #RP_OV_LIST + (s - 1) * 512
-  For i = 0 To 127
-    PokeL(a + i * 4, DkBuf(i * 2) | (DkBuf(i * 2 + 1) << 16))
-  Next
+  BlockCopy512(@DkBuf(0), a)
   PokeA(@DkSwapRam(0) + #SW_RPDIRTY + s - 1, 1)   ; for the next save into the store (store.pico2)
   StDirty = 1
   StLastWrite = Micros()

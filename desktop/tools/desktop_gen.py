@@ -70,7 +70,7 @@ FILES = ["cpu.pico2", "fp11.pico2", "instructions_mmu.pico2", "instructions.pico
 # MapF stays 64-bit whole), the fetch window (Fw, FwSave), the FPU's operand in a window (FrwA), the
 # assembly's base (GBase = @Reg(0)), and the label tables with the parameter that fills them (a label's
 # address is a host address).
-KEEP_I = {"MapHost", "MapF", "GBase", "Fw", "FwSave", "FrwA", "OpTable", "OpTableM", "OpAsmM", "OpRefM", "MovAsmM", "MovRefM", "MovAsm", "MovRef", "FastAsm", "FastRef", "target"}
+KEEP_I = {"CurMapD", "MapHost", "MapF", "GBase", "Fw", "FwSave", "FrwA", "OpTable", "OpTableM", "OpAsmM", "OpRefM", "MovAsmM", "MovRefM", "MovAsm", "MovRef", "FastAsm", "FastRef", "target"}
 # Core procedures whose names are PureBasic commands (the File library): renamed
 # everywhere, consistently.
 RENAME = {"ReadWord": "PdpReadWord", "WriteWord": "PdpWriteWord", "ReadByte": "PdpReadByte",
@@ -187,6 +187,30 @@ def transform(name, text):
                      "  DdPoll()                               ; desktop_gen: the demo display's frame and its interrupt\n"
                      "  ; an interrupt, if one is asked for and the priority lets it in: the\n", name, 1)
     if name == "fp11.pico2":
+        # The board's pair shifts are now an assembly include. Keep a typed,
+        # logical host equivalent rather than silently dropping that include.
+        shifts = """Procedure FpLsh(d.i, s.i, n.i)
+  Protected h.q = PH(s) & $FFFFFFFF, l.q = PL(s) & $FFFFFFFF
+  If n = 0
+    PH(d) = h : PL(d) = l
+  ElseIf n < 32
+    PH(d) = (h << n) | (l >> (32 - n)) : PL(d) = l << n
+  Else
+    PH(d) = l << (n - 32) : PL(d) = 0
+  EndIf
+EndProcedure
+Procedure FpRsh(d.i, s.i, n.i)
+  Protected h.q = PH(s) & $FFFFFFFF, l.q = PL(s) & $FFFFFFFF
+  If n = 0
+    PH(d) = h : PL(d) = l
+  ElseIf n < 32
+    PL(d) = (l >> n) | (h << (32 - n)) : PH(d) = h >> n
+  Else
+    PL(d) = h >> (n - 32) : PH(d) = 0
+  EndIf
+EndProcedure
+"""
+        text = text.replace('Procedure FpLsh1(d.i)', shifts + '\nProcedure FpLsh1(d.i)', 1)
         text = exact(text, "ProcedureReturn Bool((a ! $80000000) < (b ! $80000000))",
                      "Protected ua.q = a & $FFFFFFFF, ub.q = b & $FFFFFFFF : ProcedureReturn Bool(ua < ub)   ; desktop_gen: unsigned, in quads (a compare of .l operands is 32-bit even with a 64-bit mask in it)",
                      name, 1)
@@ -210,6 +234,7 @@ def build():
         if f == "@disk":
             parts.append('XIncludeFile "../machine_disk.pbi"      ; the desktop\'s disk storage (disk.pico2\'s place)\n'
                          'XIncludeFile "../machine_demo.pbi"      ; the demo display and tone generator (desktop only)\n')
+            parts.append('Procedure BlockCopy512(*src, *dst)\n  CopyMemory(*src, *dst, 512)\nEndProcedure\n')
             continue
         src = open(os.path.join(SRC, f), encoding="utf-8", errors="strict").read().replace("\r\n", "\n")
         sys.path.insert(0, os.path.join(REPO, "tools"))
