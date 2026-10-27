@@ -740,11 +740,7 @@ Procedure.i PsDiskRead(d.i, blk.i)
   If d = 1
     a = #PS_WIN + #PS_RK1 + blk * 512
   EndIf
-  For i = 0 To 127
-    w = PeekL(a + i * 4)
-    DkBuf(i * 2) = w & $FFFF
-    DkBuf(i * 2 + 1) = (w >> 16) & $FFFF
-  Next
+  BlockCopy512(a, @DkBuf(0))
   PsReads = PsReads + 1
   ProcedureReturn 1
 EndProcedure
@@ -763,9 +759,7 @@ Procedure.i PsDiskWrite(d.i, blk.i)
   If d = 1
     a = #PS_WIN + #PS_RK1 + blk * 512
   EndIf
-  For i = 0 To 127
-    PokeL(a + i * 4, DkBuf(i * 2) | (DkBuf(i * 2 + 1) << 16))
-  Next
+  BlockCopy512(@DkBuf(0), a)
   PsWrites = PsWrites + 1
   PsMarkDirty(d, blk)
   ProcedureReturn 1

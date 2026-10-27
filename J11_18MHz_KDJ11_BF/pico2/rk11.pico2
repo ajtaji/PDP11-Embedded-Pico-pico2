@@ -154,6 +154,8 @@ Global RkBadBlock.i = -1        ; the last block the storage refused (-1 none)
 ; ---- the bus: physical memory for the controller's DMA ------------------
 ; Return -1 for nonexistent memory (see THE BUS above).
 
+XIncludeFile "block_copy.pico2"
+
 ; ---- THE STORAGE, ON CORE 1 ---------------------------------------------
 ; The controller, its registers and the copy to and from memory stay on
 ; core 0; the storage itself (DiskRead / DiskWrite: the flash through XIP,
@@ -229,6 +231,27 @@ ProcedureRAM.i RkMemWrite(pa.i, v.i)
       ProcedureReturn 1
     EndIf
   CompilerEndIf
+  ProcedureReturn 0
+EndProcedure
+
+; Full, aligned sector in one contiguous DMA memory window. A miss leaves
+; all state untouched so partial/NXM/IBA/map-boundary cases keep the word path.
+ProcedureRAM.i RkDmaSpan(ma.i)
+  Define pa.i
+  If (ma & 3) <> 0 Or ma + 512 > #UB_IOPAGE Or (ma & $1FFF) > $1E00
+    ProcedureReturn 0
+  EndIf
+  pa = UbPhys(ma)
+  If (pa & 3) <> 0 Or UbPhys(ma + 510) <> pa + 510
+    ProcedureReturn 0
+  EndIf
+  If pa < #RAM_BYTES
+    If pa + 512 <= #RAM_BYTES : ProcedureReturn @Mem(0) + pa : EndIf
+  Else
+    CompilerIf #PSRAM = 1
+      If PsramOk And pa + 512 <= MemTop : ProcedureReturn #PS_MEM + pa : EndIf
+    CompilerEndIf
+  EndIf
   ProcedureReturn 0
 EndProcedure
 
@@ -405,6 +428,9 @@ ProcedureRAM.i RkSector()
   Define r.i
   Define ma.i
   Define step.i
+  CompilerIf #PSRAM = 1
+  Define host.i
+  CompilerEndIf
   n = RkXLeft
   If n > 256
     n = 256
@@ -419,6 +445,14 @@ ProcedureRAM.i RkSector()
       If DkReqSeq <> DkDoneSeq Or RpIoPosted   ; DkBuf is still core 1's (an abandoned request), or the RP11's
         ProcedureReturn 0
       EndIf
+      CompilerIf #PSRAM = 1
+      host = 0
+      If n = 256 And step = 2 : host = RkDmaSpan(ma) : EndIf
+      If host
+        BlockCopy512(host, @DkBuf(0))
+        RkDb = DkBuf(255)
+        ma = (ma + 512) & $3FFFF
+      Else
       For i = 0 To n - 1
         w = RkMemRead(ma)
         If w < 0
@@ -431,6 +465,21 @@ ProcedureRAM.i RkSector()
         RkDb = w
         ma = (ma + step) & $3FFFF
       Next
+      EndIf
+      CompilerElse
+      For i = 0 To n - 1
+        w = RkMemRead(ma)
+        If w < 0
+          RkEr = RkEr | #RKER_NXM
+          n = i                          ; the words before it still go
+          RkXStop = 1
+          Break
+        EndIf
+        DkBuf(i) = w
+        RkDb = w
+        ma = (ma + step) & $3FFFF
+      Next
+      CompilerEndIf
       If n = 0                           ; nothing to write: the sector is not touched (simh)
         ProcedureReturn 1
       EndIf
@@ -472,6 +521,14 @@ ProcedureRAM.i RkSector()
       RkReads = RkReads + 1
     EndIf
     If RkXFunc = 2                       ; READ: into memory
+      CompilerIf #PSRAM = 1
+      host = 0
+      If n = 256 And step = 2 : host = RkDmaSpan(ma) : EndIf
+      If host
+        BlockCopy512(@DkBuf(0), host)
+        RkDb = DkBuf(255)
+        ma = (ma + 512) & $3FFFF
+      Else
       For i = 0 To n - 1
         RkDb = DkBuf(i)
         If RkMemWrite(ma, RkDb) = 0
@@ -482,6 +539,19 @@ ProcedureRAM.i RkSector()
         EndIf
         ma = (ma + step) & $3FFFF
       Next
+      EndIf
+      CompilerElse
+      For i = 0 To n - 1
+        RkDb = DkBuf(i)
+        If RkMemWrite(ma, RkDb) = 0
+          RkEr = RkEr | #RKER_NXM
+          n = i
+          RkXStop = 1
+          Break
+        EndIf
+        ma = (ma + step) & $3FFFF
+      Next
+      CompilerEndIf
     ElseIf RkXFunc = 3                   ; WRITE CHECK: compare
       For i = 0 To n - 1
         w = RkMemRead(ma)

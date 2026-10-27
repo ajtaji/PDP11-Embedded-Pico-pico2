@@ -18,10 +18,11 @@ THE STEPS, each one a tool of this directory:
      file system, 512 inodes, without the RP/HP kernels (there is no room
      and no such disk); then /include out of tape file 6 (the /usr dump)
      at /usr/include, so cc finds its headers.
-  2. the kernel: v7ld.py links /usr/sys's own objects (conf/l.o mch.o c.o,
-     sys/LIB1, dev/LIB2 - the tape's RK configuration) into rkunix with
-     separate I and D, as /usr/sys/conf/makefile does, and two patches
-     follow (below).
+  2. the PSRAM kernel: the checked native board build in media/unix/v7/
+     rkunix-psram preserves FP state across fork and exec, retaining the
+     distribution's 29 buffers and resource limits. The small --pico2w
+     experiment instead uses the original v7ld.py link. Two startup/console
+     adjustments follow (below).
   3. the pack: padded to the RK05's 4872 blocks (blocks 4000-4871 are V7's
      swap area, swplo 4000 nswap 872 in c.c); /rkunix; /dev/rk0 rk1 rrk0
      rrk1 swap; /etc/rc without its mount of /dev/rp3 (there is no RP);
@@ -191,7 +192,11 @@ def main():
             open(objs[-1], "wb").write(data)
         kern = os.path.join(tmp, "rkunix")
         run(v7ld, "-i", "-o", kern, *objs)
-        k = bytearray(open(kern, "rb").read())
+        # PSRAM kernel compiled by V7 on the physical board. It retains the
+        # distribution's process/file/inode limits and adds full FP context
+        # preservation across fork/exec, masked raw FP saves and 40 buffers.
+        # The small non-PSRAM profile keeps its original kernel configuration.
+        k = bytearray(open(kern, "rb").read() if a.pico2w else media_v7("rkunix-psram"))
         # mch.s start: the first 'bit $20,SSR3' (relative: 032767 000020 offset) is the
         # MMU-already-on path's; make it 'bis $60,SSR3' (052767 000060, the same offset)
         text = k[16:16 + struct.unpack_from("<H", k, 2)[0]]

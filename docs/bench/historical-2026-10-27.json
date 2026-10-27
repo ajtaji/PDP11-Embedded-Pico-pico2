@@ -1,0 +1,335 @@
+{
+  "date": "2026-10-27",
+  "runtime_source": "338b5a5b4d2b88b34385180036672a2aa138f3ca",
+  "published_firmware": "5b07729bc1ef3d0cf8065cca4f81ca9c71ad7559",
+  "physical_boards": true,
+  "clocks_mhz": {
+    "2040": 200,
+    "2350": 150
+  },
+  "results": {
+    "2040": {
+      "scall": {
+        "seconds": [
+          3.345921277999878,
+          3.3442468643188477,
+          3.3442180156707764
+        ],
+        "median_seconds": 3.3442468643188477,
+        "guest_user_seconds": [
+          0.6,
+          0.5,
+          0.5
+        ]
+      },
+      "pipes": {
+        "seconds": [
+          29.96597123146057,
+          29.931318283081055,
+          29.827730894088745
+        ],
+        "median_seconds": 29.931318283081055,
+        "guest_user_seconds": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "loop": {
+        "seconds": [
+          6.66108512878418,
+          6.662766695022583,
+          6.661282062530518
+        ],
+        "median_seconds": 6.661282062530518,
+        "guest_user_seconds": [
+          6.4,
+          6.4,
+          6.4
+        ]
+      },
+      "fcalle": {
+        "seconds": [
+          0.7623975276947021,
+          0.7652661800384521,
+          0.7627184391021729
+        ],
+        "median_seconds": 0.7627184391021729,
+        "guest_user_seconds": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "fcalla": {
+        "seconds": [
+          0.32668089866638184,
+          0.32961106300354004,
+          0.32714247703552246
+        ],
+        "median_seconds": 0.32714247703552246,
+        "guest_user_seconds": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "dhry": {
+        "seconds": [
+          7.594140291213989,
+          7.598100662231445,
+          7.598011493682861
+        ],
+        "median_seconds": 7.598011493682861,
+        "guest_user_seconds": [
+          7.3,
+          7.3,
+          7.3
+        ],
+        "iterations": 10000,
+        "iterations_per_host_second": 1316.1338342689005
+      },
+      "dhryr": {
+        "seconds": [
+          7.292914867401123,
+          7.295202732086182,
+          7.295237302780151
+        ],
+        "median_seconds": 7.295202732086182,
+        "guest_user_seconds": [
+          7.0,
+          7.0,
+          7.0
+        ],
+        "iterations": 10000,
+        "iterations_per_host_second": 1370.7638248375777
+      },
+      "pipecheck": {
+        "passed": true,
+        "output": "CHILD 1024 ERR 0 END 0\nPARENT 1024 ERR 0 STATUS 0"
+      },
+      "shellcheck": {
+        "passed": true,
+        "output": "aid\nall\ncome\ncountry\nfor\ngood\nis\nmen\nNow\nof\nthe\nthe\ntheir\ntime\nto\nto\nthe\nthe\ntheir\n      3       3 "
+      },
+      "dwrite": {
+        "seconds": [
+          0.6952645778656006,
+          0.6906766891479492,
+          0.6916377544403076
+        ],
+        "median_seconds": 0.6916377544403076
+      },
+      "dread": {
+        "seconds": [
+          0.9887197017669678,
+          0.9883739948272705,
+          0.9879248142242432
+        ],
+        "median_seconds": 0.9883739948272705
+      },
+      "shell": {
+        "seconds": [
+          1.5599322319030762,
+          1.5626442432403564,
+          1.5587036609649658
+        ],
+        "median_seconds": 1.5599322319030762
+      },
+      "multi": {
+        "1": {
+          "passed": true,
+          "seconds": 1.8636868000030518,
+          "output": "1\n4\n\nreal        2.0\nuser        0.1\nsys         1.2"
+        },
+        "2": {
+          "passed": true,
+          "seconds": 3.4718546867370605,
+          "output": "1\n5\n2\n8\n\nreal        3.0\nuser        0.1\nsys         2.4"
+        },
+        "3": {
+          "passed": true,
+          "seconds": 5.155524253845215,
+          "output": "1\n11\n2\n3\n3\n6\n\nreal        5.0\nuser        0.2\nsys         3.7"
+        },
+        "4": {
+          "passed": true,
+          "seconds": 12.499236583709717,
+          "output": "1\n12\n2\n3\n3\n7\n4\n5\n\nreal       13.0\nuser        0.2\nsys        10.7"
+        },
+        "5": {
+          "passed": false,
+          "seconds": null,
+          "output": "1\n7\n2\n10\n3\n3\n4\n12\n5\n2\ntry again\n\nreal        9.0\nuser        0.3\nsys         7.1"
+        },
+        "6": {
+          "passed": false,
+          "seconds": null,
+          "output": "1\n2\n2\n5\n3\n9\n4\n7\n5\n8\ntry again\ntry again\n\nreal        5.0\nuser        0.0\nsys         0.7"
+        }
+      }
+    },
+    "2350": {
+      "scall": {
+        "seconds": [
+          5.297639846801758,
+          5.2662317752838135,
+          5.256213426589966
+        ],
+        "median_seconds": 5.2662317752838135,
+        "guest_user_seconds": [
+          0.8,
+          1.0,
+          0.8
+        ]
+      },
+      "pipes": {
+        "seconds": [
+          5.442785739898682,
+          5.464414834976196,
+          4.537443161010742
+        ],
+        "median_seconds": 5.442785739898682,
+        "guest_user_seconds": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "loop": {
+        "seconds": [
+          8.035876274108887,
+          8.013260841369629,
+          8.02016305923462
+        ],
+        "median_seconds": 8.02016305923462,
+        "guest_user_seconds": [
+          7.8,
+          7.8,
+          7.8
+        ]
+      },
+      "fcalle": {
+        "seconds": [
+          0.7022786140441895,
+          0.690150260925293,
+          0.6992568969726562
+        ],
+        "median_seconds": 0.6992568969726562,
+        "guest_user_seconds": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "fcalla": {
+        "seconds": [
+          0.20554876327514648,
+          0.22465848922729492,
+          0.22135162353515625
+        ],
+        "median_seconds": 0.22135162353515625,
+        "guest_user_seconds": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "dhry": {
+        "seconds": [
+          7.390968322753906,
+          7.387554407119751,
+          7.371726036071777
+        ],
+        "median_seconds": 7.387554407119751,
+        "guest_user_seconds": [
+          7.1,
+          7.1,
+          7.1
+        ],
+        "iterations": 10000,
+        "iterations_per_host_second": 1353.6279327245977
+      },
+      "dhryr": {
+        "seconds": [
+          7.060171842575073,
+          7.000185966491699,
+          6.983090400695801
+        ],
+        "median_seconds": 7.000185966491699,
+        "guest_user_seconds": [
+          6.8,
+          6.8,
+          6.8
+        ],
+        "iterations": 10000,
+        "iterations_per_host_second": 1428.5334772344233
+      },
+      "pipecheck": {
+        "passed": true,
+        "output": "CHILD 1024 ERR 0 END 0\nPARENT 1024 ERR 0 STATUS 0"
+      },
+      "shellcheck": {
+        "passed": true,
+        "output": "aid\nall\ncome\ncountry\nfor\ngood\nis\nmen\nNow\nof\nthe\nthe\ntheir\ntime\nto\nto\nthe\nthe\ntheir\n      3       3 "
+      },
+      "disk": {
+        "passed": false,
+        "reason": "248-block write overlay fills; file-cache reads do not establish a successful write. All disk timings excluded."
+      },
+      "shell": {
+        "seconds": [
+          1.260138988494873,
+          1.1687965393066406,
+          1.1155493259429932
+        ],
+        "median_seconds": 1.1687965393066406
+      },
+      "multi": {
+        "1": {
+          "passed": true,
+          "seconds": 1.2993690967559814,
+          "output": "1\n38\n\nreal        1.0\nuser        0.1\nsys         0.7"
+        },
+        "2": {
+          "passed": true,
+          "seconds": 2.299246311187744,
+          "output": "1\n50\n2\n53\n\nreal        2.0\nuser        0.1\nsys         1.6"
+        },
+        "3": {
+          "passed": true,
+          "seconds": 3.3155672550201416,
+          "output": "1\n71\n2\n73\n3\n75\n\nreal        3.0\nuser        0.2\nsys         2.5"
+        },
+        "4": {
+          "passed": false,
+          "reason": "Four-job attempt panics out of 112-block swap; five/six were not continued"
+        },
+        "5": {
+          "passed": false,
+          "reason": "Four-job attempt panics out of 112-block swap; five/six were not continued"
+        },
+        "6": {
+          "passed": false,
+          "reason": "Four-job attempt panics out of 112-block swap; five/six were not continued"
+        }
+      }
+    }
+  },
+  "source_sha256": {
+    "scall.c": "92552527fc04f9250fd4e79164d72d00af61a78f1526de5ff4e5549dfb605547",
+    "pipes.c": "c43f1e3f8df3df09e4a649bd648ee571adb56621fcc2fe7602d913d887877822",
+    "loop.c": "423fe99c8119fcabe65187fcaa8188f2f93a3e14dd831121e358df88d702130d",
+    "fcalle.c": "81f02059d47942fba04e3b34d41ed11151e127b6194c43b0b9ea560bce1c9cc9",
+    "fcalla.c": "deb881143cdc3063650e2561dd71a8ae94bd878a44935a54535b3654ff4fa2f6",
+    "dwrite.c": "e8c4a1b0075a60bd37c7c76e0028fc58d5f832eab1923d726dfac310660bec53",
+    "dread.c": "4dfff99e916850df0c87f1b0e5932c37da5734755bb132069c8d162fb8209180",
+    "check.c": "1135eea7a1b5e0f0b19b427933aa62fc4e0d87531045dc75a88df05a38312bf9",
+    "dhry.c": "226537c9c0910f2d1dc5c8f8cfa36f59f0c46f42e083bbb96fa5896bc11e76f3",
+    "dhryr.c": "b34a3399edcb817b06fe9477b9d77217a2bcc5964f6e7f62ffa06b91b87f3cf8",
+    "tst.sh": "4b1341107c6ec0d756e808af3ba4640fc235c6836ff2c3ae5e2bcda6e12bd248",
+    "pcheck.c": "0872724f3482c43cd3698fb75b00367acb242cbafc570ebd6bf11bb4740c1083",
+    "check.sh": "5f8838d54707f7447204c1a8cc4c11e11553a3375379e5e60e096353663c7a51"
+  },
+  "methodology": "Host elapsed time; median of three unless multi (one run each). Full volume/count unchanged. Dhrystone C1.1 algorithm port; whole-process host rate includes setup/output and no original empty-loop correction. Historical 1985 reference is earlier version and its own net-loop timing method; comparison is approximate. V6 long/unsigned/cast/library/shell compatibility changes documented. Independent pipe-byte and shell-result checks pass; resource failures have no accepted score. RP2040 uses the published pipe/FP MiniUnix pack, not the older preserved demo pack."
+}

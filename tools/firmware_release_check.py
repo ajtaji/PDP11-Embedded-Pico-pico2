@@ -1,10 +1,12 @@
 """Verify prepared release hashes, UF2 records, settings and unchanged packs."""
 from pathlib import Path
-import os,tempfile
+import os,tempfile,argparse
 import hashlib,json,re,subprocess,struct
 from firmware_release import ROOT,FAMILY,PACKS,read_uf2,decode_bytes,payload_hash
 from output_config import decode,TARGETS
-manifest=json.loads((ROOT/'images/manifest-2026-10-26.json').read_text())
+ap=argparse.ArgumentParser(description=__doc__)
+ap.add_argument('--manifest',type=Path,default=ROOT/'images/manifest-2026-10-27.json')
+manifest=json.loads(ap.parse_args().manifest.read_text())
 assert re.fullmatch('[0-9a-f]{64}',manifest['compiler_sha256'])
 seen=set()
 for entry in manifest['files']:
@@ -61,4 +63,17 @@ if 'v6_fp_kernel' in manifest:
     where,_,old=v6fs.locate(fs,'/rkfp','_nswap')
     assert old==112 and struct.unpack_from('<5I',header,96)==(1,where//512,where%512,112,872)
   finally:Path(name).unlink()
-print('RELEASE PASS:',len(seen),'files; hashes, UF2 families/records, settings, program payloads, accepted pack bytes/nonces and V6 FP kernels verified')
+if 'v7_psram_kernel' in manifest:
+ from v7fs import FS
+ from v6_fp_image import unpack_root
+ m=manifest['v7_psram_kernel']
+ assert hashlib.sha256((ROOT/m['path']).read_bytes()).hexdigest()==m['native_sha256']
+ for folder in ['feather-v7','picoplus2-v7']:
+  _,pages=read_uf2(ROOT/'images'/folder/'combined.uf2')
+  _,image=unpack_root(pages);fs=FS(image)
+  assert fs.namei('/unix')==fs.namei('/rkunix')
+  kernel=fs.read(fs.namei('/rkunix'))
+  assert hashlib.sha256(kernel).hexdigest()==m['installed_sha256']
+  h=struct.unpack_from('<8H',kernel)
+  assert h[0]==0o411 and h[2]+h[3]==41766<49152
+print('RELEASE PASS:',len(seen),'files; hashes, UF2 families/records, settings, program payloads, accepted pack bytes/nonces and V6/V7 FP kernels verified')

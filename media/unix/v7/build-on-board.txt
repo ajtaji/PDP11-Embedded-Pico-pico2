@@ -64,3 +64,8 @@ cc -c -O rpm.c
 ls -l rpm.o
 sum rpm.o
 od rpm.o
+
+# 2026-10-27: rkunix-psram is the complete FP-fixed native kernel.
+# See build-psram-kernel.sh and docs/v7/PSRAM-KERNEL.md.
+# Native V7 BSD sum: 04333 78; 39702 bytes; 29 buffers retained.
+# SHA256SUMS also verifies this fifth board-built artifact.

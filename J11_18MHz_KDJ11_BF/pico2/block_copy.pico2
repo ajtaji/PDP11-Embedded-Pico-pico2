@@ -1,0 +1,20 @@
+; One aligned 512-byte disk sector. Source/destination must not overlap.
+; AAPCS arguments enter r0/r1; no compiled statement precedes the body.
+; Only caller-saved registers are changed; compiler supplies frame/return.
+ProcedureRAM BlockCopy512(src.i, dst.i)
+  ASM
+    movs r2, #16
+    mov r12, r2
+__bc512_loop:
+    ldmia r0!, {r2, r3}
+    stmia r1!, {r2, r3}
+    ldmia r0!, {r2, r3}
+    stmia r1!, {r2, r3}
+    ldmia r0!, {r2, r3}
+    stmia r1!, {r2, r3}
+    ldmia r0!, {r2, r3}
+    stmia r1!, {r2, r3}
+    subs.w r12, r12, #1
+    bne __bc512_loop
+  EndASM
+EndProcedure

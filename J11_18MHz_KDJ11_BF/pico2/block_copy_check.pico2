@@ -1,0 +1,98 @@
+; Native aligned-sector copies, guard words and mapped DMA span checks.
+#DISK_BACKEND = 0
+#DISK_FLASH_MODEL = 0
+#DISK_READ_ONLY = 0
+#DESK_PROBE = 0
+#PSRAM = 0
+#DEMO_DEV = 0                ; 1 = the demo display and tone generator (demo_dev.pico2): only tools/demo_build.py sets it
+#TERM_PANEL = 0              ; 1 = the console on the LAFVIN panel (term_panel.pico2): only tools/term_build.py sets it
+#PSRAM_CS_PIN = 8
+#FLASH_CHIP = $400000
+#SRAM_MEM_KB = 56                       ; the test compares all of memory with a shadow copy: 56 KB
+EnableExplicit
+XIncludeFile "RP2350/Lib/clocks.pico2"
+XIncludeFile "RP2350/Lib/timer.pico2"
+XIncludeFile "RP2350/Lib/uart.pico2"
+XIncludeFile "RP2350/Lib/usb_serial.pico2"
+XIncludeFile "RP2350/Lib/safety.pico2"
+XIncludeFile "cpu.pico2"
+XIncludeFile "fp11.pico2"
+XIncludeFile "instructions_mmu.pico2"
+XIncludeFile "instructions.pico2"
+XIncludeFile "disk.pico2"
+XIncludeFile "kw11.pico2"
+XIncludeFile "rk11.pico2"
+XIncludeFile "rp11.pico2"
+
+Global Dim Src.u(300)
+Global Dim Dst.u(300)
+Global Checks.i, Failures.i
+Procedure Pump()
+ UsbSerialTask() : SafetyPet()
+EndProcedure
+Procedure Say(*s.i)
+ Define p.i=*s
+ While PeekA(p)<>0 : UsbSerialWrite(PeekA(p)) : p=p+1 : Wend
+ UsbSerialWrite(10) : UsbSerialFlush()
+EndProcedure
+Procedure Main()
+ Define i.i,j.i,k.i,t.i,ma.i,pa.i,host.i,want.i,ok.i
+ SafetyBoot() : ClockInitKhz(150000) : UsbSerialInit() : SafetyOk()
+ While UsbSerialReady()=0 : Pump() : Wend
+ Say("BLOCK START")
+ For i=0 To 20000 : Pump() : Next
+ For k=0 To 127
+  For i=0 To 299
+   Src(i)=(i*313+k*419)&$FFFF : Dst(i)=$A55A
+  Next
+  BlockCopy512(@Src(4),@Dst(8))
+  For i=0 To 299
+   j=$A55A
+   If i>=8 And i<264 : j=Src(i-4) : EndIf
+   Checks=Checks+1
+   If Dst(i)<>j : Failures=Failures+1 : EndIf
+  Next
+  Pump()
+ Next
+ For k=0 To 127
+  Mmr3=0
+  If k & 1 : Mmr3=$20 : EndIf
+  ma=(k % 8)*8192 + ((k*124)&$1FFC)
+  If (k & 16) <> 0 : ma=#UB_IOPAGE-512+(k&8)*32 : EndIf
+  If (k & 32) <> 0 : ma=ma+2 : EndIf
+  If ma < #UB_IOPAGE : UbMap(ma>>13)=(k*532)&$FFFC : EndIf
+  pa=UbPhys(ma)
+  want=0 : ok=1
+  If (ma&3)<>0 Or ma+512>#UB_IOPAGE Or (ma&$1FFF)>$1E00 Or (pa&3)<>0 : ok=0 : EndIf
+  For i=0 To 255
+   If UbPhys(ma+i*2)<>pa+i*2 Or pa+i*2>=#RAM_BYTES : ok=0 : EndIf
+  Next
+  If ok : want=@Mem(0)+pa : EndIf
+  host=RkDmaSpan(ma) : Checks=Checks+1
+  If host<>want : Failures=Failures+1 : EndIf
+  If host
+   For i=0 To 255 : PokeU(host+i*2,Src(i)) : Next
+   BlockCopy512(host,@Dst(0))
+   For i=0 To 255
+    Checks=Checks+1
+    If Dst(i)<>RkMemRead(ma+i*2) : Failures=Failures+1 : EndIf
+   Next
+   BlockCopy512(@Src(0),host)
+   For i=0 To 255
+    Checks=Checks+1
+    If RkMemRead(ma+i*2)<>Src(i) : Failures=Failures+1 : EndIf
+   Next
+  EndIf
+  Pump()
+ Next
+ Repeat
+ If Failures=0
+  Say("BLOCKCOPY DMA PASS")
+ Else
+  Say("BLOCKCOPY FAIL")
+ EndIf
+ t=Micros()
+ While Micros()-t<1000000 : Pump() : Wend
+ ForEver
+EndProcedure
+Main()

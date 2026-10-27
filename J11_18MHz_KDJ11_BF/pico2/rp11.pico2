@@ -175,6 +175,9 @@ EndProcedure
 ; One sector: 1 done, 0 the channel is busy or core 1 has not answered.
 Procedure.i RpSector()
   Define n.i, i.i, w.i, r.i, ma.i
+  CompilerIf #PSRAM = 1
+  Define host.i
+  CompilerEndIf
   n = RpXLeft
   If n > 256
     n = 256
@@ -186,6 +189,13 @@ Procedure.i RpSector()
     EndIf
     DkReqOp = 2
     If RpXFunc = 1 Or RpXFunc = 5        ; WRITE: memory into the buffer, zeros after
+      CompilerIf #PSRAM = 1
+      host = 0
+      If n = 256 : host = RkDmaSpan(ma) : EndIf
+      If host
+        BlockCopy512(host, @DkBuf(0))
+        ma = (ma + 512) & $3FFFF
+      Else
       For i = 0 To n - 1
         w = RkMemRead(ma)
         If w < 0
@@ -197,6 +207,20 @@ Procedure.i RpSector()
         DkBuf(i) = w
         ma = (ma + 2) & $3FFFF
       Next
+      EndIf
+      CompilerElse
+      For i = 0 To n - 1
+        w = RkMemRead(ma)
+        If w < 0
+          n = i
+          RpEr = RpEr | #RPER_NXB
+          RpXStop = 1
+          Break
+        EndIf
+        DkBuf(i) = w
+        ma = (ma + 2) & $3FFFF
+      Next
+      CompilerEndIf
       If n = 0
         ProcedureReturn 1
       EndIf
@@ -226,6 +250,13 @@ Procedure.i RpSector()
     ProcedureReturn 1
   EndIf
   If RpXFunc = 2 Or RpXFunc = 7          ; READ: into memory
+    CompilerIf #PSRAM = 1
+    host = 0
+    If n = 256 : host = RkDmaSpan(ma) : EndIf
+    If host
+      BlockCopy512(@DkBuf(0), host)
+      ma = (ma + 512) & $3FFFF
+    Else
     For i = 0 To n - 1
       If RkMemWrite(ma, DkBuf(i)) = 0
         n = i
@@ -235,6 +266,18 @@ Procedure.i RpSector()
       EndIf
       ma = (ma + 2) & $3FFFF
     Next
+    EndIf
+    CompilerElse
+    For i = 0 To n - 1
+      If RkMemWrite(ma, DkBuf(i)) = 0
+        n = i
+        RpEr = RpEr | #RPER_NXB
+        RpXStop = 1
+        Break
+      EndIf
+      ma = (ma + 2) & $3FFFF
+    Next
+    CompilerEndIf
     RpReads = RpReads + 1
   ElseIf RpXFunc = 3                     ; WRITE CHECK
     For i = 0 To n - 1
@@ -409,11 +452,7 @@ Procedure.i RpStoreRead(b.i)
     Next
     ProcedureReturn 1
   EndIf
-  For i = 0 To 127
-    w = PeekL(a + i * 4)
-    DkBuf(i * 2) = w & $FFFF
-    DkBuf(i * 2 + 1) = (w >> 16) & $FFFF
-  Next
+  BlockCopy512(a, @DkBuf(0))
   ProcedureReturn 1
 EndProcedure
 
@@ -443,9 +482,7 @@ Procedure.i RpStoreWrite(b.i)
     PokeU(#PS_WIN + #PS_RK1 + b * 2, s)
   EndIf
   a = #PS_WIN + #PS_RK1 + #RP_OV_MAP + #RP_OV_LIST + (s - 1) * 512
-  For i = 0 To 127
-    PokeL(a + i * 4, DkBuf(i * 2) | (DkBuf(i * 2 + 1) << 16))
-  Next
+  BlockCopy512(@DkBuf(0), a)
   PokeA(@DkSwapRam(0) + #SW_RPDIRTY + s - 1, 1)   ; for the next save into the store (store.pico2)
   StDirty = 1
   StLastWrite = Micros()

@@ -400,6 +400,14 @@ Checked 2026-10-20 with the release compiler of 2026-10-19, on a Pico 2 W and a 
 
 ## 12. Seventh Edition (V7) on the Pico Plus 2 W
 
+The October 27 PSRAM images include full FP context fixes across fork and
+exec. [Kernel rebuild and upgrade notes](v7/PSRAM-KERNEL.md) describe the
+native board build. Firmware-only updates retain the installed guest
+kernel; back up saved files before replacing a combined V7 system image.
+Pico Plus 2 W contains the whole distribution `/usr`. The Feather contains
+the smaller RK1 selection, with only 12 KB free there in the factory image;
+use the root filesystem for larger working files.
+
 V7 runs on the PSRAM boards, where it gets 2 MB, with the J-11's floating
 point unit (FPJ11, `pico2/fp11.pico2`), which V7's C compiler needs.
 

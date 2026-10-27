@@ -340,7 +340,12 @@ whole `/usr` dump as a 20,800-block file system for the RP03's `/dev/rp3`,
 keeps `/etc/rc`'s own `mount /dev/rp3 /usr`, and makes `/dev/rp3` and
 `/dev/rrp3`; `rk_image.py --rp IMAGE[,FIRST]` packs it, mapped, where RK1
 would go (blocks FIRST on, default 7000: cylinder 35, where rp.c puts rp3).
-The kernel is then linked from the four objects V7 built on a board
+The PSRAM kernel is now the complete native board build
+`media/unix/v7/rkunix-psram`, checked against `SHA256SUMS` before use. It
+fixes full FP state across fork and exec and masks exceptions during raw
+state copies. It retains the distribution's 29 buffers and resource
+limits. [Kernel source edits, build and upgrade](v7/PSRAM-KERNEL.md).
+The earlier kernel was linked from the four objects V7 built on a board
 (`media/unix/v7/`, checked against `SHA256SUMS`; `build-on-board.txt` has the
 sessions): `c.o` and `l.o`, mkconf's configuration with rk, rp and ht; and
 `rp.o`, V7's RP03 driver with the two lines rk.c has, `if(bp->b_flags&B_PHYS)
@@ -355,8 +360,9 @@ was saved with. Packs made by a new run of `rk_image.py` start with the store em
 flashing the same file again keeps what was saved (a new firmware does too).
 
 It restores the root dump (tape file 5) into a 4000-block file system,
-adds `/usr/include` from the /usr dump (file 6), links `rkunix` from the
-tape's own kernel objects (`v7ld.py`), pads the pack to 4872 blocks (V7
+adds `/usr/include` from the /usr dump (file 6), installs the checked native
+PSRAM kernel (the small `--pico2w` experiment keeps the tape-object link),
+pads the pack to 4872 blocks (V7
 swaps at blocks 4000-4871), makes `/dev/rk0 rk1 rrk0 rrk1 swap`, takes the
 mount of `/dev/rp3` out of `/etc/rc`, writes the boot block
 (`rkuboot.py`), and copies each `--add` directory's files into a new
