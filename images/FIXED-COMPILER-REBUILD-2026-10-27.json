@@ -1,0 +1,53 @@
+{
+  "rebuilt_utc": "2026-10-28T01:18:16.107250+00:00",
+  "runtime_source": "f4cc314478eee76f256fbaf687b722b43db3158a",
+  "compiler_sha256": "9a582ee9c05acb1d386ffbd4082d178bf81fc3359ddaddb5211783b3671bba8e",
+  "programs": [
+    {
+      "program": "rp2040",
+      "rebuilt": true,
+      "uf2_bytes": 401408,
+      "uf2_sha256": "5447f932960b395fa367a11e71e6925e2e0f007bbfe346328e1dbb5d4901728f",
+      "byte_identical_to_previous_release": true
+    },
+    {
+      "program": "rp2350",
+      "rebuilt": true,
+      "uf2_bytes": 401920,
+      "uf2_sha256": "9c4d4afb7201ef5053bc4307be0d09d63f4f797e993e2bd6bcf8f19d33ff6c95",
+      "byte_identical_to_previous_release": true
+    },
+    {
+      "program": "feather",
+      "rebuilt": true,
+      "uf2_bytes": 459264,
+      "uf2_sha256": "44a96a85b23fcc3d4ff1a219aad3436d8321610099025605c9d3335fa1aa48d2",
+      "byte_identical_to_previous_release": true
+    },
+    {
+      "program": "picoplus2",
+      "rebuilt": true,
+      "uf2_bytes": 459264,
+      "uf2_sha256": "2508149b436f95776421a54a8feadc49c9b1658516fca0f5b0ebbd3bbbb8bf5a",
+      "byte_identical_to_previous_release": true
+    },
+    {
+      "program": "rp2350-demo",
+      "rebuilt": true,
+      "uf2_bytes": 442880,
+      "uf2_sha256": "ed57afa3a77e5eca8523e1cd42e2ff472a4ed5fb50179c2723953d78a39e3dfd",
+      "byte_identical_to_previous_release": true
+    },
+    {
+      "program": "rp2040-demo",
+      "rebuilt": true,
+      "uf2_bytes": 499712,
+      "uf2_sha256": "3be1f48b132c20a221157a16f6412614551c3fb99d7b341da95f1b8e0fa61306",
+      "byte_identical_to_previous_release": true
+    }
+  ],
+  "release_files_verified": 28,
+  "changed_release_files": [],
+  "unix_pack_payloads_and_nonces_preserved": true,
+  "boards_flashed": false
+}

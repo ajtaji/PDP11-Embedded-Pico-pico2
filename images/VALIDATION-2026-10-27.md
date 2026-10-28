@@ -1,3 +1,23 @@
+# Fixed-compiler rebuild, latest 2026-10-27
+
+All six production programs were freshly rebuilt with the fixed, signed
+compiler, SHA-256 `9a582ee9c05acb1d386ffbd4082d178bf81fc3359ddaddb5211783b3671bba8e`,
+from PDP-11 source `f4cc314478eee76f256fbaf687b722b43db3158a`.
+
+The rebuild covers Pico W Unix, Pico 2 W Unix, Feather and Pico Plus 2
+PSRAM firmware, and both Pico W/Pico 2 W display-and-sound demos. Their
+complete UF2 bytes match the accepted release. The refreshed manifest and
+all 28 release files pass hash, sector-padding/E10, metadata, output-settings,
+unchanged Unix pack/nonce and native V6/V7 kernel checks. V6 and V7 combined
+images retain their existing filesystem payloads and nonces.
+
+No board was flashed during this rebuild. Saved Unix data remains untouched.
+The earlier physical compiler/uploader and full-flash preservation tests
+remain recorded separately; this is a build/publication verification pass.
+[Fresh build record](FIXED-9a582ee9c05acb1d386ffbd4082d178bf81fc3359ddaddb5211783b3671bba8e-REBUILD-2026-10-27.json).
+
+---
+
 # UF2 BOOTSEL validation, latest 2026-10-27
 
 Packaging source: `1124d1c54c7b8e89657162c20c4b58006fc07683`. All six programs rebuilt with the canonical

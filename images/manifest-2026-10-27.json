@@ -1,8 +1,8 @@
 {
   "date": "2026-10-27",
-  "runtime_source": "1124d1c54c7b8e89657162c20c4b58006fc07683",
-  "pack_base_revision": "1124d1c54c7b8e89657162c20c4b58006fc07683",
-  "compiler_sha256": "ea0c04dd97636624cbfd51d4d7fbc2d854ce8548f65ddbb139b2634c99f2c94c",
+  "runtime_source": "f4cc314478eee76f256fbaf687b722b43db3158a",
+  "pack_base_revision": "f4cc314478eee76f256fbaf687b722b43db3158a",
+  "compiler_sha256": "9a582ee9c05acb1d386ffbd4082d178bf81fc3359ddaddb5211783b3671bba8e",
   "psram_profiles": {
     "picoplus2": "Pimoroni_Pico_Plus_2_W.board",
     "feather": "Adafruit_Feather_RP2350_HSTX.board"
@@ -184,12 +184,12 @@
   },
   "demo_profiles": {
     "rp2350-demo": {
-      "runtime_source": "1124d1c54c7b8e89657162c20c4b58006fc07683",
+      "runtime_source": "f4cc314478eee76f256fbaf687b722b43db3158a",
       "linked_audio": "silent",
       "default_audio": "silent"
     },
     "rp2040-demo": {
-      "runtime_source": "1124d1c54c7b8e89657162c20c4b58006fc07683",
+      "runtime_source": "f4cc314478eee76f256fbaf687b722b43db3158a",
       "linked_audio": "bluetooth",
       "default_audio": "silent"
     }

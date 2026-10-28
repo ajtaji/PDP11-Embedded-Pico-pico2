@@ -2,15 +2,16 @@
 
 ## 2026-10-27 builds
 
-All six programs were rebuilt from source `1124d1c`.
-Their executable bytes match the earlier measured `eacaa8c` release; this
-update adds UF2 sector padding, the safe E10 prefix and reserved metadata.
+All six programs were freshly rebuilt from source `f4cc314` with
+the fixed, signed compiler (`9a582ee9c05acb1d...`). Their UF2 bytes
+match the accepted release, including full touched-sector padding and safe
+RP2350 E10 prefixes. [Fresh rebuild record](FIXED-COMPILER-REBUILD-2026-10-27.json).
 The M33 variants cache data-space MMU row bases, extract call opcode fields
 directly and combine instruction-table indexing with its indirect jump.
 The RP2040 Unix and demo programs retain their accepted bytes.
 
 V7 images retain the earlier October 27 FP-fixed kernel, its 29 buffers,
-2040 KB guest memory and 872 swap blocks. This CPU update preserves all
+2040 KB guest memory and 872 swap blocks. This rebuild preserves all
 existing disk payloads and pack nonces, including V6 and Mini-Unix.
 [Kernel source and upgrade](../docs/v7/PSRAM-KERNEL.md).
 
