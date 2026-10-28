@@ -566,6 +566,15 @@ recovery kernel. [Kernel format, updating and reproduction](v6/FP-KERNEL.md).
 
 ## BOOTSEL UF2 copy
 
+Current PureMetal Forge also generates this layout directly with
+`--compile source.pico2 -o firmware.uf2`: full touched sectors, unchanged
+address gaps, and a reserved E10 prefix on RP2350 Arm/RISC-V. The PDP-11
+source declares its dedicated sector with `FlashRegion "UF2 E10 workaround",
+$4E000, $1000, "reserved"`. The compiler uses that declaration rather than
+flash end. For other programs, declare all persistent flash storage; the
+compiler reserves a free sector after code when no explicit E10 sector is
+declared. Both UF2 and binary storage-map sidecars protect the reservation.
+
 The updated PureMetal Forge uploader accepts these files directly through
 **Compiler > Flash Prebuilt File...** or `--radio-firmware`, retaining the
 E10 prefix and validating its transfer separately from the main image.

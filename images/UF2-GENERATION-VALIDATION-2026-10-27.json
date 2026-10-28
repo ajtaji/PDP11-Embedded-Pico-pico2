@@ -1,0 +1,45 @@
+{
+  "date": "2026-10-27",
+  "ide_sha256": "9a582ee9c05acb1d386ffbd4082d178bf81fc3359ddaddb5211783b3671bba8e",
+  "ide_signed_and_timestamped": true,
+  "source_stamp_verified_sources": 219,
+  "compiler_output_checks": 26,
+  "layout_checks": 18,
+  "uploader_checks": 70,
+  "disabled_padding_mutant_caught": true,
+  "physical_a2_rom_test": false,
+  "boards": [
+    {
+      "board": "feather",
+      "compiler_generated_uf2_upload_pass": true,
+      "uf2_sha256": "44a96a85b23fcc3d4ff1a219aad3436d8321610099025605c9d3335fa1aa48d2",
+      "flash_bytes": 8388608,
+      "all_main_pages_match": true,
+      "full_flash_unchanged": true,
+      "saved_unix_store_unchanged": true,
+      "settings_radio_packs_unchanged": true,
+      "compiler_direct_uf2_output": true,
+      "postprocessing": false,
+      "equals_published_firmware": true,
+      "main_sectors_complete": true,
+      "e10_reserved_flash_offset": "0x4e000",
+      "saved_store_sectors_written": false
+    },
+    {
+      "board": "picoplus2",
+      "compiler_generated_uf2_upload_pass": true,
+      "uf2_sha256": "2508149b436f95776421a54a8feadc49c9b1658516fca0f5b0ebbd3bbbb8bf5a",
+      "flash_bytes": 16777216,
+      "all_main_pages_match": true,
+      "full_flash_unchanged": true,
+      "saved_unix_store_unchanged": true,
+      "settings_radio_packs_unchanged": true,
+      "compiler_direct_uf2_output": true,
+      "postprocessing": false,
+      "equals_published_firmware": true,
+      "main_sectors_complete": true,
+      "e10_reserved_flash_offset": "0x4e000",
+      "saved_store_sectors_written": false
+    }
+  ]
+}
