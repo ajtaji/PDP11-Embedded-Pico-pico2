@@ -216,7 +216,7 @@ Procedure.l MachReadLadder(plan$)
     If l$ = "" Or Left(l$, 1) = "#" : Continue : EndIf
     AddElement(MachLadder())
     MachLadder()\name$ = Trim(StringField(l$, 1, "|"))
-    MachLadder()\tape$ = dir$ + ReplaceString(Trim(StringField(l$, 2, "|")), "/", "\")
+    MachLadder()\tape$ = dir$ + ReplaceString(Trim(StringField(l$, 2, "|")), "/", #PS$)
     MachLadder()\seconds = Val(Trim(StringField(l$, 4, "|")))
     If MachLadder()\seconds <= 0 : MachLadder()\seconds = 120 : EndIf
     MachLadder()\start = -1

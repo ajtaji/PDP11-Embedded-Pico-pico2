@@ -1,2 +1,4 @@
-# built from the sources here (build_cli.ps1, build_desktop.ps1)
+# built from the sources here (build_cli.ps1, build_desktop.ps1; build_linux.sh on Linux)
 *.exe
+/PDP11Desktop
+/pdp11_cli

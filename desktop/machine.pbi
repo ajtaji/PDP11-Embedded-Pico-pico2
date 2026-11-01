@@ -1,6 +1,16 @@
 ; desktop/machine.pbi - the desktop PDP-11's board: what the Pico's hardware and
 ; firmware give the core (J11_18MHz_KDJ11_BF/pico2), done on the PC. Included
 ; before gen/core.pbi.
+;
+; The clock is the Neon Arcade Display Engine's (GlUtilities.pbi, HOST SERVICES: GL_Micros), as
+; is everything else the OS gives, so both programs build for Windows and Linux from this source.
+; The engine is found cloned beside this repository, unless /CONSTANT GL_ENGINE_DIR$=<path>/
+; (Linux: -co GL_ENGINE_DIR$=<path>/) says otherwise (the trailing slash matters).
+CompilerIf Not Defined(GL_ENGINE_DIR$, #PB_Constant)
+  #GL_ENGINE_DIR$ = #PB_Compiler_FilePath + "../../Neon-Arcade-Dispay-Engine/"   ; cloned beside this repository
+CompilerEndIf
+XIncludeFile #GL_ENGINE_DIR$ + "GlTypes.pbi"
+XIncludeFile #GL_ENGINE_DIR$ + "GlUtilities.pbi"
 EnableExplicit
 
 ; ---- the build's constants (diag.pico2 sets these on the board) -----------
@@ -20,13 +30,9 @@ Global PsMem.i = AllocateMemory(#DESK_MEM_TOP)   ; physical byte pa >= #RAM_BYTE
 #CLOCK_KHZ = 150000
 
 ; ---- the board's clock and cores -------------------------------------------
-Global MachFreq.q, MachT0.q
-QueryPerformanceFrequency_(@MachFreq)
-QueryPerformanceCounter_(@MachT0)
+Global MachT0.q = GL_Micros()
 Procedure.l Micros()                      ; microseconds, wrapping at 32 bits as on the board
-  Protected t.q
-  QueryPerformanceCounter_(@t)
-  ProcedureReturn ((t - MachT0) * 1000000 / MachFreq) & $FFFFFFFF
+  ProcedureReturn (GL_Micros() - MachT0) & $FFFFFFFF
 EndProcedure
 
 ; SmpBarrier: cpu.pico2's own (its dmb, Arm assembly, is dropped: one thread on the PC)

@@ -1,10 +1,10 @@
 # The PDP-11 on the PC
 
-The emulator the Pico boards run, as a Windows program: the same J-11 with its
+The emulator the Pico boards run, as a program for Windows and Linux (x64, one source): the same J-11 with its
 FPU and MMU, the KW11-L clock, the RK11 and RP11 disks and the console DL11,
 booting the same image files (`images/*/combined.uf2`). It comes as a window
-(`PDP11Desktop.exe`) and as a console program for scripted runs and logs
-(`pdp11_cli.exe`).
+(`PDP11Desktop`) and as a console program for scripted runs and logs
+(`pdp11_cli`).
 
 ## The same machine, not a second one
 
@@ -36,21 +36,48 @@ the core it will be here too, with its own pane.
 
 ## Building the desktop version
 
-The window is drawn with the [Neon Arcade Display Engine](https://github.com/ajtaji/Neon-Arcade-Dispay-Engine),
-cloned beside this repository. With PureBasic 6.41 (x64, the C back end, `pbcompilerc.exe`), from PowerShell:
+Both programs are built on the [Neon Arcade Display Engine](https://github.com/ajtaji/Neon-Arcade-Dispay-Engine),
+cloned beside this repository. Everything the operating system gives - the window and its drawing, full
+screen, the pointer, the display scale, the work area, the keys, the clock and the sound card - comes
+through the engine (its HOST SERVICES), so the same source builds for Windows and Linux; nothing here
+calls the OS. `pdp11_cli` uses the engine's clock only. PureBasic 6.41 x64, the C back end
+(`pbcompilerc`), which the core's computed-goto dispatch needs.
 
 ```
 git clone https://github.com/ajtaji/PDP11-Embedded-Pico-pico2.git
 git clone https://github.com/ajtaji/Neon-Arcade-Dispay-Engine.git
+```
+
+**Windows**, from PowerShell:
+
+```
 cd PDP11-Embedded-Pico-pico2\desktop
 & "C:\Program Files\PureBasic\Compilers\pbcompilerc.exe" PDP11Desktop.pb /EXE PDP11Desktop.exe /THREAD /DPIAWARE /OPTIMIZER
 & "C:\Program Files\PureBasic\Compilers\pbcompilerc.exe" pdp11_cli.pb /CONSOLE /OPTIMIZER /EXE pdp11_cli.exe
 .\PDP11Desktop.exe
 ```
 
-`build_desktop.ps1` and `build_cli.ps1` run the same lines. An engine elsewhere: add
-`/CONSTANT GL_ENGINE_DIR$=<folder>/` (the trailing slash matters), or `.\build_desktop.ps1 -Engine <folder>/`.
-`pdp11_cli.exe` needs no engine.
+`build_desktop.ps1` and `build_cli.ps1` run the same lines (`-Compiler <pbcompilerc.exe>` for a
+PureBasic installed elsewhere).
+
+**Linux** (X11; under Wayland the engine runs it through XWayland), with the GTK 3, OpenGL, X11 and
+ALSA development libraries PureBasic needs:
+
+```
+cd PDP11-Embedded-Pico-pico2/desktop
+export PUREBASIC_HOME=~/purebasic                      # the folder holding compilers/
+$PUREBASIC_HOME/compilers/pbcompilerc PDP11Desktop.pb -t -z -o PDP11Desktop
+$PUREBASIC_HOME/compilers/pbcompilerc pdp11_cli.pb -cl -z -o pdp11_cli
+./PDP11Desktop
+```
+
+`build_linux.sh` runs the same lines. Under WSL build from the Linux disk, not from `/mnt/c`
+(there the compiler can include a file twice). The sound goes to ALSA's `default` device; a
+system whose ALSA has none (WSL without the ALSA PulseAudio plugin, `libasound2-plugins`) plays
+the demo silent.
+
+An engine elsewhere: `/CONSTANT GL_ENGINE_DIR$=<folder>/` on Windows, `--constant GL_ENGINE_DIR$=<folder>/`
+on Linux (the trailing slash matters), or `-Engine <folder>/` / `ENGINE=<folder>/` for the scripts.
 
 ## The window
 
@@ -84,9 +111,9 @@ and the second step at its prompt.
   the size it was. Esc leaves full screen, so there the terminal's ESC is
   Ctrl+[ (in the window Esc and Ctrl+[ both send it).
   `PDP11Desktop IMAGE --fullscreen-test log.txt [--fullscreen-shot f.png]`
-  checks it with posted keys, no pointer: the window covers its monitor, the
-  view has its aspect and is centred, Esc leaves, the windowed rectangle and
-  style come back (`--tab 3` for the raster).
+  checks it with F11 and Esc pressed through the key handler, no pointer: the
+  window covers its monitor, the view has its aspect and is centred, Esc leaves,
+  the windowed rectangle and the client size come back (`--tab 3` for the raster).
 
 ## Controls
 
@@ -141,10 +168,20 @@ Steps: `until:TEXT[:s]`, `send:TEXT` (with a return), `raw:TEXT`
 `dis:A,N`, `trace:N`, `shot:FILE.bmp`. Examples:
 
 ```
-.\pdp11_cli.exe ..\images\picoplus2\combined.uf2 BOOT 0,173030 "until:@" "send:rkunix" "until:# " "send:ls -l /" "until:# "
-.\pdp11_cli.exe ..\images\picoplus2-v7\combined.uf2 BOOT 0,200000 "until:@" "send:boot" "until:: " "send:rk(0,0)rkunix" "until:# "
-.\pdp11_cli.exe ladder:..\media\diagnostics\ladder.txt
+./pdp11_cli ../images/picoplus2/combined.uf2 BOOT 0,173030 "until:@" "send:rkunix" "until:# " "send:ls -l /" "until:# "
+./pdp11_cli ../images/picoplus2-v7/combined.uf2 BOOT 0,200000 "until:@" "send:boot" "until:: " "send:rk(0,0)rkunix" "until:# "
+./pdp11_cli ladder:../media/diagnostics/ladder.txt
 ```
+
+(on Windows `.\pdp11_cli.exe`, the same arguments).
+
+## Windows and Linux (2026-10-31)
+
+The same results from both builds: the ladder gives 19 PASS and the two J-11 HALTs with the same
+instruction and bell counts tape for tape; V6 and V7 boot to `#` with the same console output, byte
+for byte; the window opens, draws the console and the demo's raster the right way up, takes keys
+from the keyboard, and `--fullscreen-test` gives 0 failures in the console and the raster view.
+The Linux build was run under WSL (Ubuntu, WSLg); no real Linux sound device was heard there.
 
 ## What it does (2026-10-23, this laptop)
 

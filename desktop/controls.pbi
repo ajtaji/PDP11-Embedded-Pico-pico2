@@ -3,7 +3,8 @@
 ; this same table, so the two cannot disagree. desktop/README.md's "Controls" lists it too.
 ;
 ; A row: group (console or window), when (always, windowed only, full screen only), the
-; Ctrl key (needed or not), a key range (PureBasic #PB_Shortcut_ codes, low and high),
+; Ctrl key (needed or not), a key range (PureBasic #PB_Shortcut_ codes, or the engine's
+; #GL_Key_ ones for the keys PureBasic does not name - they differ between Windows and Linux),
 ; the value (console: the character the first key of the range sends, the next key the
 ; next character; window: an action), the keys as shown, and what it does.
 
@@ -72,13 +73,13 @@ DataSection
   Data.s "Delete", "DEL (177), Unix's interrupt"
   Data.l #CTL_CONSOLE, #CTL_WINDOWED, 0, #PB_Shortcut_Escape, #PB_Shortcut_Escape, 27
   Data.s "Esc", "ESC (033), in the window (in full screen Esc leaves it: use Ctrl+[)"
-  Data.l #CTL_CONSOLE, #CTL_ALWAYS, 1, 219, 219, 27
+  Data.l #CTL_CONSOLE, #CTL_ALWAYS, 1, #GL_Key_BracketLeft, #GL_Key_BracketLeft, 27
   Data.s "Ctrl+[", "ESC (033), in the window and in full screen"
   Data.l #CTL_CONSOLE, #CTL_ALWAYS, 1, #PB_Shortcut_A, #PB_Shortcut_Z, 1
   Data.s "Ctrl+A ... Ctrl+Z", "the control characters 001-032 (Ctrl+D end of file, Ctrl+S / Ctrl+Q stop and start output)"
-  Data.l #CTL_CONSOLE, #CTL_ALWAYS, 1, 220, 220, 28
+  Data.l #CTL_CONSOLE, #CTL_ALWAYS, 1, #GL_Key_Backslash, #GL_Key_Backslash, 28
   Data.s "Ctrl+\", "FS (034), Unix's quit"
-  Data.l #CTL_CONSOLE, #CTL_ALWAYS, 1, 221, 221, 29
+  Data.l #CTL_CONSOLE, #CTL_ALWAYS, 1, #GL_Key_BracketRight, #GL_Key_BracketRight, 29
   Data.s "Ctrl+]", "GS (035)"
   Data.l #CTL_CONSOLE, #CTL_ALWAYS, 0, -1, -1, -1
   Data.s "Mouse wheel", "scrolls the console back through its history (any key goes back to the bottom)"

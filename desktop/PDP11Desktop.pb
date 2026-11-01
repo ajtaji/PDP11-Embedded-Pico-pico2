@@ -13,10 +13,15 @@
 ; the registers, the disassembly at the PC or the trace of the last
 ; instructions, and memory. Run, Halt, Step, a breakpoint, and the speed.
 ;
-; Build (PowerShell, x64):  .\build_desktop.ps1
+; Build (Windows x64, PowerShell):  .\build_desktop.ps1
 ;   pbcompilerc PDP11Desktop.pb /EXE PDP11Desktop.exe /THREAD /DPIAWARE /OPTIMIZER
+; Build (Linux x64):  ./build_linux.sh
+;   pbcompilerc PDP11Desktop.pb -t -z -o PDP11Desktop
 ; The engine (https://github.com/ajtaji/Neon-Arcade-Dispay-Engine) is found cloned beside this
-; repository, unless /CONSTANT GL_ENGINE_DIR$=<path>/ says otherwise (the trailing slash matters).
+; repository, unless /CONSTANT (Linux: --constant) GL_ENGINE_DIR$=<path>/ says otherwise (the
+; trailing slash matters). Everything the OS gives - the window, full screen, the pointer, the
+; scale, the work area, the clock, the sound card - comes through the engine's HOST SERVICES
+; (GlUtilities.pbi): no OS function is called here, so the one source builds for both.
 
 CompilerIf Not Defined(GL_ENGINE_DIR$, #PB_Constant)
   #GL_ENGINE_DIR$ = #PB_Compiler_FilePath + "../../Neon-Arcade-Dispay-Engine/"   ; cloned beside this repository
@@ -51,6 +56,7 @@ Global DeskMemAddr.l = $DE00               ; the memory pane's first physical ad
 Global DeskMemS.String, DeskBrkS.String
 Global *DeskTermFont.GLFont
 Global DeskWheel.l
+Global DeskMouseDown.b                     ; the left button, from the GL gadget's button events
 Global DeskLadderOn.l                      ; the ladder runs in the window
 Global DeskDdShown.l                       ; the window has gone to the Display tab once (desk_demo.pbi)
 
@@ -264,7 +270,7 @@ Global *DeskRung.DeskRungResult            ; the running tape's row (the pane's 
 
 Procedure DeskLadderStart()
   DeskRunning = 0
-  DeskLadderPlan$ = GetPathPart(ProgramFilename()) + "..\media\diagnostics\ladder.txt"
+  DeskLadderPlan$ = GetPathPart(ProgramFilename()) + ".." + #PS$ + "media" + #PS$ + "diagnostics" + #PS$ + "ladder.txt"
   If MachReadLadder(DeskLadderPlan$) = 0
     DeskSay("ladder: " + MachTapeWhy$)
     ProcedureReturn
@@ -601,36 +607,27 @@ EndProcedure
 ; monitor, or - when the Display tab is up - the 320 x 200 raster at a whole-number scale
 ; when that loses under a tenth of the height. Centred on black; the pointer hides after
 ; two idle seconds. F11 or the Full screen button toggles it; Esc leaves (controls.pbi).
-Global FullScreen.l, FsStyle.i, FsCursorHidden.l, FsMouseX.l, FsMouseY.l, FsMouseMs.q
+; The window, the monitor and the pointer are the engine's (GL_FullscreenEnter / Leave,
+; GL_CursorShow): this file calls no OS function.
+Global FullScreen.l, FsCursorHidden.l, FsMouseX.l, FsMouseY.l, FsMouseMs.q
 Global FsViewX.f, FsViewY.f, FsViewW.f, FsViewH.f, FsFontPx.l, *FsTermFont.GLFont
-Global FsPlacement.WINDOWPLACEMENT
 
 Procedure FsShowCursor(show.l)
-  If show And FsCursorHidden : ShowCursor_(#True) : FsCursorHidden = 0 : EndIf
-  If show = 0 And FsCursorHidden = 0 : ShowCursor_(#False) : FsCursorHidden = 1 : EndIf
+  If show And FsCursorHidden : GL_CursorShow(DeskWin, DeskGl, #True) : FsCursorHidden = 0 : EndIf
+  If show = 0 And FsCursorHidden = 0 : GL_CursorShow(DeskWin, DeskGl, #False) : FsCursorHidden = 1 : EndIf
 EndProcedure
 
 Procedure EnterFullScreen()
-  Protected hwnd.i, mi.MONITORINFO
   If FullScreen : ProcedureReturn : EndIf
-  hwnd = WindowID(DeskWin)
-  FsPlacement\length = SizeOf(WINDOWPLACEMENT) : GetWindowPlacement_(hwnd, @FsPlacement)
-  FsStyle = GetWindowLongPtr_(hwnd, #GWL_STYLE)
-  mi\cbSize = SizeOf(MONITORINFO) : GetMonitorInfo_(MonitorFromWindow_(hwnd, 2), @mi)   ; 2: the nearest monitor
-  SetWindowLongPtr_(hwnd, #GWL_STYLE, FsStyle & ~(#WS_CAPTION | #WS_THICKFRAME | #WS_MINIMIZEBOX | #WS_MAXIMIZEBOX | #WS_SYSMENU))
-  SetWindowPos_(hwnd, #HWND_TOP, mi\rcMonitor\left, mi\rcMonitor\top, mi\rcMonitor\right - mi\rcMonitor\left, mi\rcMonitor\bottom - mi\rcMonitor\top, #SWP_FRAMECHANGED | #SWP_NOOWNERZORDER | #SWP_SHOWWINDOW)
+  GL_FullscreenEnter(DeskWin)
   FullScreen = 1 : FsMouseMs = ElapsedMilliseconds()
   Neon_FocusID = 0                          ; the keys go to the console
   SetActiveGadget(DeskGl)
 EndProcedure
 
 Procedure LeaveFullScreen()
-  Protected hwnd.i
   If FullScreen = 0 : ProcedureReturn : EndIf
-  hwnd = WindowID(DeskWin)
-  SetWindowLongPtr_(hwnd, #GWL_STYLE, FsStyle)
-  SetWindowPlacement_(hwnd, @FsPlacement)
-  SetWindowPos_(hwnd, 0, 0, 0, 0, 0, #SWP_FRAMECHANGED | #SWP_NOMOVE | #SWP_NOSIZE | #SWP_NOZORDER | #SWP_NOOWNERZORDER)
+  GL_FullscreenLeave(DeskWin)
   FullScreen = 0 : FsShowCursor(1)
   SetActiveGadget(DeskGl)
 EndProcedure
@@ -640,6 +637,24 @@ Procedure DeskAction(action.l)
     Case #CTL_FULLSCREEN : If FullScreen : LeaveFullScreen() : Else : EnterFullScreen() : EndIf
     Case #CTL_LEAVEFULL : LeaveFullScreen()
   EndSelect
+EndProcedure
+
+; A key pressed (a #PB_Shortcut_ code, Ctrl held or not), through controls.pbi's table: the
+; window's action, or the console's character while the console has the keys. Returns the
+; key for the window's own fields (Neon_ChromeBeginFrame), 0 when it was used here. The
+; event loop and --fullscreen-test both come this way.
+Procedure.l DeskKey(key.l, ctrl.l)
+  Protected tv.l = -1, consoleKeys.l = Bool(FullScreen Or (DeskTab = 0 And Neon_FocusID = 0))
+  If key > 0 : tv = CtlFind(key, ctrl, FullScreen) : EndIf
+  If tv >= 0 And CtlHitGroup = #CTL_WINDOW
+    DeskAction(tv)
+    ProcedureReturn 0
+  ElseIf consoleKeys
+    If tv >= 0 : DeskType(tv) : EndIf
+    TermBack = 0
+    ProcedureReturn 0
+  EndIf
+  ProcedureReturn key
 EndProcedure
 
 ; The view's rectangle, in the canvas (physical pixels): the terminal's 80 x 24 cells plus
@@ -822,19 +837,13 @@ Procedure DeskDraw()
   DeskMemory(rx, y, rw, mh)
 EndProcedure
 
-; ---- the display scale (GlUIChrome.pbi, HOSTING item 8) ----------------------------------
-Prototype.l ProtoDpiForWindow(hwnd.i)
-Prototype.l ProtoDpiContext(ctx.i)
+; ---- the display scale (GlUIChrome.pbi, HOSTING items 5a and 8) ---------------------------
+; As measured: the physical client width (the engine's GL_ClientPixels) over the logical inner width.
 Procedure.f DeskScale(win.i)
-  Protected lib.i, dpi.l, f.ProtoDpiForWindow
-  lib = OpenLibrary(#PB_Any, "user32.dll")
-  If lib
-    f = GetFunction(lib, "GetDpiForWindow")
-    If f : dpi = f(WindowID(win)) : EndIf
-    CloseLibrary(lib)
-  EndIf
-  If dpi <= 0 : ProcedureReturn 1.0 : EndIf
-  ProcedureReturn dpi / 96.0
+  Protected pw.i, ph.i, lw.i = WindowWidth(win, #PB_Window_InnerCoordinate)
+  GL_ClientPixels(win, @pw, @ph)
+  If lw <= 0 Or pw <= 0 : ProcedureReturn 1.0 : EndIf
+  ProcedureReturn pw / lw
 EndProcedure
 
 Procedure DeskFonts(sc.f)
@@ -851,13 +860,13 @@ Procedure DeskFonts(sc.f)
 EndProcedure
 
 ; ---- --fullscreen-test ------------------------------------------------------------------
-; Full screen by its own keys, no real pointer: F11 posted to the window's GL gadget, Esc to
-; the window (where the engine's Esc shortcut catches it). Checked: the window covers its
+; Full screen by its own keys, no real pointer: F11 and then Esc pressed through the key
+; handler (DeskKey), as the event loop hands them on. Checked: the window covers its
 ; monitor, the canvas is the monitor, the view has its aspect (the terminal's 82 x 25 cells,
-; the raster's 320:200) and is centred, Esc leaves, the windowed rectangle and style come back.
-; The log goes to the file named; the program then ends.
+; the raster's 320:200) and is centred, Esc leaves, the windowed rectangle and the client
+; size come back. The log goes to the file named; the program then ends.
 Global FsTestOn.l, FsTestFile$, FsTestShot$, FsTestStep.l, FsTestWait.l, FsTestFails.l, FsTestLog$
-Global FsTestRect.RECT, FsTestStyle.i
+Global FsTestRect.GLHostRect, FsTestClientW.i, FsTestClientH.i
 
 Procedure FsTestCheck(ok.l, what$)
   If ok = 0 : FsTestFails + 1 : FsTestLog$ + "FAIL " : Else : FsTestLog$ + "ok   " : EndIf
@@ -885,19 +894,19 @@ Procedure FsTestSaveShot(file$, pw.l, ph.l)       ; the frame just drawn (before
 EndProcedure
 
 Procedure FsTestTick(pw.l, ph.l)
-  Protected r.RECT, mi.MONITORINFO, hwnd.i = WindowID(DeskWin), f.i, aspect.f, want.f
+  Protected r.GLHostRect, m.GLHostRect, cw.i, ch.i, f.i, aspect.f, want.f
   FsTestWait + 1 : If FsTestWait < 40 : ProcedureReturn : EndIf
   FsTestWait = 0 : FsTestStep + 1
   Select FsTestStep
     Case 1
-      GetWindowRect_(hwnd, @FsTestRect) : FsTestStyle = GetWindowLongPtr_(hwnd, #GWL_STYLE)
-      FsTestLog$ + "windowed: " + Str(FsTestRect\left) + "," + Str(FsTestRect\top) + " " + Str(FsTestRect\right - FsTestRect\left) + "x" + Str(FsTestRect\bottom - FsTestRect\top) + ", scale " + StrF(Neon_UIScale, 2) + ", view " + StringField("console|display", 1 + Bool(DeskTab = 3), "|") + #LF$
-      PostMessage_(GadgetID(DeskGl), #WM_KEYDOWN, #VK_F11, 0) : PostMessage_(GadgetID(DeskGl), #WM_KEYUP, #VK_F11, 0)
+      GL_WindowRect(DeskWin, @FsTestRect) : GL_ClientPixels(DeskWin, @FsTestClientW, @FsTestClientH)
+      FsTestLog$ + "windowed: " + Str(FsTestRect\X) + "," + Str(FsTestRect\Y) + " " + Str(FsTestRect\W) + "x" + Str(FsTestRect\H) + ", client " + Str(FsTestClientW) + "x" + Str(FsTestClientH) + ", scale " + StrF(Neon_UIScale, 2) + ", view " + StringField("console|display", 1 + Bool(DeskTab = 3), "|") + #LF$
+      DeskKey(#PB_Shortcut_F11, 0)
     Case 2
-      GetWindowRect_(hwnd, @r) : mi\cbSize = SizeOf(MONITORINFO) : GetMonitorInfo_(MonitorFromWindow_(hwnd, 2), @mi)
+      GL_WindowRect(DeskWin, @r) : GL_FullscreenRect(@m)
       FsTestCheck(FullScreen, "F11 entered full screen")
-      FsTestCheck(Bool(r\left = mi\rcMonitor\left And r\top = mi\rcMonitor\top And r\right = mi\rcMonitor\right And r\bottom = mi\rcMonitor\bottom), "the window covers its monitor " + Str(mi\rcMonitor\right - mi\rcMonitor\left) + "x" + Str(mi\rcMonitor\bottom - mi\rcMonitor\top))
-      FsTestCheck(Bool(pw = mi\rcMonitor\right - mi\rcMonitor\left And ph = mi\rcMonitor\bottom - mi\rcMonitor\top), "the canvas is the whole monitor (" + Str(pw) + "x" + Str(ph) + ")")
+      FsTestCheck(Bool(r\X = m\X And r\Y = m\Y And r\W = m\W And r\H = m\H), "the window covers its monitor " + Str(m\W) + "x" + Str(m\H) + " (the window " + Str(r\X) + "," + Str(r\Y) + " " + Str(r\W) + "x" + Str(r\H) + ")")
+      FsTestCheck(Bool(pw = m\W And ph = m\H), "the canvas is the whole monitor (" + Str(pw) + "x" + Str(ph) + ")")
       If DeskTab = 3
         want = #DEMO_W / #DEMO_H
       Else
@@ -908,12 +917,12 @@ Procedure FsTestTick(pw.l, ph.l)
       FsTestCheck(Bool(Abs(FsViewX * 2 + FsViewW - pw) <= 1 And Abs(FsViewY * 2 + FsViewH - ph) <= 1), "the view is centred at " + StrF(FsViewX, 1) + "," + StrF(FsViewY, 1))
       If DeskTab <> 3 : FsTestLog$ + "terminal font " + Str(FsFontPx) + " px" + #LF$ : EndIf
       If FsTestShot$ <> "" : FsTestSaveShot(FsTestShot$, pw, ph) : EndIf
-      PostMessage_(hwnd, #WM_KEYDOWN, #VK_ESCAPE, 0) : PostMessage_(hwnd, #WM_KEYUP, #VK_ESCAPE, 0)
+      DeskKey(#PB_Shortcut_Escape, 0)
     Case 3
-      GetWindowRect_(hwnd, @r)
+      GL_WindowRect(DeskWin, @r) : GL_ClientPixels(DeskWin, @cw, @ch)
       FsTestCheck(Bool(FullScreen = 0), "Esc left full screen")
-      FsTestCheck(Bool(r\left = FsTestRect\left And r\top = FsTestRect\top And r\right = FsTestRect\right And r\bottom = FsTestRect\bottom), "the windowed rectangle came back: " + Str(r\left) + "," + Str(r\top) + " " + Str(r\right - r\left) + "x" + Str(r\bottom - r\top))
-      FsTestCheck(Bool(GetWindowLongPtr_(hwnd, #GWL_STYLE) = FsTestStyle), "the window's frame and style came back")
+      FsTestCheck(Bool(r\X = FsTestRect\X And r\Y = FsTestRect\Y And r\W = FsTestRect\W And r\H = FsTestRect\H), "the windowed rectangle came back: " + Str(r\X) + "," + Str(r\Y) + " " + Str(r\W) + "x" + Str(r\H))
+      FsTestCheck(Bool(cw = FsTestClientW And ch = FsTestClientH), "the client size came back: " + Str(cw) + "x" + Str(ch))
       FsTestLog$ + "fullscreen-test: " + Str(FsTestFails) + " failures" + #LF$
       f = CreateFile(#PB_Any, FsTestFile$) : If f : WriteString(f, FsTestLog$) : CloseFile(f) : EndIf
       DeskQuit = 1
@@ -921,30 +930,16 @@ Procedure FsTestTick(pw.l, ph.l)
 EndProcedure
 
 ; ---- the program ----------------------------------------------------------------------
-Define lib.i, fctx.ProtoDpiContext
-lib = OpenLibrary(#PB_Any, "user32.dll")             ; per-monitor v2 before any window (HOSTING item 8)
-If lib
-  fctx = GetFunction(lib, "SetProcessDpiAwarenessContext")
-  If fctx : fctx(-4) : EndIf
-  CloseLibrary(lib)
-EndIf
+GL_HostPrepare()                                     ; the engine's: before any window (Linux's X11 shield)
 
-; The start size is LOGICAL (OpenWindow's units); the work area is PHYSICAL, so
-; it is divided by the system's scale before the two are compared (HOSTING,
-; item 7). A window made larger than its client can be leaves the GL gadget
-; bigger than the client: the canvas then sits off its origin and every
+; The start size is LOGICAL (OpenWindow's units), as the engine's work area is
+; (HOSTING, item 7). A window made larger than its client can be leaves the GL
+; gadget bigger than the client: the canvas then sits off its origin and every
 ; scissored widget (the tab strips) loses its contents.
-Define startW.l = 1600, startH.l = 960, work.RECT, sysScale.f = 1.0, fsys.ProtoDpiForWindow
-lib = OpenLibrary(#PB_Any, "user32.dll")
-If lib
-  fsys = GetFunction(lib, "GetDpiForSystem")
-  If fsys : sysScale = fsys(0) / 96.0 : EndIf
-  CloseLibrary(lib)
-EndIf
-If sysScale <= 0 : sysScale = 1.0 : EndIf
-SystemParametersInfo_(#SPI_GETWORKAREA, 0, @work, 0)
-If startW > (work\right - work\left) / sysScale * 0.94 : startW = (work\right - work\left) / sysScale * 0.94 : EndIf
-If startH > (work\bottom - work\top) / sysScale * 0.88 : startH = (work\bottom - work\top) / sysScale * 0.88 : EndIf
+Define startW.l = 1600, startH.l = 960, work.GLHostRect
+GL_WorkArea(@work)
+If startW > work\W * 0.94 : startW = work\W * 0.94 : EndIf
+If startH > work\H * 0.88 : startH = work\H * 0.88 : EndIf
 
 DeskGl = OpenGLWindow("PDP-11 - the J-11 machine of the Pico, on the PC", startW, startH,
                       #PB_Window_SystemMenu | #PB_Window_ScreenCentered | #PB_Window_MinimizeGadget |
@@ -954,6 +949,7 @@ If DeskGl = 0
   End 1
 EndIf
 DeskWin = Util_MainWindowID
+GL_HostScaleRead(DeskGl)                             ; the engine's: Linux_DPIScale on Linux
 CtlLoad()
 ; The pointer straight through (GlUIChrome.pbi, HOSTING 5a): UI_UseCRT defaults to
 ; on, and then MapPhysicalToVirtual bends every mouse position by the CRT barrel
@@ -979,7 +975,7 @@ For pa = 0 To CountProgramParameters() - 1
   EndSelect
 Next
 If img$ = ""
-  img$ = GetPathPart(ProgramFilename()) + "..\images\picoplus2-v7\combined.uf2"
+  img$ = GetPathPart(ProgramFilename()) + ".." + #PS$ + "images" + #PS$ + "picoplus2-v7" + #PS$ + "combined.uf2"
 EndIf
 If FileSize(img$) > 0
   DeskLoad(img$)
@@ -988,8 +984,8 @@ Else
   DeskSay("no image: Open... one (images/*/combined.uf2)")
 EndIf
 
-Define ev.i, r.RECT, cw.l, chh.l, pw.l, ph.l, mx.l, my.l, down.b, key.l, keyChar.l, mods.l, tv.l
-Define now.q, last.q = ElapsedMilliseconds(), dt.f, consoleKeys.l
+Define ev.i, cw.l, chh.l, pw.i, ph.i, mx.l, my.l, down.b, key.l, keyChar.l, ctrl.l
+Define now.q, last.q = ElapsedMilliseconds(), dt.f
 Repeat
   key = 0 : keyChar = 0
   Repeat
@@ -999,46 +995,28 @@ Repeat
         DeskQuit = 1
       Case #PB_Event_SizeWindow, #PB_Event_MoveWindow
         ResizeGadget(DeskGl, 0, 0, WindowWidth(DeskWin), WindowHeight(DeskWin))
-        If DeskScale(DeskWin) <> Neon_UIScale    ; moved to a display at another scale: the fonts again (HOSTING 5a)
+        If Abs(DeskScale(DeskWin) - Neon_UIScale) > 0.01   ; moved to a display at another scale: the fonts again (HOSTING 5a)
           Neon_UIScale = DeskScale(DeskWin)
           DeskFonts(Neon_UIScale)
         EndIf
       Case #PB_Event_Menu
         If EventMenu() = 1001                    ; the engine traps Escape as a shortcut: the table says what it is
-          consoleKeys = Bool(FullScreen Or (DeskTab = 0 And Neon_FocusID = 0))
-          tv = CtlFind(#PB_Shortcut_Escape, 0, FullScreen)
-          If tv >= 0 And CtlHitGroup = #CTL_WINDOW
-            DeskAction(tv)
-          ElseIf tv >= 0 And consoleKeys
-            DeskType(tv) : TermBack = 0
-          Else
-            key = #PB_Shortcut_Escape
-          EndIf
+          key = DeskKey(#PB_Shortcut_Escape, 0)
         EndIf
       Case #PB_Event_Gadget
         If EventGadget() = DeskGl
-          consoleKeys = Bool(FullScreen Or (DeskTab = 0 And Neon_FocusID = 0))
           Select EventType()
+            Case #PB_EventType_LeftButtonDown : DeskMouseDown = #True
+            Case #PB_EventType_LeftButtonUp : DeskMouseDown = #False
             Case #PB_EventType_MouseWheel
               DeskWheel + GetGadgetAttribute(DeskGl, #PB_OpenGL_WheelDelta) * 40
             Case #PB_EventType_KeyDown
-              key = GetGadgetAttribute(DeskGl, #PB_OpenGL_Key)
-              mods = GetGadgetAttribute(DeskGl, #PB_OpenGL_Modifiers)
-              If GetAsyncKeyState_(#VK_CONTROL) & $8000 : mods | #PB_OpenGL_Control : EndIf
-              tv = -1
-              If key > 0 : tv = CtlFind(key, Bool(mods & #PB_OpenGL_Control), FullScreen) : EndIf
-              If tv >= 0 And CtlHitGroup = #CTL_WINDOW
-                DeskAction(tv)
-                key = 0
-              ElseIf consoleKeys
-                If tv >= 0 : DeskType(tv) : EndIf
-                TermBack = 0
-                key = 0
-              EndIf
+              ctrl = Bool(GetGadgetAttribute(DeskGl, #PB_OpenGL_Modifiers) & #PB_OpenGL_Control)
+              key = DeskKey(GetGadgetAttribute(DeskGl, #PB_OpenGL_Key), ctrl)
             Case #PB_EventType_Input
               keyChar = GetGadgetAttribute(DeskGl, #PB_OpenGL_Input)
-              If consoleKeys
-                If keyChar >= 32 And keyChar < 127 And (GetAsyncKeyState_(#VK_CONTROL) & $8000) = 0
+              If FullScreen Or (DeskTab = 0 And Neon_FocusID = 0)
+                If keyChar >= 32 And keyChar < 127 And ctrl = 0   ; (Ctrl+key went as its control character, DeskKey)
                   DeskType(keyChar)
                 EndIf
                 keyChar = 0
@@ -1074,8 +1052,7 @@ Repeat
     ResizeGadget(DeskGl, 0, 0, WindowWidth(DeskWin), WindowHeight(DeskWin))   ; the gadget is the client, always
   EndIf
   cw = GadgetWidth(DeskGl) : chh = GadgetHeight(DeskGl)
-  GetClientRect_(WindowID(DeskWin), @r)
-  pw = r\right - r\left : ph = r\bottom - r\top
+  GL_ClientPixels(DeskWin, @pw, @ph)
   If pw < 1 Or ph < 1 : Continue : EndIf
   Util_BaseWidth = pw : Util_BaseHeight = ph
   ; Util_Win* so that DesktopScaledX/Y() of it IS the physical client: under
@@ -1086,10 +1063,8 @@ Repeat
   GL_ViewportX = 0 : GL_ViewportY = 0 : GL_ViewportW = pw : GL_ViewportH = ph
   DeskW = pw : DeskH = ph
   mx = WindowMouseX(DeskWin) : my = WindowMouseY(DeskWin)
-  down = #False
-  If GetActiveWindow() = DeskWin
-    down = Bool(GetAsyncKeyState_(#VK_LBUTTON) & $8000)
-  EndIf
+  If GetActiveWindow() <> DeskWin : DeskMouseDown = #False : EndIf
+  down = DeskMouseDown
   If mx <> FsMouseX Or my <> FsMouseY : FsMouseX = mx : FsMouseY = my : FsMouseMs = now : FsShowCursor(1) : EndIf
   If FullScreen And now - FsMouseMs > 2000 : FsShowCursor(0) : EndIf
   Neon_ChromeBeginFrame(mx, my, down, 0, key, keyChar, dt)

@@ -1,7 +1,7 @@
 ; desktop/desk_demo.pbi - the window's half of the demo devices (machine_demo.pbi):
 ; the Display tab (the framebuffer as a texture, at a whole-number scale) and
-; the four voices through the PC's sound (waveOut, 22050 Hz, 16-bit mono).
-; Included by PDP11Desktop.pb after the engine and the machine.
+; the four voices through the PC's sound (the engine's GL_AudioOpen / Next / Play, 22050 Hz,
+; the one voice mix on both channels). Included by PDP11Desktop.pb after the engine and the machine.
 
 ; ---- the display -------------------------------------------------------------
 Global *DeskDdSprite.GLSprite
@@ -20,20 +20,24 @@ Procedure DeskDdInit()                     ; after the GL context exists
   glTexImage2D_(#GL_TEXTURE_2D, 0, #GL_RGBA, #DEMO_W, #DEMO_H, 0, #GL_BGRA_EXT, #GL_UNSIGNED_BYTE, *DeskDdPixels)
 EndProcedure
 
-; The pane: the frame centred at the largest whole scale that fits. On Windows
-; DrawGLSprite samples the texture bottom row first (it is made for
-; DrawingBuffer's bottom-up images), so the rows go in bottom first.
+; The frame into the texture, in the row order DrawGLSprite draws (the engine's
+; #GL_SpriteRowsBottomUp: row 0 at the bottom, or at the top).
+Procedure DeskDdUpload()
+  If #GL_SpriteRowsBottomUp
+    DdRender(*DeskDdPixels + (#DEMO_H - 1) * #DEMO_W * 4, -#DEMO_W * 4)
+  Else
+    DdRender(*DeskDdPixels, #DEMO_W * 4)
+  EndIf
+  glBindTexture_(#GL_TEXTURE_2D, *DeskDdSprite\TextureID)
+  glTexSubImage2D_(#GL_TEXTURE_2D, 0, 0, 0, #DEMO_W, #DEMO_H, #GL_BGRA_EXT, #GL_UNSIGNED_BYTE, *DeskDdPixels)
+EndProcedure
+
+; The pane: the frame centred at the largest whole scale that fits.
 Procedure DeskDisplayPane(x.f, y.f, w.f, h.f)
   Protected sc.l, dw.f, dh.f, info$
   Neon_Box(x, y, w, h, 0.03, 0.03, 0.04)
   If *DeskDdSprite = 0 : ProcedureReturn : EndIf
-  CompilerIf #PB_Compiler_OS = #PB_OS_Windows
-    DdRender(*DeskDdPixels + (#DEMO_H - 1) * #DEMO_W * 4, -#DEMO_W * 4)
-  CompilerElse
-    DdRender(*DeskDdPixels, #DEMO_W * 4)
-  CompilerEndIf
-  glBindTexture_(#GL_TEXTURE_2D, *DeskDdSprite\TextureID)
-  glTexSubImage2D_(#GL_TEXTURE_2D, 0, 0, 0, #DEMO_W, #DEMO_H, #GL_BGRA_EXT, #GL_UNSIGNED_BYTE, *DeskDdPixels)
+  DeskDdUpload()
   sc = (h - S(40)) / #DEMO_H
   If (w - S(20)) / #DEMO_W < sc : sc = (w - S(20)) / #DEMO_W : EndIf
   If sc < 1 : sc = 1 : EndIf
@@ -59,13 +63,7 @@ EndProcedure
 ; with a note while the display is off.
 Procedure DeskDisplayFull(x.f, y.f, w.f, h.f)
   If *DeskDdSprite = 0 : ProcedureReturn : EndIf
-  CompilerIf #PB_Compiler_OS = #PB_OS_Windows
-    DdRender(*DeskDdPixels + (#DEMO_H - 1) * #DEMO_W * 4, -#DEMO_W * 4)
-  CompilerElse
-    DdRender(*DeskDdPixels, #DEMO_W * 4)
-  CompilerEndIf
-  glBindTexture_(#GL_TEXTURE_2D, *DeskDdSprite\TextureID)
-  glTexSubImage2D_(#GL_TEXTURE_2D, 0, 0, 0, #DEMO_W, #DEMO_H, #GL_BGRA_EXT, #GL_UNSIGNED_BYTE, *DeskDdPixels)
+  DeskDdUpload()
   If DdCsr & 1
     DrawGLSprite(*DeskDdSprite, x, y, 0.0, w / #DEMO_W, 1, 1, 1, 1, #True, -1, -1, -1, -1, #True)
   Else
@@ -77,30 +75,18 @@ EndProcedure
 #AU_RATE = 22050
 #AU_BUFS = 4
 #AU_LEN = 735                              ; samples a buffer: 1/30 s
-Global AuWave.i                            ; the waveOut handle, 0 none
-Global Dim AuHdr.WAVEHDR(#AU_BUFS)
-Global Dim *AuBuf(#AU_BUFS)
+Global AuOpen.l                            ; the sound card is open
 Global Dim AuPhase.d(4)
-Global AuNoise.l = $ACE1, AuStarted.l
+Global AuNoise.l = $ACE1
 
 Procedure DeskAudioOpen()
-  Protected fmt.WAVEFORMATEX, i.l
-  fmt\wFormatTag = #WAVE_FORMAT_PCM : fmt\nChannels = 1 : fmt\nSamplesPerSec = #AU_RATE
-  fmt\wBitsPerSample = 16 : fmt\nBlockAlign = 2 : fmt\nAvgBytesPerSec = #AU_RATE * 2
-  If waveOutOpen_(@AuWave, #WAVE_MAPPER, @fmt, 0, 0, #CALLBACK_NULL) <> #MMSYSERR_NOERROR
-    AuWave = 0
+  AuOpen = GL_AudioOpen(#AU_RATE, #AU_LEN, #AU_BUFS)
+  If AuOpen = 0
     DeskSay("sound: the PC's sound output could not be opened; the demo plays silent")
-    ProcedureReturn
   EndIf
-  For i = 0 To #AU_BUFS - 1
-    *AuBuf(i) = AllocateMemory(#AU_LEN * 2)
-    AuHdr(i)\lpData = *AuBuf(i) : AuHdr(i)\dwBufferLength = #AU_LEN * 2
-    waveOutPrepareHeader_(AuWave, @AuHdr(i), SizeOf(WAVEHDR))
-    AuHdr(i)\dwFlags | #WHDR_DONE              ; free to fill
-  Next
 EndProcedure
 
-; One buffer of the four voices, as the registers stand.
+; One buffer of the four voices, as the registers stand (stereo pairs, the same on both).
 Procedure DeskAudioFill(*buf)
   Protected n.l, v.l, s.d, ph.d, out.l, amp.d
   For n = 0 To #AU_LEN - 1
@@ -126,20 +112,21 @@ Procedure DeskAudioFill(*buf)
     out = s * (DdMaster / 15.0) * 6000.0
     If DdSndCsr = 0 : out = 0 : EndIf
     If out > 32767 : out = 32767 : ElseIf out < -32768 : out = -32768 : EndIf
-    PokeW(*buf + n * 2, out)
+    PokeW(*buf + n * 4, out) : PokeW(*buf + n * 4 + 2, out)
   Next
 EndProcedure
 
-; Each frame: every buffer the PC has played is filled again and queued. Only
-; once a program has used the devices, so the window is silent otherwise.
+; Each frame: every buffer the PC has played is filled again and queued, at most
+; #AU_BUFS of them (a device that takes everything at once, such as ALSA's null
+; device, would otherwise keep the frame here). Only once a program has used the
+; devices, so the window is silent otherwise.
 Procedure DeskAudioPump()
-  Protected i.l
-  If AuWave = 0 Or DdUsed = 0 : ProcedureReturn : EndIf   ; (silence is played while SNDCSR is 0)
-  For i = 0 To #AU_BUFS - 1
-    If AuHdr(i)\dwFlags & #WHDR_DONE
-      DeskAudioFill(*AuBuf(i))
-      AuHdr(i)\dwFlags & ~#WHDR_DONE
-      waveOutWrite_(AuWave, @AuHdr(i), SizeOf(WAVEHDR))
-    EndIf
+  Protected *buf, i.l
+  If AuOpen = 0 Or DdUsed = 0 : ProcedureReturn : EndIf   ; (silence is played while SNDCSR is 0)
+  For i = 1 To #AU_BUFS
+    *buf = GL_AudioNext()
+    If *buf = 0 : Break : EndIf
+    DeskAudioFill(*buf)
+    GL_AudioPlay(*buf)
   Next
 EndProcedure
