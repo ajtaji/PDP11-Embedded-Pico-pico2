@@ -264,7 +264,10 @@ Known differences, found by those tapes and left as they are:
 
 ## The desktop version
 
-The same emulator as a Windows program, `desktop/PDP11Desktop.exe` (built and described in `desktop/README.md`).
+The same emulator as a program for Windows and Linux, from one source (built and described in `desktop/README.md`). Everything the operating system gives (the window, full screen, the keys, the clock, the sound) comes through the [Neon Arcade Display Engine](https://github.com/ajtaji/Neon-Arcade-Dispay-Engine), cloned beside this repository. PureBasic 6.41, the C back end, from `desktop/`:
+
+- **Windows**: `pbcompilerc.exe PDP11Desktop.pb /EXE PDP11Desktop.exe /THREAD /DPIAWARE /OPTIMIZER` (or `.\build_desktop.ps1`)
+- **Linux**: `pbcompilerc PDP11Desktop.pb -t -z -o PDP11Desktop` (or `./build_linux.sh`, which builds `pdp11_cli` too)
 
 ### Controls
 
