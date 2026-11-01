@@ -1012,7 +1012,7 @@ Repeat
               DeskWheel + GetGadgetAttribute(DeskGl, #PB_OpenGL_WheelDelta) * 40
             Case #PB_EventType_KeyDown
               ctrl = Bool(GetGadgetAttribute(DeskGl, #PB_OpenGL_Modifiers) & #PB_OpenGL_Control)
-              key = DeskKey(GetGadgetAttribute(DeskGl, #PB_OpenGL_Key), ctrl)
+              key = DeskKey(GL_KeyEventCode(GetGadgetAttribute(DeskGl, #PB_OpenGL_Key)), ctrl)   ; (the same code on both OSes)
             Case #PB_EventType_Input
               keyChar = GetGadgetAttribute(DeskGl, #PB_OpenGL_Input)
               If FullScreen Or (DeskTab = 0 And Neon_FocusID = 0)
