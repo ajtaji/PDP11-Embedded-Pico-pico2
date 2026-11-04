@@ -1,5 +1,9 @@
 # The PureMetal PDP-11 demo
 
+> **Note:** this demo uses the compiler's string library for the classic CPUs. It needs a PureMetal
+> Forge newer than the 2026-10-25 release (compiler a3098475d or later), so it can't be built with
+> the current public release. The next release is being prepared.
+
 A PDP-11 program written in PureMetal and compiled straight to PDP-11 machine code by PureMetal
 Forge: no Unix, no operating system, just the machine. It runs on the PDP-11 emulator's display and
 sound devices: in the desktop emulator (its window and pdp11_cli), and on Raspberry Pi Pico W and Pico 2 W boards in the

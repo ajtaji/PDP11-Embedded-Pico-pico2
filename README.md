@@ -14,6 +14,10 @@ The emulated machine has a panel and USB serial console, an RK11 disk controller
 - **Host tools:** [docs/TOOLS.md](docs/TOOLS.md)
 - **Forum:** <https://forum.ajtaji.com>
 
+> **Building the demo:** the PureMetal demo in [demo/](demo/) uses the compiler's string library for the
+> classic CPUs. It needs a PureMetal Forge newer than the 2026-10-25 release (compiler a3098475d or
+> later), so it can't be built with the current public release. The next release is being prepared.
+
 ## Current firmware: 2026-10-27
 
 The ready-to-flash images now include the CPU optimizations, standard panel
