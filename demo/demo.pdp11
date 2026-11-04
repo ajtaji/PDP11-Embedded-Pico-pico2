@@ -198,6 +198,31 @@ EndProcedure
 ; -------------------------------------------------------------- scroller
 #SC_ROW = 182
 Global scrollChar.w, scrollColumn.w
+; The message. It is longer than a string variable may be (255), so it stays
+; a literal; ScrollTextInit turns it once into glyph numbers.
+#SCROLL_TEXT$ = "   PUREMETAL ON THE PDP-11 ...   A J-11 AT YOUR SERVICE: MOV, ADD, MUL AND DIV IN ONE INSTRUCTION EACH, AND THE FP11 FOR THE MATHS ...   EVERYTHING ON THIS SCREEN WAS WRITTEN IN PUREMETAL AND COMPILED STRAIGHT TO PDP-11 MACHINE CODE ...   NO UNIX, NO OPERATING SYSTEM, JUST THE MACHINE ...   "
+; the font's characters in the order make_demo_assets.py draws them (font_rows: 8 rows each)
+#FONT_CHARS$ = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!-:/'?"
+#SC_TEXT_MAX = 300
+Global Dim scrollCodes.a(#SC_TEXT_MAX)
+Global scrollLetter.s{2}
+
+; Once, at the start: each letter of the message becomes its glyph number,
+; its place in #FONT_CHARS$; 255 after the last letter.
+Procedure ScrollTextInit()
+  Protected i.w, k.w, c.w, code.w, n.w = Len(#SCROLL_TEXT$)
+  For i = 1 To n
+    scrollLetter = Mid(#SCROLL_TEXT$, i, 1)
+    c = Asc(scrollLetter)
+    code = 0
+    For k = 1 To #FONT_CHARS
+      scrollLetter = Mid(#FONT_CHARS$, k, 1)
+      If Asc(scrollLetter) = c : code = k - 1 : EndIf
+    Next
+    scrollCodes(i - 1) = code
+  Next
+  scrollCodes(n) = 255
+EndProcedure
 
 ; Everything one word (4 pixels) to the left, and 4 new pixels of the
 ; current letter at the right.
@@ -209,7 +234,7 @@ Procedure ScrollFrame()
       PokeW(a, PeekW(a + 2))
       a + 2
     Next
-    code = PeekA(?scroll_text + scrollChar)
+    code = scrollCodes(scrollChar)
     bits = PeekA(?font_rows + code * 8 + r) << scrollColumn
     px = 0
     For n = 0 To 3
@@ -222,7 +247,7 @@ Procedure ScrollFrame()
   If scrollColumn >= 8
     scrollColumn = 0
     scrollChar + 1
-    If PeekA(?scroll_text + scrollChar) = 255 : scrollChar = 0 : EndIf
+    If scrollCodes(scrollChar) = 255 : scrollChar = 0 : EndIf
   EndIf
 EndProcedure
 
@@ -353,6 +378,7 @@ Procedure Main()
   Protected last.w
   pal(0) = $000 : pal(7) = $226 : pal(14) = $FFA : pal(15) = $FFF
   fbOff = ((@screen(0) + 63) & ~63) - @screen(0)
+  ScrollTextInit()
   DrawLogo()
   DrawPlasma()
   If Not previewMode

@@ -11,7 +11,8 @@ itself and plays the song. Nothing here runs on the PDP-11.
            thickened and outlined, as 4-bit pixels: colour 7 the outline, 8-13 the body from top to
            bottom (the demo cycles those six colours: the shimmer).
   Font     the demo's own bold 7x7 capitals (the PureMetal NES demo's, the same drawing), one byte a
-           row, bit 7 the leftmost pixel.
+           row, bit 7 the leftmost pixel, in the order of FONT_CHARS (demo.pdp11's fontChars).
+           The scroller's message is not here: it is a string in demo.pdp11.
   Tables   a 256-entry sine (-127..127), the note frequencies in Hz.
   Song     an original tune: four voices (lead, arpeggio, bass, drums), 16 rows a pattern.
 
@@ -76,12 +77,6 @@ FONT7 = {
     "'": ['..##...', '..##...', '.##....', '.......', '.......', '.......', '.......'],
     '?': ['.#####.', '##...##', '.....##', '...###.', '..##...', '.......', '..##...'],
 }
-
-SCROLL_TEXT = ("   PUREMETAL ON THE PDP-11 ...   A J-11 AT YOUR SERVICE: MOV, ADD, MUL AND DIV IN ONE "
-               "INSTRUCTION EACH, AND THE FP11 FOR THE MATHS ...   EVERYTHING ON THIS SCREEN WAS WRITTEN IN "
-               "PUREMETAL AND COMPILED STRAIGHT TO PDP-11 MACHINE CODE ...   NO UNIX, NO OPERATING SYSTEM, "
-               "JUST THE MACHINE ...   ")
-
 
 def dilate(img, n=1):
     for _ in range(n):
@@ -201,10 +196,6 @@ def data_lines(label, values, per=16, kind='w'):
     return lines
 
 
-def text_codes(s):
-    return [FONT_CHARS.index(c) for c in s.upper()] + [255]
-
-
 PALETTE_PREVIEW = [0x000, 0x00F, 0x04F, 0x08F, 0x0CF, 0x0FF, 0x0FC, 0x226,
                    0xF40, 0xF80, 0xFC0, 0xFF4, 0xFF8, 0xFFF, 0xFFA, 0xFFF]
 
@@ -218,7 +209,7 @@ def generate(write_previews):
     rows = song()
     lines = ['; demo_assets.pdp11 - WRITTEN BY demo/make_demo_assets.py; do not edit by hand.',
              '; The logo (4-bit pixels, %d x %d), the font, the sine table, the note frequencies,' % (LOGO_W, LOGO_H),
-             '; the song (%d rows of four words) and the scroller text.' % len(rows),
+             '; the song (%d rows of four words). The scroller\'s message is a string in demo.pdp11.' % len(rows),
              '#LOGO_W = %d' % LOGO_W, '#LOGO_H = %d' % LOGO_H, '#SONG_ROWS = %d' % len(rows),
              '#FONT_CHARS = %d' % len(FONT_CHARS),
              'DataSection']
@@ -227,7 +218,6 @@ def generate(write_previews):
     lines += data_lines('sine_table', sine_table())
     lines += data_lines('note_hz', note_freqs())
     lines += data_lines('song_rows', encode_song(rows))
-    lines += data_lines('scroll_text', text_codes(SCROLL_TEXT), kind='a')
     lines.append('EndDataSection')
     text = '\n'.join(lines) + '\n'
     if write_previews:

@@ -27,7 +27,11 @@ nine minutes from producing invalid colors or an incomplete white sweep.
 - **A plasma field** that never stops moving - drawn once, then animated by nothing but palette
   changes, so it costs no drawing at all.
 - **A spinning cube**, rotated with a sine table and the J-11's MUL and DIV, in perspective.
-- **A scrolling message** in the demo's own 7x7 capitals.
+- **A scrolling message** in the demo's own 7x7 capitals. The message is a string in `demo.pdp11`
+  (`#SCROLL_TEXT$`, 292 characters); at the start it is turned once, with Len, Mid and Asc (the
+  compiler's string library for the classic CPUs, compiler 42c7e16a2 or later), into the glyph
+  numbers the scroller draws. That takes about two clock ticks (some 33 ms on the desktop
+  emulator), so the picture starts that much later; from then on it is the same frame for frame.
 - **An original tune**, four voices: lead, arpeggio, bass and drums.
 
 The line clock's interrupt (60 a second) plays the music and moves the palette; the main loop draws
@@ -36,7 +40,8 @@ too.
 
 ## Building
 
-You need PureMetal Forge with the PDP-11 target (the compiler build of 2026-10-23 or later).
+You need PureMetal Forge with the PDP-11 target (compiler 42c7e16a2 or later: the message is read
+from a string literal).
 
 ```
 PureMetalForge.exe --compile demo.pdp11 -o demo.hex
@@ -44,7 +49,7 @@ PureMetalForge.exe --compile demo.pdp11 -o demo.hex
 
 That writes `demo.lda`, a DEC absolute-loader file, which the emulator loads and starts.
 
-The pictures, the font, the tables and the song are data, made by `make_demo_assets.py` into
+The pictures, the font, the tables and the song (not the message) are data, made by `make_demo_assets.py` into
 `demo_assets.pdp11` (Python 3 with Pillow):
 
 ```
